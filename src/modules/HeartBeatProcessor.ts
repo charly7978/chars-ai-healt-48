@@ -237,6 +237,13 @@ export class HeartBeatProcessor {
     filteredValue: number;
     arrhythmiaCount: number;
     signalQuality?: number;  // Añadido campo para retroalimentación
+    debug?: {
+      gatedFinger: boolean;
+      gatedQuality: boolean;
+      gatedSnr: boolean;
+      spectralOk: boolean;
+      bandRatio: number;
+    };
   } {
     // Log cada 30 llamadas para debug
     if (this.values.length % 30 === 0) {
@@ -332,6 +339,8 @@ export class HeartBeatProcessor {
     const gatedQuality = (ctx?.channelQuality ?? 0) >= 45;
     const gatedSnr = (ctx?.channelSnr ?? 0) >= 1.4;
 
+    let spectralOkComputed = false;
+    let bandRatioComputed = 0;
     if (isConfirmedPeak && !this.isInWarmup() && gatedFinger && gatedQuality && gatedSnr) {
       const now = Date.now();
       const timeSinceLastPeak = this.lastPeakTime
@@ -343,8 +352,17 @@ export class HeartBeatProcessor {
         // Validación estricta según criterios médicos + espectral cardiaca
         const fs = this.DEFAULT_SAMPLE_RATE;
         const shortWindow = this.signalBuffer.slice(-Math.min(this.signalBuffer.length, 128));
-        const spectralOk = this.isCardiacBandPresent(shortWindow, fs);
-        if (this.validatePeak(normalizedValue, confidence) && spectralOk) {
+        // Obtener ratio de banda cardiaca
+        const mean = shortWindow.reduce((a,b)=>a+b,0)/Math.max(1, shortWindow.length);
+        const x = shortWindow.map(v=>v-mean);
+        const freqs = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5];
+        let band = 0; for (const f of freqs) band += this.goertzel(x, fs, f);
+        const oobFreqs = [0.2, 0.4, 0.6, 4.0, 5.0, 6.0];
+        let oob = 0; for (const f of oobFreqs) oob += this.goertzel(x, fs, f);
+        bandRatioComputed = oob > 0 ? band / oob : band;
+        spectralOkComputed = bandRatioComputed > 2.0;
+        
+        if (this.validatePeak(normalizedValue, confidence) && spectralOkComputed) {
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
           
@@ -388,7 +406,14 @@ export class HeartBeatProcessor {
       isPeak: isPeak,
       filteredValue: filteredValue, // Usando la variable correctamente definida
       arrhythmiaCount: 0,
-      signalQuality: this.currentSignalQuality // Retroalimentación de calidad
+      signalQuality: this.currentSignalQuality, // Retroalimentación de calidad
+      debug: {
+        gatedFinger,
+        gatedQuality,
+        gatedSnr,
+        spectralOk: spectralOkComputed,
+        bandRatio: Number.isFinite(bandRatioComputed) ? bandRatioComputed : 0
+      }
     };
   }
   

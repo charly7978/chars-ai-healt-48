@@ -375,6 +375,26 @@ const PPGSignalMeter = ({
         className="w-full h-[100vh] absolute inset-0 z-0"
       />
 
+      {/* Panel de diagnóstico (sobre la botonera) */}
+      <div className="absolute left-0 right-0 bottom-[60px] z-10 px-3 pb-2">
+        <div className="mx-3 rounded-lg border border-white/10 bg-black/40 backdrop-blur px-3 py-2 text-[10px] text-blue-100 grid grid-cols-3 gap-2">
+          <div>
+            <div className="opacity-70">Dedo</div>
+            <div className={isFingerDetected ? 'text-green-300 font-bold' : 'text-red-300 font-bold'}>
+              {isFingerDetected ? 'Detectado' : 'No detectado'}
+            </div>
+          </div>
+          <div>
+            <div className="opacity-70">Calidad</div>
+            <div className="font-bold">{Math.round(quality)}%</div>
+          </div>
+          <div>
+            <div className="opacity-70">FPS aprox.</div>
+            <div>{Math.round(1000 / Math.max(1, (performance.now() - lastRenderTimeRef.current)))} </div>
+          </div>
+        </div>
+      </div>
+
       <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
         <div className="flex items-center gap-2">
           <span className="text-lg font-bold text-blue-100">PPG</span> {/* Texto claro sobre azul */}
