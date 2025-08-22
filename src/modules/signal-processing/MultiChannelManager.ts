@@ -96,10 +96,12 @@ export default class MultiChannelManager {
     const coverageOk = globalCoverageRatio >= this.MIN_COVERAGE_RATIO;
     const motionOk = globalFrameDiff <= this.MAX_FRAME_DIFF;
     const consensusOk = detectedChannels >= Math.ceil(this.n * this.MIN_CONSENSUS_RATIO);
-    const qualityOk = detectedChannels > 0 && (totalQuality / detectedChannels) >= this.MIN_QUALITY_THRESHOLD;
+    const avgQuality = detectedChannels > 0 ? (totalQuality / detectedChannels) : 0;
+    const qualityOk = detectedChannels > 0 && avgQuality >= this.MIN_QUALITY_THRESHOLD;
+    const strongDetection = consensusOk && qualityOk && coverageOk && motionOk;
     
     // Condición global mejorada: todos los criterios principales + calidad
-    const globalCondition = coverageOk && motionOk && consensusOk && qualityOk;
+    const globalCondition = strongDetection;
 
     // Debug logging cada ~4 segundos con información detallada (aumentado de 2)
     if (Date.now() % 4000 < 100) {
