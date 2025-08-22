@@ -2,6 +2,7 @@
 import { useMemo, useRef, useState } from 'react';
 import MultiChannelManager from '@/modules/signal-processing/MultiChannelManager';
 import { CameraSample, MultiChannelResult } from '@/types';
+import ChannelSplitter from '@/modules/signal-processing/ChannelSplitter';
 
 /**
  * Hook CORREGIDO que maneja el flujo completo CameraView -> MultiChannelManager
@@ -16,10 +17,14 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
   const dcRedRef = useRef(0);
   const dcGreenRef = useRef(0);
   const lastAcRef = useRef(0);
+  const splitterRef = useRef<ChannelSplitter | null>(null);
 
   if (!mgrRef.current) {
     mgrRef.current = new MultiChannelManager(channels, windowSec);
     console.log('🏭 MultiChannelManager CREADO:', { channels, windowSec });
+  }
+  if (!splitterRef.current) {
+    splitterRef.current = new ChannelSplitter(channels);
   }
 
   const handleSample = (s: CameraSample) => {
@@ -29,7 +34,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       return;
     }
     
-    // Preprocesamiento: DC removal por canal y combinación adaptativa R/G
+    // Preprocesamiento base local para derivada y DC
     const alpha = 0.97; // constante de tiempo ~1s
     dcRedRef.current = alpha * dcRedRef.current + (1 - alpha) * s.rMean;
     dcGreenRef.current = alpha * dcGreenRef.current + (1 - alpha) * s.gMean;
@@ -46,22 +51,12 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       acG += adjust;
     }
     lastAcRef.current = (acR + acG) * 0.5;
+    // Divisor de canales con feedback
+    const channelsVals = splitterRef.current!.split({ ...s, rMean: dcRedRef.current + acR, gMean: dcGreenRef.current + acG });
+    // Empujar cada canal como una muestra al MultiChannelManager
+    // Aquí simplificamos: se empuja la mezcla principal (canal 2) como referencia temporal
+    const inputSignal = channelsVals[2];
 
-    // Ponderación por calidad (cobertura, movimiento, ratio piel, saturación)
-    const coverage = s.coverageRatio ?? 0;
-    const motion = s.frameDiff ?? 0;
-    const rgRatio = s.rgRatio ?? (s.gMean > 1 ? s.rMean / s.gMean : 2);
-    const saturation = s.saturationRatio ?? 0;
-    const coverageW = Math.max(0, Math.min(1, (coverage - 0.12) / 0.28));
-    const motionW = 1 / (1 + 0.6 * motion);
-    const skinW = Math.max(0, Math.min(1, (rgRatio - 1.0) / 2.5));
-    const satW = Math.max(0, 1 - saturation * 1.6);
-    // R: favorecer cuando rojo domina y no satura; G: fallback con menor penalización por saturación
-    const qR = coverageW * motionW * skinW * satW;
-    const qG = coverageW * motionW * Math.max(0.4, 1 - Math.abs(rgRatio - 0.9));
-    const denom = Math.max(1e-3, qR + qG);
-    const inputSignal = (qR * acR + qG * acG) / denom;
-    
     // Log detallado cada 150 muestras para debug (reducido de 30)
     if (sampleCountRef.current % 150 === 0) {
       console.log('📊 useSignalProcessor - Muestra #' + sampleCountRef.current + ':', {
@@ -109,6 +104,15 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     }
     
     setLastResult(result);
+    // Feedback al splitter desde el mejor canal detectado
+    const best = result.channels.find(c => c.isFingerDetected) || result.channels[0];
+    if (best) {
+      splitterRef.current!.updateFeedback({
+        preferred: best.snr > 1.6 ? 'red' : (best.quality < 40 ? 'green' : 'mixed'),
+        quality: best.quality,
+        snr: best.snr
+      });
+    }
   };
 
   const adjustChannelGain = (channelId: number, deltaRel: number) => {
