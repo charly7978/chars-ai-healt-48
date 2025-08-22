@@ -92,12 +92,13 @@ const Index = () => {
         await (elem as any).msRequestFullscreen();
       }
       
-      // Forzar orientación horizontal en móviles si es posible
+      // Mantener orientación vertical (portrait) en móviles
       if ('orientation' in screen && (screen.orientation as any).lock) {
         try {
-          await (screen.orientation as any).lock('landscape');
+          await (screen.orientation as any).lock('portrait-primary');
         } catch (e) {
           // Ignorar si no es soportado
+          console.log('Orientación vertical no pudo ser forzada');
         }
       }
       
@@ -118,7 +119,8 @@ const Index = () => {
   };
 
   useEffect(() => {
-    const timer = setTimeout(() => enterFullScreen(), 1000);
+    // No entrar automáticamente en pantalla completa
+    // const timer = setTimeout(() => enterFullScreen(), 1000);
     
     const handleFullscreenChange = () => {
       setIsFullscreen(Boolean(
@@ -131,10 +133,11 @@ const Index = () => {
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     
     return () => {
-      clearTimeout(timer);
+      // clearTimeout(timer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      exitFullScreen();
+      // No salir automáticamente de pantalla completa al desmontar
+      // exitFullScreen();
     };
   }, []);
 
@@ -165,7 +168,8 @@ const Index = () => {
     
     systemState.current = 'STARTING';
     
-    enterFullScreen();
+    // Solo entrar en pantalla completa si el usuario lo permite
+    // enterFullScreen();
     setIsMonitoring(true);
     setIsCameraOn(true);
     setShowResults(false);
@@ -197,8 +201,6 @@ const Index = () => {
         return newTime;
       });
     }, 1000);
-    
-    systemState.current = 'ACTIVE';
   };
 
   const finalizeMeasurement = () => {
