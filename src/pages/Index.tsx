@@ -353,7 +353,8 @@ const Index = () => {
     const heartBeatResult = processHeartBeat(
       bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0,
       bestChannel.isFingerDetected, 
-      lastResult.timestamp
+      lastResult.timestamp,
+      { quality: bestChannel.quality, snr: bestChannel.snr }
     );
     
     // Log para debug del procesamiento

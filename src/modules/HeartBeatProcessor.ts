@@ -230,7 +230,7 @@ export class HeartBeatProcessor {
   private lastProcessedTimestamp = 0;
   private lastProcessedValue: number | null = null;
 
-  public processSignal(value: number, timestamp?: number): {
+  public processSignal(value: number, timestamp?: number, ctx?: { fingerDetected?: boolean; channelQuality?: number; channelSnr?: number }): {
     bpm: number;
     confidence: number;
     isPeak: boolean;
@@ -327,7 +327,12 @@ export class HeartBeatProcessor {
     // Calcular calidad de señal actual basada en varios factores (0-100)
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
 
-    if (isConfirmedPeak && !this.isInWarmup()) {
+    // GATING ROBUSTO por dedo/calidad/SNR antes de aceptar picos
+    const gatedFinger = ctx?.fingerDetected === true;
+    const gatedQuality = (ctx?.channelQuality ?? 0) >= 45;
+    const gatedSnr = (ctx?.channelSnr ?? 0) >= 1.4;
+
+    if (isConfirmedPeak && !this.isInWarmup() && gatedFinger && gatedQuality && gatedSnr) {
       const now = Date.now();
       const timeSinceLastPeak = this.lastPeakTime
         ? now - this.lastPeakTime
@@ -341,6 +346,7 @@ export class HeartBeatProcessor {
           this.lastPeakTime = now;
           
           // Reproducir sonido y actualizar estado
+          // AUDIO GATING: sólo si gating completo está OK
           this.playHeartSound(1.0, this.isArrhythmiaDetected);
 
           this.updateBPM();
