@@ -340,8 +340,11 @@ export class HeartBeatProcessor {
 
       // Validación médicamente apropiada
       if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
-        // Validación estricta según criterios médicos
-        if (this.validatePeak(normalizedValue, confidence)) {
+        // Validación estricta según criterios médicos + espectral cardiaca
+        const fs = this.DEFAULT_SAMPLE_RATE;
+        const shortWindow = this.signalBuffer.slice(-Math.min(this.signalBuffer.length, 128));
+        const spectralOk = this.isCardiacBandPresent(shortWindow, fs);
+        if (this.validatePeak(normalizedValue, confidence) && spectralOk) {
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
           
@@ -868,5 +871,43 @@ export class HeartBeatProcessor {
     totalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3;
     
     return Math.min(Math.max(Math.round(totalQuality), 0), 100);
+  }
+
+  // Validación espectral rápida (Goertzel)
+  private isCardiacBandPresent(samples: number[], fs: number): boolean {
+    if (samples.length < 64) return false;
+    // normalizar a cero-mean
+    const mean = samples.reduce((a,b)=>a+b,0)/samples.length;
+    const x = samples.map(v=>v-mean);
+    const freqs = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5];
+    // potencia total en banda
+    let band = 0;
+    for (const f of freqs) {
+      band += this.goertzel(x, fs, f);
+    }
+    // potencia fuera de banda (bajas y altas) para SBR simple
+    const oobFreqs = [0.2, 0.4, 0.6, 4.0, 5.0, 6.0];
+    let oob = 0;
+    for (const f of oobFreqs) {
+      oob += this.goertzel(x, fs, f);
+    }
+    const ratio = oob > 0 ? band / oob : band;
+    return ratio > 2.0; // umbral conservador
+  }
+
+  private goertzel(signal: number[], fs: number, freq: number): number {
+    const N = signal.length;
+    const k = Math.round((freq / fs) * N);
+    const omega = (2 * Math.PI * k) / N;
+    const coeff = 2 * Math.cos(omega);
+    let s0 = 0, s1 = 0, s2 = 0;
+    for (let i = 0; i < N; i++) {
+      s0 = signal[i] + coeff * s1 - s2;
+      s2 = s1;
+      s1 = s0;
+    }
+    const real = s1 - s2 * Math.cos(omega);
+    const imag = s2 * Math.sin(omega);
+    return real * real + imag * imag;
   }
 }
