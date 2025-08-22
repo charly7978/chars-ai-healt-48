@@ -197,6 +197,14 @@ const CameraView: React.FC<CameraViewProps> = ({
         try {
           const sample = captureOptimizedFrame();
           if (sample && onSample) {
+            // Log cada 30 frames para debug
+            if (rafRef.current && rafRef.current % 30 === 0) {
+              console.log('📸 CameraView - Muestra capturada:', {
+                rMean: sample.rMean.toFixed(1),
+                coverageRatio: (sample.coverageRatio * 100).toFixed(1) + '%',
+                timestamp: new Date(sample.timestamp).toLocaleTimeString()
+              });
+            }
             onSample(sample);
           }
         } catch (captureError) {
