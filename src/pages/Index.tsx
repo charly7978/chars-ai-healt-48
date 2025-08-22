@@ -616,7 +616,7 @@ const Index = () => {
               preserveResults={showResults}
               debug={{
                 snr: (lastResult?.channels.find(c => c.isFingerDetected)?.snr) ?? 0,
-                bandRatio: (typeof lastHeartbeatDebug?.bandRatio === 'number' ? lastHeartbeatDebug.bandRatio : undefined) as any,
+                bandRatio: (typeof lastHeartbeatDebug?.bandRatio === 'number' ? lastHeartbeatDebug.bandRatio : undefined),
                 reasons: (() => {
                   const r: string[] = [];
                   if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedFinger) r.push('sin dedo');
