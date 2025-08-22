@@ -2,6 +2,7 @@
 import { useMemo, useRef, useState } from 'react';
 import MultiChannelManager from '@/modules/signal-processing/MultiChannelManager';
 import { CameraSample, MultiChannelResult } from '@/types';
+import { logDebug, logVerbose } from '@/utils/performance-logger';
 
 /**
  * Hook CORREGIDO que maneja el flujo completo CameraView -> MultiChannelManager
@@ -15,7 +16,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
 
   if (!mgrRef.current) {
     mgrRef.current = new MultiChannelManager(channels, windowSec);
-    console.log('🏭 MultiChannelManager CREADO:', { channels, windowSec });
+    logDebug('🏭 MultiChannelManager CREADO:', { channels, windowSec });
   }
 
   const handleSample = (s: CameraSample) => {
@@ -25,9 +26,9 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // Valores ya están en rango 0-255 desde CameraView
     const inputSignal = s.rMean;
     
-    // Log detallado cada 30 muestras para debug
+    // Log detallado cada 30 muestras para debug (solo en modo verbose)
     if (sampleCountRef.current % 30 === 0) {
-      console.log('📊 useSignalProcessor - Muestra #' + sampleCountRef.current + ':', {
+      logVerbose('📊 useSignalProcessor - Muestra #' + sampleCountRef.current + ':', {
         timestamp: new Date(s.timestamp).toLocaleTimeString(),
         inputSignal: inputSignal.toFixed(1),
         rMean: s.rMean.toFixed(1),
@@ -46,13 +47,13 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // CRÍTICO: Analizar con métricas globales correctas
     const result = mgrRef.current!.analyzeAll(s.coverageRatio, s.frameDiff);
     
-    // Log resultado cada 50 muestras o cuando hay detección
+    // Log resultado cada 50 muestras o cuando hay detección (solo en modo debug)
     if (result.fingerDetected || sampleCountRef.current % 50 === 0) {
       const activeChannels = result.channels.filter(c => c.isFingerDetected).length;
       const bestChannel = result.channels.reduce((best, current) => 
         current.quality > best.quality ? current : best, result.channels[0]);
       
-      console.log('🔍 useSignalProcessor - Resultado:', {
+      logDebug('🔍 useSignalProcessor - Resultado:', {
         fingerDetected: result.fingerDetected,
         aggregatedBPM: result.aggregatedBPM,
         aggregatedQuality: result.aggregatedQuality,
@@ -70,7 +71,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
   const adjustChannelGain = (channelId: number, deltaRel: number) => {
     if (!mgrRef.current) return;
     
-    console.log(`🔧 Ajustando ganancia canal ${channelId}: ${deltaRel > 0 ? '+' : ''}${(deltaRel * 100).toFixed(1)}%`);
+    logDebug(`🔧 Ajustando ganancia canal ${channelId}: ${deltaRel > 0 ? '+' : ''}${(deltaRel * 100).toFixed(1)}%`);
     
     mgrRef.current.adjustChannelGain(channelId, deltaRel);
     
@@ -82,7 +83,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
   const reset = () => {
     if (!mgrRef.current) return;
     
-    console.log('🔄 useSignalProcessor - RESET completo');
+    logDebug('🔄 useSignalProcessor - RESET completo');
     mgrRef.current.reset();
     setLastResult(null);
     sampleCountRef.current = 0;

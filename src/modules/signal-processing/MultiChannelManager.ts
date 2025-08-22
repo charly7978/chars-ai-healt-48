@@ -10,6 +10,7 @@
 
 import PPGChannel from './PPGChannel';
 import { ChannelResult, MultiChannelResult } from '@/types';
+import { logDebug, logInfo, logVerbose } from '@/utils/performance-logger';
 
 export default class MultiChannelManager {
   private channels: PPGChannel[] = [];
@@ -34,7 +35,7 @@ export default class MultiChannelManager {
     this.n = n;
     this.windowSec = windowSec;
     
-    console.log('🏭 MultiChannelManager INICIALIZADO:', {
+    logInfo('🏭 MultiChannelManager INICIALIZADO:', {
       channels: n,
       windowSec,
       framesToConfirm: this.FRAMES_TO_CONFIRM_FINGER,
@@ -101,9 +102,9 @@ export default class MultiChannelManager {
     // Condición global mejorada: todos los criterios principales + calidad
     const globalCondition = coverageOk && motionOk && consensusOk && qualityOk;
 
-    // Debug logging cada ~2 segundos con información detallada
+    // Debug logging cada ~2 segundos con información detallada (solo en modo verbose)
     if (Date.now() % 2000 < 100) {
-      console.log('🏭 MultiChannelManager Estado Detallado:', {
+      logVerbose('🏭 MultiChannelManager Estado Detallado:', {
         detectedChannels: `${detectedChannels}/${this.n}`,
         coverageRatio: (globalCoverageRatio * 100).toFixed(1) + '%',
         frameDiff: globalFrameDiff.toFixed(1),
@@ -130,8 +131,8 @@ export default class MultiChannelManager {
       
       if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER) {
         if (!this.fingerState) {
-          console.log('✅ DEDO DETECTADO CONFIRMADO - Estado: FALSE → TRUE');
-          console.log('📊 Métricas en el momento de detección:', {
+          logInfo('✅ DEDO DETECTADO CONFIRMADO - Estado: FALSE → TRUE');
+          logDebug('📊 Métricas en el momento de detección:', {
             detectedChannels,
             avgQuality: (totalQuality / Math.max(1, detectedChannels)).toFixed(1),
             coverage: (globalCoverageRatio * 100).toFixed(1) + '%',
@@ -146,8 +147,8 @@ export default class MultiChannelManager {
       
       if (this.fingerUnstableCount >= this.FRAMES_TO_LOSE_FINGER) {
         if (this.fingerState) {
-          console.log('❌ DEDO PERDIDO CONFIRMADO - Estado: TRUE → FALSE');
-          console.log('📊 Razones de pérdida:', {
+          logInfo('❌ DEDO PERDIDO CONFIRMADO - Estado: TRUE → FALSE');
+          logDebug('📊 Razones de pérdida:', {
             coverageOk,
             motionOk,
             consensusOk,
@@ -290,7 +291,7 @@ export default class MultiChannelManager {
   }
 
   reset() {
-    console.log('🔄 MultiChannelManager RESET COMPLETO');
+    logDebug('🔄 MultiChannelManager RESET COMPLETO');
     
     this.fingerState = false;
     this.fingerStableCount = 0;

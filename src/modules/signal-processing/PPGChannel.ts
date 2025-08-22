@@ -13,6 +13,7 @@ import { Biquad } from './Biquad';
 import { goertzelPower } from './Goertzel';
 import { computeSNR } from './SignalQualityAnalyzer';
 import { detectPeaks } from './TimeDomainPeak';
+import { logDebug, logVerbose } from '@/utils/performance-logger';
 
 type Sample = { t: number; v: number };
 
@@ -34,7 +35,7 @@ export default class PPGChannel {
     this.windowSec = windowSec;
     this.gain = initialGain;
     
-    console.log(`🔬 PPGChannel ${channelId} creado:`, {
+    logDebug(`🔬 PPGChannel ${channelId} creado:`, {
       windowSec,
       initialGain,
       minRMeanForFinger: this.minRMeanForFinger,
@@ -55,9 +56,9 @@ export default class PPGChannel {
       this.buffer.shift();
     }
     
-    // Debug logging cada 100 muestras para no saturar
+    // Debug logging cada 100 muestras para no saturar (solo en modo verbose)
     if (this.buffer.length % 100 === 0 && this.channelId === 0) {
-      console.log(`📊 Canal ${this.channelId} Buffer:`, {
+      logVerbose(`📊 Canal ${this.channelId} Buffer:`, {
         bufferSize: this.buffer.length,
         timeSpan: this.buffer.length > 1 ? 
           (this.buffer[this.buffer.length-1].t - this.buffer[0].t).toFixed(2) + 's' : '0s',
@@ -73,7 +74,7 @@ export default class PPGChannel {
     this.gain = Math.max(0.1, Math.min(10, this.gain * (1 + rel)));
     
     if (this.channelId === 0) {
-      console.log(`🔧 Canal ${this.channelId} Ganancia:`, {
+      logDebug(`🔧 Canal ${this.channelId} Ganancia:`, {
         oldGain: oldGain.toFixed(3),
         newGain: this.gain.toFixed(3),
         changePercent: (rel * 100).toFixed(1) + '%'
@@ -174,9 +175,9 @@ export default class PPGChannel {
     const criteriaCount = [brightnessOk, varianceOk, snrOk, bpmOk, signalStrengthOk].filter(Boolean).length;
     const isFingerDetected = criteriaCount >= 4;
 
-    // Debug detección COMPLETA solo para canal 0 o cuando hay detección
+    // Debug detección COMPLETA solo para canal 0 o cuando hay detección (solo en modo verbose)
     if (this.channelId === 0 || isFingerDetected) {
-      console.log(`🔍 Canal ${this.channelId} Análisis Completo:`, {
+      logVerbose(`🔍 Canal ${this.channelId} Análisis Completo:`, {
         // Estadísticas básicas
         mean: mean.toFixed(1),
         variance: variance.toFixed(2),
