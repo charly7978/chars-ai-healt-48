@@ -283,9 +283,17 @@ const Index = () => {
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 25;
+    const MIN_SIGNAL_QUALITY = 20; // Reducido de 25 a 20
     
     if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
+      // Log cuando no detecta para debug
+      if (sampleCountRef.current % 30 === 0) {
+        console.log('⚠️ No procesando señal:', {
+          isFingerDetected: bestChannel?.isFingerDetected,
+          quality: bestChannel?.quality,
+          minRequired: MIN_SIGNAL_QUALITY
+        });
+      }
       return;
     }
 
@@ -511,7 +519,7 @@ const Index = () => {
             targetFps={30}
             roiSize={320}
             enableTorch={true}
-            coverageThresholdPixelBrightness={50}
+            coverageThresholdPixelBrightness={30}
           />
         </div>
 
