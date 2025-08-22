@@ -17,6 +17,15 @@ interface PPGSignalMeterProps {
     rrVariation: number;
   } | null;
   preserveResults?: boolean;
+  debug?: {
+    snr?: number;
+    bandRatio?: number;
+    reasons?: string[];
+    gatedFinger?: boolean;
+    gatedQuality?: boolean;
+    gatedSnr?: boolean;
+    spectralOk?: boolean;
+  };
 }
 
 const PPGSignalMeter = ({ 
@@ -27,7 +36,8 @@ const PPGSignalMeter = ({
   onReset,
   arrhythmiaStatus,
   rawArrhythmiaData,
-  preserveResults = false
+  preserveResults = false,
+  debug
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
@@ -391,6 +401,30 @@ const PPGSignalMeter = ({
           <div>
             <div className="opacity-70">FPS aprox.</div>
             <div>{Math.round(1000 / Math.max(1, (performance.now() - lastRenderTimeRef.current)))} </div>
+          </div>
+        </div>
+        <div className="mx-3 mt-1 rounded-lg border border-white/10 bg-black/30 backdrop-blur px-3 py-2 text-[10px] text-blue-100 grid grid-cols-3 gap-2">
+          <div>
+            <div className="opacity-70">SNR</div>
+            <div className="font-bold">{debug?.snr !== undefined ? debug.snr.toFixed(2) : '--'}</div>
+          </div>
+          <div>
+            <div className="opacity-70">Band</div>
+            <div className="font-bold">{debug?.bandRatio !== undefined ? debug.bandRatio.toFixed(2) : '--'}</div>
+          </div>
+          <div>
+            <div className="opacity-70">Gates</div>
+            <div className="font-bold">
+              {debug ? (
+                <>
+                  {debug.gatedFinger ? '✓' : '✗'} dedo · {debug.gatedQuality ? '✓' : '✗'} cal · {debug.gatedSnr ? '✓' : '✗'} snr · {debug.spectralOk ? '✓' : '✗'} spec
+                </>
+              ) : '--'}
+            </div>
+          </div>
+          <div className="col-span-3">
+            <div className="opacity-70">Motivos</div>
+            <div className="font-bold truncate">{debug?.reasons && debug.reasons.length ? debug.reasons.join(', ') : '—'}</div>
           </div>
         </div>
       </div>
