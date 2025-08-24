@@ -49,8 +49,7 @@ const Index = () => {
   const { 
     handleSample,
     lastResult,
-    reset: resetSignalProcessor,
-    getStats
+    reset: resetSignalProcessor
   } = useSignalProcessor();
   
   // Agregar contador de muestras local para debug
@@ -441,10 +440,6 @@ const Index = () => {
   };
 
   const SignalQualitySensor = () => {
-    // Obtener métricas ambientales desde hook
-    const stats = (typeof (getStats) === 'function' ? getStats() : null) as any;
-    const fingerConfidence = stats?.fingerConfidence ?? 0;
-    const exposureState = stats?.exposureState ?? 'ok';
     const getQualityColor = () => {
       if (!lastResult?.fingerDetected) return 'from-gray-500 to-gray-600';
       if (signalQuality >= 80) return 'from-emerald-400 to-green-500';
@@ -562,14 +557,6 @@ const Index = () => {
               <span className="text-xs text-white/60">
                 {lastResult?.fingerDetected ? 'Detectado' : 'Buscando...'}
               </span>
-            </div>
-            {/* Guía dinámica breve */}
-            <div className="mt-2 text-[10px] leading-tight text-white/60">
-              {exposureState === 'saturated' && <div>Muy brillante: aleja un poco el dedo o baja brillo.</div>}
-              {exposureState === 'dark' && <div>Muy oscuro: acerca el dedo a la cámara y activa la linterna.</div>}
-              {exposureState === 'low_coverage' && <div>Cubre completamente la cámara con la yema del dedo.</div>}
-              {exposureState === 'moving' && <div>Mantén el dedo quieto y el teléfono estable.</div>}
-              {exposureState === 'ok' && fingerConfidence < 0.5 && <div>Ajusta el ángulo y presión del dedo hasta ver mejor calidad.</div>}
             </div>
           </div>
         </div>
