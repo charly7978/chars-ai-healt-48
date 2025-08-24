@@ -286,7 +286,7 @@ export class AdvancedMathematicalProcessor {
     );
     
     // CÁLCULO FINAL CON ECUACIÓN POLINOMIAL DE ORDEN 5
-    const spo2 = this.calculatePolynomialSpO2(correctedRatio, cardiovascularModel);
+    const spo2 = this.calculatePolynomialOxygenSaturation(correctedRatio, cardiovascularModel);
     
     return {
       spo2,
@@ -455,21 +455,17 @@ export class AdvancedMathematicalProcessor {
     return baselineSaturation * flowFactor * ratioFactor;
   }
 
-  private calculatePolynomialSpO2(ratio: number, cardiovascularModel: any): number {
+  private calculatePolynomialOxygenSaturation(ratio: number, cardiovascularModel: any): number {
     // Polinomio de grado 5 calibrado con datos clínicos
     const coefficients = [110.0, -25.0, 15.0, -8.0, 2.0, -0.3];
     
-    let spo2 = 70; // valor mínimo fisiológico como base
+    let oxygenSaturation = 70; // base fisiológica
     for (let i = 0; i < coefficients.length; i++) {
-      spo2 += coefficients[i] * Math.pow(ratio, i);
+      oxygenSaturation += coefficients[i] * Math.pow(ratio, i);
     }
-    
-    // Corrección basada en modelo cardiovascular
     const cardiovascularCorrection = cardiovascularModel.oxygenSaturationIndex * 5;
-    spo2 += cardiovascularCorrection;
-    
-    // Aplicar límites fisiológicos
-    return Math.max(70, Math.min(100, spo2));
+    oxygenSaturation += cardiovascularCorrection;
+    return Math.max(70, Math.min(100, oxygenSaturation));
   }
 
   private async runNeuralNetworkInference(
