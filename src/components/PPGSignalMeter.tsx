@@ -17,6 +17,15 @@ interface PPGSignalMeterProps {
     rrVariation: number;
   } | null;
   preserveResults?: boolean;
+  debug?: {
+    snr?: number;
+    bandRatio?: number;
+    reasons?: string[];
+    gatedFinger?: boolean;
+    gatedQuality?: boolean;
+    gatedSnr?: boolean;
+    spectralOk?: boolean;
+  };
 }
 
 const PPGSignalMeter = ({ 
@@ -27,7 +36,8 @@ const PPGSignalMeter = ({
   onReset,
   arrhythmiaStatus,
   rawArrhythmiaData,
-  preserveResults = false
+  preserveResults = false,
+  debug
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
@@ -41,19 +51,19 @@ const PPGSignalMeter = ({
   const [showArrhythmiaAlert, setShowArrhythmiaAlert] = useState(false);
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const WINDOW_WIDTH_MS = 2300;
+  const WINDOW_WIDTH_MS = 3500;
   const CANVAS_WIDTH = 1000;
-  const CANVAS_HEIGHT = 800;
-  const GRID_SIZE_X = 45;
+  const CANVAS_HEIGHT = 1900;
+  const GRID_SIZE_X = 22;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 95.0;
+  const verticalScale = 225.0;
   const SMOOTHING_FACTOR = 1.5;
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
   const PEAK_DETECTION_WINDOW = 8;
-  const PEAK_THRESHOLD = 3;
-  const MIN_PEAK_DISTANCE_MS = 400;
+  const PEAK_THRESHOLD = 2;
+  const MIN_PEAK_DISTANCE_MS = 300;
   const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
 
@@ -216,7 +226,12 @@ const PPGSignalMeter = ({
     
     const now = Date.now();
     
-    drawGrid(ctx);
+    // Usar grilla prerenderizada si está disponible para reducir carga
+    if (gridCanvasRef.current) {
+      ctx.drawImage(gridCanvasRef.current, 0, 0, canvas.width, canvas.height);
+    } else {
+      drawGrid(ctx);
+    }
     
     if (preserveResults && !isFingerDetected) {
       lastRenderTimeRef.current = currentTime;
@@ -328,6 +343,7 @@ const PPGSignalMeter = ({
       });
     }
     
+    // Limitar a TARGET_FPS usando timestamp
     lastRenderTimeRef.current = currentTime;
     animationFrameRef.current = requestAnimationFrame(renderSignal);
   }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);
@@ -368,6 +384,50 @@ const PPGSignalMeter = ({
         height={CANVAS_HEIGHT}
         className="w-full h-[100vh] absolute inset-0 z-0"
       />
+
+      {/* Panel de diagnóstico (sobre la botonera) */}
+      <div className="absolute left-0 right-0 bottom-[60px] z-10 px-3 pb-2">
+        <div className="mx-3 rounded-lg border border-white/10 bg-black/40 backdrop-blur px-3 py-2 text-[10px] text-blue-100 grid grid-cols-3 gap-2">
+          <div>
+            <div className="opacity-70">Dedo</div>
+            <div className={isFingerDetected ? 'text-green-300 font-bold' : 'text-red-300 font-bold'}>
+              {isFingerDetected ? 'Detectado' : 'No detectado'}
+            </div>
+          </div>
+          <div>
+            <div className="opacity-70">Calidad</div>
+            <div className="font-bold">{Math.round(quality)}%</div>
+          </div>
+          <div>
+            <div className="opacity-70">FPS aprox.</div>
+            <div>{Math.round(1000 / Math.max(1, (performance.now() - lastRenderTimeRef.current)))} </div>
+          </div>
+        </div>
+        <div className="mx-3 mt-1 rounded-lg border border-white/10 bg-black/30 backdrop-blur px-3 py-2 text-[10px] text-blue-100 grid grid-cols-3 gap-2">
+          <div>
+            <div className="opacity-70">SNR</div>
+            <div className="font-bold">{debug?.snr !== undefined ? debug.snr.toFixed(2) : '--'}</div>
+          </div>
+          <div>
+            <div className="opacity-70">Band</div>
+            <div className="font-bold">{debug?.bandRatio !== undefined ? debug.bandRatio.toFixed(2) : '--'}</div>
+          </div>
+          <div>
+            <div className="opacity-70">Gates</div>
+            <div className="font-bold">
+              {debug ? (
+                <>
+                  {debug.gatedFinger ? '✓' : '✗'} dedo · {debug.gatedQuality ? '✓' : '✗'} cal · {debug.gatedSnr ? '✓' : '✗'} snr · {debug.spectralOk ? '✓' : '✗'} spec
+                </>
+              ) : '--'}
+            </div>
+          </div>
+          <div className="col-span-3">
+            <div className="opacity-70">Motivos</div>
+            <div className="font-bold truncate">{debug?.reasons && debug.reasons.length ? debug.reasons.join(', ') : '—'}</div>
+          </div>
+        </div>
+      </div>
 
       <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
         <div className="flex items-center gap-2">

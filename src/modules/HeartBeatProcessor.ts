@@ -230,14 +230,32 @@ export class HeartBeatProcessor {
   private lastProcessedTimestamp = 0;
   private lastProcessedValue: number | null = null;
 
-  public processSignal(value: number, timestamp?: number): {
+  public processSignal(value: number, timestamp?: number, ctx?: { fingerDetected?: boolean; channelQuality?: number; channelSnr?: number }): {
     bpm: number;
     confidence: number;
     isPeak: boolean;
     filteredValue: number;
     arrhythmiaCount: number;
     signalQuality?: number;  // Añadido campo para retroalimentación
+    debug?: {
+      gatedFinger: boolean;
+      gatedQuality: boolean;
+      gatedSnr: boolean;
+      spectralOk: boolean;
+      bandRatio: number;
+    };
   } {
+    // Log cada 30 llamadas para debug
+    if (this.values.length % 30 === 0) {
+      console.log('🔬 HeartBeatProcessor - Recibiendo:', {
+        value: value.toFixed(4),
+        timestamp: timestamp ? new Date(timestamp).toLocaleTimeString() : 'no timestamp',
+        bufferLength: this.values.length,
+        smoothedValue: this.smoothedValue.toFixed(4),
+        baseline: this.baseline.toFixed(4)
+      });
+    }
+    
     // LIMPIEZA AUTOMÁTICA: Cada 50 frames, limpiar buffers para prevenir degradación
     if (this.values.length % 50 === 0) {
       this.cleanupBuffers();
@@ -316,12 +334,20 @@ export class HeartBeatProcessor {
     // Calcular calidad de señal actual basada en varios factores (0-100)
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
 
-    if (isConfirmedPeak && !this.isInWarmup()) {
+    // GATING ROBUSTO por dedo/calidad/SNR antes de aceptar picos
+    const gatedFinger = ctx?.fingerDetected === true;
+    const gatedQuality = (ctx?.channelQuality ?? 0) >= 45;
+    const gatedSnr = (ctx?.channelSnr ?? 0) >= 1.4;
+
+    let spectralOkComputed = false;
+    let bandRatioComputed = 0;
+    if (isConfirmedPeak && !this.isInWarmup() && gatedFinger && gatedQuality && gatedSnr) {
       const now = Date.now();
       const timeSinceLastPeak = this.lastPeakTime
         ? now - this.lastPeakTime
         : Number.MAX_VALUE;
 
+ cursor/diagnosticar-lentitud-y-fallos-de-linterna-latidos-806e
               // Validación médicamente apropiada
         if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
           // Validación estricta según criterios médicos
@@ -338,10 +364,29 @@ export class HeartBeatProcessor {
           });
           
           if (isValidPeak) {
+
+      // Validación médicamente apropiada
+      if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
+        // Validación estricta según criterios médicos + espectral cardiaca
+        const fs = this.DEFAULT_SAMPLE_RATE;
+        const shortWindow = this.signalBuffer.slice(-Math.min(this.signalBuffer.length, 128));
+        // Obtener ratio de banda cardiaca
+        const mean = shortWindow.reduce((a,b)=>a+b,0)/Math.max(1, shortWindow.length);
+        const x = shortWindow.map(v=>v-mean);
+        const freqs = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5];
+        let band = 0; for (const f of freqs) band += this.goertzel(x, fs, f);
+        const oobFreqs = [0.2, 0.4, 0.6, 4.0, 5.0, 6.0];
+        let oob = 0; for (const f of oobFreqs) oob += this.goertzel(x, fs, f);
+        bandRatioComputed = oob > 0 ? band / oob : band;
+        spectralOkComputed = bandRatioComputed > 2.0;
+        
+        if (this.validatePeak(normalizedValue, confidence) && spectralOkComputed) {
+ main
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
           
           // Reproducir sonido y actualizar estado
+          // AUDIO GATING: sólo si gating completo está OK
           this.playHeartSound(1.0, this.isArrhythmiaDetected);
 
           this.updateBPM();
@@ -380,7 +425,14 @@ export class HeartBeatProcessor {
       isPeak: isPeak,
       filteredValue: filteredValue, // Usando la variable correctamente definida
       arrhythmiaCount: 0,
-      signalQuality: this.currentSignalQuality // Retroalimentación de calidad
+      signalQuality: this.currentSignalQuality, // Retroalimentación de calidad
+      debug: {
+        gatedFinger,
+        gatedQuality,
+        gatedSnr,
+        spectralOk: spectralOkComputed,
+        bandRatio: Number.isFinite(bandRatioComputed) ? bandRatioComputed : 0
+      }
     };
   }
   
@@ -693,14 +745,8 @@ export class HeartBeatProcessor {
         const bpm = this.bpmHistory[i];
         if (bpm > 30 && bpm < 200) { // Validar BPM fisiológico
           const rrInterval = 60000 / bpm;
-          // Aplicar variabilidad realista basada en calidad de señal
-          const variability = this.currentSignalQuality > 70 ? 0.02 : 0.05;
-          // Usar crypto.getRandomValues() en lugar de Math.random() para aplicaciones médicas
-          const randomBytes = new Uint32Array(1);
-          crypto.getRandomValues(randomBytes);
-          const randomValue = randomBytes[0] / (0xFFFFFFFF + 1);
-          const adjustedRR = rrInterval * (1 + (randomValue - 0.5) * variability);
-          rrIntervals.push(Math.max(300, Math.min(2000, adjustedRR)));
+          // No introducir jitter artificial; confiar en derivaciones reales
+          rrIntervals.push(Math.max(300, Math.min(2000, rrInterval)));
         }
       }
     }
@@ -872,5 +918,43 @@ export class HeartBeatProcessor {
     totalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3;
     
     return Math.min(Math.max(Math.round(totalQuality), 0), 100);
+  }
+
+  // Validación espectral rápida (Goertzel)
+  private isCardiacBandPresent(samples: number[], fs: number): boolean {
+    if (samples.length < 64) return false;
+    // normalizar a cero-mean
+    const mean = samples.reduce((a,b)=>a+b,0)/samples.length;
+    const x = samples.map(v=>v-mean);
+    const freqs = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5];
+    // potencia total en banda
+    let band = 0;
+    for (const f of freqs) {
+      band += this.goertzel(x, fs, f);
+    }
+    // potencia fuera de banda (bajas y altas) para SBR simple
+    const oobFreqs = [0.2, 0.4, 0.6, 4.0, 5.0, 6.0];
+    let oob = 0;
+    for (const f of oobFreqs) {
+      oob += this.goertzel(x, fs, f);
+    }
+    const ratio = oob > 0 ? band / oob : band;
+    return ratio > 2.0; // umbral conservador
+  }
+
+  private goertzel(signal: number[], fs: number, freq: number): number {
+    const N = signal.length;
+    const k = Math.round((freq / fs) * N);
+    const omega = (2 * Math.PI * k) / N;
+    const coeff = 2 * Math.cos(omega);
+    let s0 = 0, s1 = 0, s2 = 0;
+    for (let i = 0; i < N; i++) {
+      s0 = signal[i] + coeff * s1 - s2;
+      s2 = s1;
+      s1 = s0;
+    }
+    const real = s1 - s2 * Math.cos(omega);
+    const imag = s2 * Math.sin(omega);
+    return real * real + imag * imag;
   }
 }

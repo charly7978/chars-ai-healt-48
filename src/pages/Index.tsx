@@ -8,6 +8,7 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
+import { CameraSample } from "@/types";
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -33,6 +34,7 @@ const Index = () => {
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
+  const [lastHeartbeatDebug, setLastHeartbeatDebug] = useState<{ bandRatio?: number; gatedFinger?: boolean; gatedQuality?: boolean; gatedSnr?: boolean; spectralOk?: boolean } | null>(null);
   
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
@@ -46,8 +48,25 @@ const Index = () => {
   
   const { 
     handleSample,
-    lastResult
+    lastResult,
+    reset: resetSignalProcessor
   } = useSignalProcessor();
+  
+  // Agregar contador de muestras local para debug
+  const debugSampleCountRef = useRef(0);
+  
+  // Wrapper para debug
+  const handleCameraSample = (sample: CameraSample) => {
+    debugSampleCountRef.current++;
+    if (debugSampleCountRef.current % 30 === 0) {
+      console.log('📱 Index - Recibiendo muestra:', {
+        count: debugSampleCountRef.current,
+        rMean: sample.rMean.toFixed(1),
+        isMonitoring
+      });
+    }
+    handleSample(sample);
+  };
   
   const { 
     processSignal: processHeartBeat, 
@@ -166,6 +185,13 @@ const Index = () => {
       return;
     }
     
+    // Reset completo de pipelines para un nuevo ciclo limpio
+    fullResetVitalSigns();
+    resetHeartBeat();
+    // Reiniciar también el procesador multicanal
+    resetSignalProcessor();
+    // Esto limpia detecciones previas que podrían sesgar
+    
     systemState.current = 'STARTING';
     
     // Solo entrar en pantalla completa si el usuario lo permite
@@ -180,6 +206,7 @@ const Index = () => {
     setIsCalibrating(true);
     startCalibration();
     
+ cursor/diagnosticar-lentitud-y-fallos-de-linterna-latidos-806e
     // TRANSICIÓN MÁS RÁPIDA A ESTADO ACTIVO PARA MEJORAR DETECCIÓN
     setTimeout(() => {
       systemState.current = 'CALIBRATING';
@@ -188,6 +215,16 @@ const Index = () => {
     
     setTimeout(() => {
       systemState.current = 'ACTIVE';
+
+    // Cambiar estado a CALIBRATING
+    systemState.current = 'CALIBRATING';
+    
+    setTimeout(() => {
+      if (systemState.current === 'CALIBRATING') {
+        systemState.current = 'ACTIVE';
+        console.log('✅ Sistema cambiado a ACTIVE después de calibración');
+      }
+ main
       setIsCalibrating(false);
       console.log('✅ Sistema en estado ACTIVE - procesamiento completo habilitado');
     }, 3000); // Aumentado ligeramente para mejor calibración
@@ -220,6 +257,9 @@ const Index = () => {
     setIsMonitoring(false);
     setIsCameraOn(false);
     setIsCalibrating(false);
+    setSignalQuality(0);
+    setBeatMarker(0);
+    setHeartbeatSignal(0);
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -233,8 +273,11 @@ const Index = () => {
     }
     
     setElapsedTime(0);
-    setSignalQuality(0);
     setCalibrationProgress(0);
+    
+    // Reset de pipelines para preparar próximo ciclo sin arrastre
+    resetHeartBeat();
+    resetSignalProcessor();
     
     systemState.current = 'IDLE';
   };
@@ -246,6 +289,9 @@ const Index = () => {
     setIsCameraOn(false);
     setShowResults(false);
     setIsCalibrating(false);
+    setSignalQuality(0);
+    setBeatMarker(0);
+    setHeartbeatSignal(0);
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -257,8 +303,6 @@ const Index = () => {
     
     setElapsedTime(0);
     setHeartRate(0);
-    setHeartbeatSignal(0);
-    setBeatMarker(0);
     setVitalSigns({ 
       spo2: 0,
       glucose: 0,
@@ -283,6 +327,7 @@ const Index = () => {
   useEffect(() => {
     if (!lastResult) return;
 
+ cursor/diagnosticar-lentitud-y-fallos-de-linterna-latidos-806e
     const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 20) || 
                        lastResult.channels.find(ch => ch.quality > 15) || 
                        lastResult.channels[0];
@@ -310,6 +355,41 @@ const Index = () => {
         fingerDetected: bestChannel?.isFingerDetected,
         systemState: systemState.current
       });
+
+    const bestChannel = lastResult.fingerDetected
+      ? lastResult.channels
+          .filter(ch => ch.isFingerDetected)
+          .sort((a, b) => b.quality - a.quality)[0]
+      : undefined;
+    setSignalQuality(lastResult.fingerDetected ? (bestChannel?.quality || 0) : 0);
+    
+    // Log para debug
+    if (debugSampleCountRef.current % 30 === 0) {
+      console.log('🔄 Index useEffect - Estado:', {
+        hasLastResult: !!lastResult,
+        isMonitoring,
+        systemState: systemState.current,
+        bestChannelId: bestChannel?.channelId,
+        bestChannelDetected: bestChannel?.isFingerDetected,
+        bestChannelQuality: bestChannel?.quality,
+        signalLength: bestChannel?.calibratedSignal?.length
+      });
+    }
+    
+    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
+    
+    const MIN_SIGNAL_QUALITY = 20; // Reducido de 25 a 20
+    
+    if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
+      // Log cuando no detecta para debug
+      if (debugSampleCountRef.current % 30 === 0) {
+        console.log('⚠️ No procesando señal:', {
+          isFingerDetected: bestChannel?.isFingerDetected,
+          quality: bestChannel?.quality,
+          minRequired: MIN_SIGNAL_QUALITY
+        });
+      }
+ main
       return;
     }
     
@@ -324,8 +404,30 @@ const Index = () => {
     const heartBeatResult = processHeartBeat(
       bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0,
       bestChannel.isFingerDetected, 
-      lastResult.timestamp
+      lastResult.timestamp,
+      { quality: bestChannel.quality, snr: bestChannel.snr }
     );
+    if (heartBeatResult?.debug) {
+      setLastHeartbeatDebug({
+        bandRatio: heartBeatResult.debug.bandRatio,
+        gatedFinger: heartBeatResult.debug.gatedFinger,
+        gatedQuality: heartBeatResult.debug.gatedQuality,
+        gatedSnr: heartBeatResult.debug.gatedSnr,
+        spectralOk: heartBeatResult.debug.spectralOk
+      });
+    }
+    
+    // Log para debug del procesamiento
+    if (debugSampleCountRef.current % 30 === 0) {
+      console.log('💓 Procesando heartbeat:', {
+        signalValue: bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1]?.toFixed(3),
+        signalLength: bestChannel.calibratedSignal.length,
+        isFingerDetected: bestChannel.isFingerDetected,
+        timestamp: new Date(lastResult.timestamp).toLocaleTimeString(),
+        resultBPM: heartBeatResult.bpm,
+        isPeak: heartBeatResult.isPeak
+      });
+    }
     
     const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
     setHeartRate(finalBpm);
@@ -398,9 +500,10 @@ const Index = () => {
 
     const getQualityText = () => {
       if (!lastResult?.fingerDetected) return 'Sin detección';
-      if (signalQuality >= 80) return 'Excelente';
-      if (signalQuality >= 60) return 'Buena';
-      if (signalQuality >= 40) return 'Regular';
+      if (!lastResult?.fingerDetected) return 'Sin detección';
+      if (signalQuality >= 85) return 'Excelente';
+      if (signalQuality >= 65) return 'Buena';
+      if (signalQuality >= 45) return 'Regular';
       return 'Débil';
     };
 
@@ -538,12 +641,12 @@ const Index = () => {
       <div className="flex-1 relative">
         <div className="absolute inset-0">
           <CameraView 
-            onSample={handleSample}
+            onSample={handleCameraSample}
             isMonitoring={isCameraOn}
             targetFps={30}
             roiSize={320}
             enableTorch={true}
-            coverageThresholdPixelBrightness={15}
+            coverageThresholdPixelBrightness={40}
           />
         </div>
 
@@ -561,6 +664,22 @@ const Index = () => {
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
+              debug={{
+                snr: (lastResult?.channels.find(c => c.isFingerDetected)?.snr) ?? 0,
+                bandRatio: (typeof lastHeartbeatDebug?.bandRatio === 'number' ? lastHeartbeatDebug.bandRatio : undefined),
+                reasons: (() => {
+                  const r: string[] = [];
+                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedFinger) r.push('sin dedo');
+                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedQuality) r.push('calidad baja');
+                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedSnr) r.push('SNR bajo');
+                  if (lastHeartbeatDebug && lastHeartbeatDebug.spectralOk === false) r.push('espectral bajo');
+                  return r;
+                })(),
+                gatedFinger: lastHeartbeatDebug?.gatedFinger,
+                gatedQuality: lastHeartbeatDebug?.gatedQuality,
+                gatedSnr: lastHeartbeatDebug?.gatedSnr,
+                spectralOk: lastHeartbeatDebug?.spectralOk
+              }}
             />
           </div>
 
