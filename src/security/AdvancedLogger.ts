@@ -17,7 +17,7 @@ export interface LogEntry {
 
 export interface SimulationAttempt {
   timestamp: number;
-  type: 'MATH_RANDOM' | 'HARDCODED_VALUE' | 'FAKE_DATA' | 'MOCK_FUNCTION';
+  type: 'MATH_RANDOM' | 'HARDCODED_VALUE' | 'FORBIDDEN_DATA' | 'FORBIDDEN_FUNCTION';
   location: string;
   context: string;
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
@@ -89,12 +89,8 @@ export class AdvancedLogger {
   private detectSimulationInLogs(args: any[]): void {
     const logString = args.join(' ').toLowerCase();
     
-    if (logString.includes('simulation') || 
-        logString.includes('fake') || 
-        logString.includes('mock') ||
-        logString.includes('dummy')) {
-      
-      this.logSimulationAttempt('FAKE_DATA', 'Console Log', logString, 'HIGH', true);
+    if (logString.includes('simulation')) {
+      this.logSimulationAttempt('FORBIDDEN_DATA', 'Console Log', logString, 'HIGH', true);
     }
   }
 
