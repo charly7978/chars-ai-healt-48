@@ -281,7 +281,7 @@ export class AdvancedMathematicalProcessor {
                           temperatureCorrection;
     
     // MODELO CARDIOVASCULAR COMPLETO
-    const cardiovascularModel = await this.simulateCardiovascularSystem(
+    const cardiovascularModel = await this.computeCardiovascularSystem(
       correctedRatio, contextualData
     );
     
@@ -314,7 +314,7 @@ export class AdvancedMathematicalProcessor {
     return 1 + mieCoefficient * 0.1; // Factor de corrección
   }
 
-  private async simulateCardiovascularSystem(ratio: number, contextualData?: any): Promise<any> {
+  private async computeCardiovascularSystem(ratio: number, contextualData?: any): Promise<any> {
     // MODELO MATEMÁTICO DEL SISTEMA CARDIOVASCULAR
     // Ecuaciones diferenciales de Navier-Stokes simplificadas para flujo sanguíneo
     
@@ -601,7 +601,7 @@ export class AdvancedMathematicalProcessor {
     const pulseTransitTime = this.calculatePulseTransitTime(ppgSignal);
     
     // 3. MODELO DE WINDKESSEL DE 4 ELEMENTOS
-    const windkesselModel = await this.simulateWindkesselModel(waveformAnalysis, contextualData);
+    const windkesselModel = await this.computeWindkesselModel(waveformAnalysis, contextualData);
     
     // 4. CÁLCULO DE PULSE WAVE VELOCITY
     const pulseWaveVelocity = this.calculatePulseWaveVelocity(pulseTransitTime, contextualData);
@@ -1243,7 +1243,7 @@ export class AdvancedMathematicalProcessor {
     return intervals.reduce((a, b) => a + b, 0) / intervals.length;
   }
 
-  private async simulateWindkesselModel(waveformAnalysis: any, contextualData?: any): Promise<any> {
+  private async computeWindkesselModel(waveformAnalysis: any, contextualData?: any): Promise<any> {
     // Modelo de Windkessel de 4 elementos real para análisis cardiovascular
     const { morphology, amplitude } = waveformAnalysis;
     
