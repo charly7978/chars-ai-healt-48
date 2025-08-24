@@ -55,7 +55,9 @@ export class AdvancedLogger {
 
   private generateSessionId(): string {
     const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substring(2);
+    const array = new Uint32Array(2);
+    crypto.getRandomValues(array);
+    const random = Array.from(array).map(n => n.toString(36)).join('');
     return `${timestamp}-${random}`;
   }
 
@@ -132,8 +134,10 @@ export class AdvancedLogger {
   }
 
   private addLog(level: LogEntry['level'], category: LogEntry['category'], message: string, context?: Record<string, any>): void {
+    const randArr = new Uint32Array(1);
+    crypto.getRandomValues(randArr);
     const entry: LogEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).substring(2)}`,
+      id: `${Date.now()}-${randArr[0].toString(36)}`,
       timestamp: Date.now(),
       level,
       category,
