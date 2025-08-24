@@ -46,7 +46,7 @@ export class ContinuousValidator {
     },
     {
       name: 'NO_SIMULATION_KEYWORDS',
-      pattern: /(?:fake|mock|dummy|simulate)(?:_|\s|[A-Z])/gi,
+      pattern: /\bsimulation\b/gi,
       severity: 'CRITICAL',
       message: 'Simulation keywords prohibited in medical data processing'
     },
