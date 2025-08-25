@@ -46,7 +46,7 @@ export class VitalSignsProcessor {
   
   // ESTADO ACTUAL CON FORMATO CORRECTO
   private measurements = {
-    spo2: 95, // Valor fisiológico válido
+    spo2: 95, // rango: 70-100
     glucose: 0,
     hemoglobin: 0,
     systolicPressure: 0,
@@ -73,7 +73,7 @@ export class VitalSignsProcessor {
     
     // RESETEAR TODAS LAS MEDICIONES
     this.measurements = {
-      spo2: 95, // Valor fisiológico válido
+      spo2: 95, // rango: 70-100
       glucose: 0,
       hemoglobin: 0,
       systolicPressure: 0,
@@ -567,7 +567,7 @@ export class VitalSignsProcessor {
     console.log("🗑️ VitalSignsProcessor: Reset COMPLETO");
     
     this.measurements = {
-      spo2: 95, // Valor fisiológico válido
+      spo2: 95, // rango: 70-100
       glucose: 0,
       hemoglobin: 0,
       systolicPressure: 0,
