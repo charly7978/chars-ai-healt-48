@@ -36,7 +36,7 @@ const CameraView: React.FC<CameraViewProps> = ({
 
     const startCam = async () => {
       try {
-        console.log('🎥 INICIANDO SISTEMA CÁMARA COMPLETO...');
+        // Log eliminado para mejorar rendimiento
         
         // CRÍTICO: Constraints optimizadas para PPG
         const constraints: MediaStreamConstraints = {
@@ -58,7 +58,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         }
 
         streamRef.current = stream;
-        console.log('✅ Stream obtenido correctamente');
+        // Stream obtenido correctamente
 
         // CREAR VIDEO ELEMENT - CRÍTICO
         const video = document.createElement('video');
@@ -77,7 +77,7 @@ const CameraView: React.FC<CameraViewProps> = ({
           // Limpiar contenedor primero
           containerRef.current.innerHTML = '';
           containerRef.current.appendChild(video);
-          console.log('✅ Video agregado al DOM exitosamente');
+          // Video agregado al DOM exitosamente
         }
 
         // Asignar stream
@@ -192,7 +192,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     const startFrameCapture = () => {
       if (!mounted || !isMonitoring) return;
       
-      console.log('🎬 INICIANDO CAPTURA DE FRAMES PPG...');
+      // Iniciando captura de frames PPG
       
       const captureLoop = () => {
         if (!mounted || !isMonitoring || !videoRef.current || !canvasRef.current) {
@@ -202,14 +202,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         try {
           const sample = captureOptimizedFrame();
           if (sample && onSample) {
-            // Log cada 30 frames para debug
-            if (rafRef.current && rafRef.current % 30 === 0) {
-              console.log('📸 CameraView - Muestra capturada:', {
-                rMean: sample.rMean.toFixed(1),
-                coverageRatio: (sample.coverageRatio * 100).toFixed(1) + '%',
-                timestamp: new Date(sample.timestamp).toLocaleTimeString()
-              });
-            }
+            // Log eliminado para mejorar rendimiento
             onSample(sample);
           }
         } catch (captureError) {

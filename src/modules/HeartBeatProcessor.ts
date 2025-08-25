@@ -110,7 +110,7 @@ export class HeartBeatProcessor {
     try {
       this.audioContext = new AudioContext();
       await this.audioContext.resume();
-      console.log("HeartBeatProcessor: Audio Context Initialized and resumed");
+      // Audio Context inicializado
       
       // Reproducir un sonido de prueba audible para desbloquear el audio
       await this.playTestSound(0.3); // Volumen incrementado

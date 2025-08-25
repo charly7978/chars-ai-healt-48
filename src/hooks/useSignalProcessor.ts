@@ -38,18 +38,12 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     const fused = 0.8 * s.rMean + 0.2 * chroma; // más peso a R para estabilidad
     const inputSignal = Math.max(0, Math.min(255, fused));
     
-    // Log detallado cada 150 muestras para debug (reducido de 30)
-    if (sampleCountRef.current % 150 === 0) {
+    // Log reducido para mejor rendimiento - solo cada 1000 muestras
+    if (sampleCountRef.current % 1000 === 0) {
       console.log('📊 useSignalProcessor - Muestra #' + sampleCountRef.current + ':', {
         timestamp: new Date(s.timestamp).toLocaleTimeString(),
         inputSignal: inputSignal.toFixed(1),
-        rMean: s.rMean.toFixed(1),
-        gMean: s.gMean.toFixed(1),
-        bMean: s.bMean.toFixed(1),
-        rStd: s.rStd.toFixed(1),
-        coverageRatio: (s.coverageRatio * 100).toFixed(1) + '%',
-        frameDiff: s.frameDiff.toFixed(1),
-        brightnessMean: s.brightnessMean.toFixed(1)
+        coverageRatio: (s.coverageRatio * 100).toFixed(1) + '%'
       });
     }
 
@@ -77,21 +71,13 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     const adjustedMotion = motion;
     const result = mgrRef.current!.analyzeAll(adjustedCoverage, adjustedMotion);
     
-    // Log resultado cada 150 muestras o cuando hay detección (reducido de 50)
-    if (result.fingerDetected || sampleCountRef.current % 150 === 0) {
+    // Log reducido - solo cuando hay detección o cada 1000 muestras
+    if (result.fingerDetected && sampleCountRef.current % 1000 === 0) {
       const activeChannels = result.channels.filter(c => c.isFingerDetected).length;
-      const bestChannel = result.channels.reduce((best, current) => 
-        current.quality > best.quality ? current : best, result.channels[0]);
-      
-      console.log('🔍 useSignalProcessor - Resultado:', {
-        fingerDetected: result.fingerDetected,
-        aggregatedBPM: result.aggregatedBPM,
-        aggregatedQuality: result.aggregatedQuality,
-        activeChannels: `${activeChannels}/${result.channels.length}`,
-        bestChannelId: bestChannel.channelId,
-        bestChannelQuality: bestChannel.quality.toFixed(1),
-        bestChannelSNR: bestChannel.snr.toFixed(2),
-        bestChannelBPM: bestChannel.bpm || 'null'
+      console.log('🔍 Detección:', {
+        BPM: result.aggregatedBPM,
+        quality: result.aggregatedQuality.toFixed(1),
+        activeChannels
       });
     }
     
