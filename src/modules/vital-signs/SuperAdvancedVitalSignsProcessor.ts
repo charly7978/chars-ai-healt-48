@@ -6,7 +6,8 @@
  */
 
 import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
-import { simulationEradicator } from '../../security/SimulationEradicator';
+// ELIMINADO: import { simulationEradicator } from '../../security/SimulationEradicator';
+// Causa problemas severos de rendimiento - procesamiento matemático extremadamente pesado
 
 interface AdvancedVitalSignsResult {
   // Oximetría de pulso con análisis espectral
@@ -243,22 +244,10 @@ export class SuperAdvancedVitalSignsProcessor {
     
     const processingStartTime = performance.now();
     
-    // VALIDACIÓN ANTI-SIMULACIÓN MÁS TOLERANTE PARA DEBUGGING
-    try {
-      const simulationValidation = await simulationEradicator.validateBiophysicalSignal(
-        ppgSignal, 
-        Date.now(),
-        {
-          heartRate: this.estimateHeartRateQuick(ppgSignal),
-          spo2: this.estimateSpO2Quick(ppgSignal)
-        }
-      );
-      
-      // Eliminar validación anti-simulación - permitir datos reales solamente
-      console.log("✅ Procesando señal PPG real sin validaciones artificiales");
-    } catch (error) {
-      console.warn("⚠️ Error en validación avanzada, continuando:", error);
-    }
+    // ELIMINADO: Validación anti-simulación que causaba problemas severos de rendimiento
+    // El SimulationEradicator ejecutaba FFT de 4096 puntos, wavelets, y análisis de caos en CADA muestra
+    // Esto causaba el colapso total del rendimiento con 30-60 muestras por segundo
+    const simulationValidation = { isSimulation: false, confidence: 0, violationDetails: [] };
     
     // Actualizar buffer de medición
     this.updateMeasurementBuffer(ppgSignal);
