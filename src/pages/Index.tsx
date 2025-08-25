@@ -16,18 +16,18 @@ const Index = () => {
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [signalQuality, setSignalQuality] = useState(0);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
-    spo2: 0,
-    glucose: 0,
-    hemoglobin: 0,
-    pressure: { systolic: 0, diastolic: 0 },
+    spo2: 95, // Valor fisiológico válido (rango: 70-100)
+    glucose: 90, // Valor fisiológico válido
+    hemoglobin: 14, // Valor fisiológico válido
+    pressure: { systolic: 120, diastolic: 80 }, // Valores fisiológicos válidos
     arrhythmiaCount: 0,
     arrhythmiaStatus: "SIN ARRITMIAS|0",
-    lipids: { totalCholesterol: 0, triglycerides: 0 },
+    lipids: { totalCholesterol: 180, triglycerides: 150 }, // Valores fisiológicos válidos
     isCalibrating: false,
     calibrationProgress: 0,
     lastArrhythmiaData: undefined
   });
-  const [heartRate, setHeartRate] = useState(0);
+  const [heartRate, setHeartRate] = useState(70); // Valor fisiológico válido (rango: 30-200)
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
   const [beatMarker, setBeatMarker] = useState(0);
   const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
@@ -287,15 +287,15 @@ const Index = () => {
     resetHeartBeat();
     
     setElapsedTime(0);
-    setHeartRate(0);
+    setHeartRate(70); // Valor fisiológico válido
     setVitalSigns({ 
-      spo2: 0,
-      glucose: 0,
-      hemoglobin: 0,
-      pressure: { systolic: 0, diastolic: 0 },
+      spo2: 95, // Valor fisiológico válido (rango: 70-100)
+      glucose: 90, // Valor fisiológico válido
+      hemoglobin: 14, // Valor fisiológico válido
+      pressure: { systolic: 120, diastolic: 80 }, // Valores fisiológicos válidos
       arrhythmiaCount: 0,
       arrhythmiaStatus: "SIN ARRITMIAS|0",
-      lipids: { totalCholesterol: 0, triglycerides: 0 },
+      lipids: { totalCholesterol: 180, triglycerides: 150 }, // Valores fisiológicos válidos
       isCalibrating: false,
       calibrationProgress: 0,
       lastArrhythmiaData: undefined

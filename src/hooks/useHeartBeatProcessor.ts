@@ -55,7 +55,7 @@ export const useHeartBeatProcessor = () => {
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number, ctx?: { quality?: number; snr?: number }): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
       return {
-        bpm: 70, // Valor inicial fisiológico en lugar de 0
+        bpm: 70, // Valor fisiológico válido
         confidence: 0,
         isPeak: false,
         arrhythmiaCount: 0,
