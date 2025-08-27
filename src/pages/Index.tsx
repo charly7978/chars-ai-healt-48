@@ -12,7 +12,6 @@ import { CameraSample } from "@/types";
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const [isCameraOn, setIsCameraOn] = useState(true);
   const [signalQuality, setSignalQuality] = useState(0);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: Number.NaN,
@@ -64,8 +63,10 @@ const Index = () => {
     const fused = Math.max(0, Math.min(255, 0.8 * sample.rMean + 0.2 * chroma));
     setHeartbeatSignal(fused);
     
-    // ✅ PROCESAR UNA SOLA VEZ - SIN DUPLICACIONES  
-    handleSample(sample);
+    // ✅ PROCESAR SOLO DURANTE MEDICIÓN/CALIBRACIÓN - SIN DUPLICACIONES
+    if (systemState.current === 'ACTIVE' || systemState.current === 'CALIBRATING') {
+      handleSample(sample);
+    }
   };
   
   const { 
@@ -201,7 +202,6 @@ const Index = () => {
     } catch {}
     
     setIsMonitoring(true);
-    setIsCameraOn(true);
     setShowResults(false);
     
     setElapsedTime(0);
@@ -211,14 +211,6 @@ const Index = () => {
     startCalibration();
     
     systemState.current = 'CALIBRATING';
-    
-    setTimeout(() => {
-      if (systemState.current === 'CALIBRATING') {
-        systemState.current = 'ACTIVE';
-        console.log('✅ Sistema ACTIVO - Procesamiento de latidos reales habilitado');
-      }
-      setIsCalibrating(false);
-    }, 2000);
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -246,7 +238,6 @@ const Index = () => {
     }
     
     setIsMonitoring(false);
-    setIsCameraOn(false);
     setIsCalibrating(false);
     setSignalQuality(0);
     setBeatMarker(0);
@@ -277,7 +268,6 @@ const Index = () => {
     systemState.current = 'STOPPING';
     
     setIsMonitoring(false);
-    setIsCameraOn(false);
     setShowResults(false);
     setIsCalibrating(false);
     setSignalQuality(0);
@@ -399,6 +389,10 @@ const Index = () => {
 
       if (currentProgress >= 100) {
         clearInterval(interval);
+        if (systemState.current === 'CALIBRATING') {
+          systemState.current = 'ACTIVE';
+          console.log('✅ Sistema ACTIVO - Calibración completada');
+        }
         setIsCalibrating(false);
       }
     }, 100); // Optimizado de 500ms a 100ms para mejor respuesta
@@ -567,7 +561,7 @@ const Index = () => {
         <div className="absolute inset-0">
           <CameraView 
             onSample={handleCameraSample}
-            isMonitoring={isCameraOn}
+            isMonitoring={isMonitoring}
             targetFps={30}
             roiSize={320}
             enableTorch={true}
