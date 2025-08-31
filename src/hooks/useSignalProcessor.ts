@@ -14,7 +14,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
   const sampleCountRef = useRef(0);
   const lastEnvRef = useRef<{ fingerConfidence: number; exposureState: CameraSample['exposureState'] } | null>(null);
   const lastAnalyzeTimeRef = useRef<number>(0);
-  const analyzeIntervalMsRef = useRef<number>(50); // ~20 Hz para mejor latencia
+  const analyzeIntervalMsRef = useRef<number>(33); // ~30 Hz para mejor continuidad (era 50ms/20Hz)
 
   if (!mgrRef.current) {
     mgrRef.current = new MultiChannelManager(channels, windowSec);
