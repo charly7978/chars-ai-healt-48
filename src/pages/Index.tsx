@@ -60,9 +60,18 @@ const Index = () => {
     debugSampleCountRef.current++;
     
     // ✅ ALIMENTAR ONDA DEL MONITOR CON SEÑAL PPG REAL
-    const chroma = sample.rMean - 0.5 * sample.gMean;
-    const fused = Math.max(0, Math.min(255, 0.8 * sample.rMean + 0.2 * chroma));
-    setHeartbeatSignal(fused);
+    setHeartbeatSignal(sample.rMean);
+    
+    // Debug cada 150 muestras
+    if (debugSampleCountRef.current % 150 === 0) {
+      console.log('💓 Muestra de cámara:', {
+        muestra: debugSampleCountRef.current,
+        rMean: sample.rMean.toFixed(1),
+        gMean: sample.gMean.toFixed(1),
+        coverageRatio: (sample.coverageRatio * 100).toFixed(0) + '%',
+        fingerConfidence: (sample.fingerConfidence * 100).toFixed(0) + '%'
+      });
+    }
     
     // ✅ PROCESAR UNA SOLA VEZ - SIN DUPLICACIONES  
     handleSample(sample);

@@ -34,17 +34,19 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       exposureState: s.exposureState
     };
     
-    // Refinamiento de señal MEJORADO: usar componente AC puro
-    // Extraer componente pulsátil (AC) eliminando componente DC
-    const dcComponent = s.rMean * 0.7 + s.gMean * 0.3; // Componente DC estimado
-    const acRed = s.rMean - dcComponent;
-    const acGreen = s.gMean - dcComponent * 0.8; // Verde tiene menos componente DC
+    // Señal PPG DIRECTA y SIMPLE
+    // Usar solo el canal rojo que tiene la mayor pulsatilidad
+    const inputSignal = s.rMean;
     
-    // Señal PPG óptima: maximizar componente AC
-    const ppgSignal = acRed - 0.5 * acGreen; // Resta verde para eliminar artefactos
-    
-    // Normalizar a escala 0-255 manteniendo el componente AC
-    const inputSignal = Math.max(0, Math.min(255, 128 + ppgSignal * 2));
+    // Debug cada 300 muestras
+    if (sampleCountRef.current % 300 === 0) {
+      console.log('📡 Señal PPG directa:', {
+        rMean: s.rMean.toFixed(1),
+        gMean: s.gMean.toFixed(1),
+        coverageRatio: (s.coverageRatio * 100).toFixed(1) + '%',
+        inputSignal: inputSignal.toFixed(1)
+      });
+    }
     
     // Log detallado MUY ocasional para debug
     if (sampleCountRef.current % 600 === 0) {
