@@ -23,13 +23,13 @@ export default class MultiChannelManager {
   private fingerStableCount = 0;
   private fingerUnstableCount = 0;
   private lastGlobalToggle = 0;
-  private readonly GLOBAL_HOLD_MS = 900;
+  private readonly GLOBAL_HOLD_MS = 300; // Reducido de 900ms para mejor respuesta
   private coverageEma: number | null = null;
   private motionEma: number | null = null;
   
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
   private readonly FRAMES_TO_CONFIRM_FINGER = 7;    // robusto para confirmar
-  private readonly FRAMES_TO_LOSE_FINGER = 20;      // perder dedo sólo tras ~1s inestable
+  private readonly FRAMES_TO_LOSE_FINGER = 30;      // perder dedo sólo tras ~1.5s inestable (más tolerancia)
   private readonly MIN_COVERAGE_RATIO = 0.14;       // permitir luz más baja
   private readonly MAX_FRAME_DIFF = 28;             // tolerar más autoexposición/micro-mov
   private readonly MIN_CONSENSUS_RATIO = 0.32;      // igual
@@ -66,18 +66,18 @@ export default class MultiChannelManager {
   }
 
   analyzeAll(globalCoverageRatio = 0.0, globalFrameDiff = 0.0): MultiChannelResult {
-    // Suavizados de cobertura y movimiento
-    const alphaCov = 0.3;
-    const alphaMot = 0.3;
+    // Suavizados de cobertura y movimiento - más suave para evitar fluctuaciones
+    const alphaCov = 0.15; // Reducido de 0.3 para mayor estabilidad
+    const alphaMot = 0.15; // Reducido de 0.3 para mayor estabilidad
     this.coverageEma = this.coverageEma == null ? globalCoverageRatio : this.coverageEma * (1 - alphaCov) + globalCoverageRatio * alphaCov;
     this.motionEma = this.motionEma == null ? globalFrameDiff : this.motionEma * (1 - alphaMot) + globalFrameDiff * alphaMot;
     const cov = this.coverageEma;
     const mot = this.motionEma;
-    // Si no hay muestras recientes, forzar pérdida inmediata de detección
+    // Si no hay muestras recientes, mantener último estado conocido por más tiempo
     const now = Date.now();
-    if (now - this.lastTimestamp > this.STALE_MS) {
+    if (now - this.lastTimestamp > this.STALE_MS * 2) { // Duplicar tolerancia
       if (this.fingerState) {
-        console.log('⏱️ Inactividad detectada, forzando pérdida de detección');
+        console.log('⏱️ Inactividad prolongada detectada, forzando pérdida de detección');
       }
       this.fingerState = false;
       this.fingerStableCount = 0;
@@ -203,6 +203,10 @@ export default class MultiChannelManager {
       }
     } else {
       this.fingerUnstableCount++;
+      // Solo resetear contador estable si llevamos varios frames inestables
+      if (this.fingerUnstableCount > 3) {
+        this.fingerStableCount = Math.max(0, this.fingerStableCount - 1);
+      }
       
       if (this.fingerUnstableCount >= this.FRAMES_TO_LOSE_FINGER) {
         if (this.fingerState && (now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
