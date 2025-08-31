@@ -27,10 +27,15 @@ export default class PPGChannel {
   private consecutiveTrue: number = 0;
   private consecutiveFalse: number = 0;
   private readonly MIN_TRUE_FRAMES = 4;
-  private readonly MIN_FALSE_FRAMES = 6;
+  private readonly MIN_FALSE_FRAMES = 12;
   private lastToggleMs: number = 0;
-  private readonly HOLD_MS = 700;
+  private readonly HOLD_MS = 950;
   private qualityEma: number | null = null;
+  
+  // Puente transicional para evitar caída entre detección temprana y espectral
+  private earlyWindowWasActive: boolean = false;
+  private lastEarlyOkTimestampMs: number = 0;
+  private readonly TRANSITIONAL_BRIDGE_MS = 3500; // Mantener detección hasta 3.5s tras early
   
   // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)
   private minRMeanForFinger = 55;   // más permisivo para baja luz
@@ -42,7 +47,7 @@ export default class PPGChannel {
   private readonly minStdSmoothForPulse = 0.16; // amplitud mínima en señal filtrada normalizada
   private readonly maxRRCoeffVar = 0.35;        // variación máxima permitida en RR (coef. variación)
   private readonly EARLY_DETECT_MIN_SAMPLES = 60; // ~2s con 30FPS
-  private readonly EARLY_DETECT_MAX_SAMPLES = 120; // ~4s ventana temprana
+  private readonly EARLY_DETECT_MAX_SAMPLES = 210; // ~7s ventana temprana extendida
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -197,7 +202,21 @@ export default class PPGChannel {
     // Detección temprana (sin exigir SNR/BPM) si hay brillo y amplitud AC suficientes en los primeros segundos
     const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
     const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
-    const rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk);
+    if (earlyOk) {
+      this.earlyWindowWasActive = true;
+      this.lastEarlyOkTimestampMs = Date.now();
+    }
+    
+    // Puente transicional: si acaba de terminar la ventana temprana, mantener detección
+    const transitionalOk = !earlyOk && this.earlyWindowWasActive &&
+      (Date.now() - this.lastEarlyOkTimestampMs < this.TRANSITIONAL_BRIDGE_MS) &&
+      brightnessOk && acOk && varianceOk;
+
+    const rawDetected = Boolean(
+      (brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) ||
+      earlyOk ||
+      transitionalOk
+    );
 
     // Aplicar histéresis por canal
     if (rawDetected) {
