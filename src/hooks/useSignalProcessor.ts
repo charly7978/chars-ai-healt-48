@@ -34,11 +34,17 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       exposureState: s.exposureState
     };
     
-    // Refinamiento de señal: fusión ROJO + crominancia (r - 0.5 g)
-    // Mantener escala 0-255 para no romper los umbrales en canales
-    const chroma = s.rMean - 0.5 * s.gMean;
-    const fused = 0.8 * s.rMean + 0.2 * chroma; // más peso a R para estabilidad
-    const inputSignal = Math.max(0, Math.min(255, fused));
+    // Refinamiento de señal MEJORADO: usar componente AC puro
+    // Extraer componente pulsátil (AC) eliminando componente DC
+    const dcComponent = s.rMean * 0.7 + s.gMean * 0.3; // Componente DC estimado
+    const acRed = s.rMean - dcComponent;
+    const acGreen = s.gMean - dcComponent * 0.8; // Verde tiene menos componente DC
+    
+    // Señal PPG óptima: maximizar componente AC
+    const ppgSignal = acRed - 0.5 * acGreen; // Resta verde para eliminar artefactos
+    
+    // Normalizar a escala 0-255 manteniendo el componente AC
+    const inputSignal = Math.max(0, Math.min(255, 128 + ppgSignal * 2));
     
     // Log detallado MUY ocasional para debug
     if (sampleCountRef.current % 600 === 0) {
