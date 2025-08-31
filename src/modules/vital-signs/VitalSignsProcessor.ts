@@ -61,6 +61,27 @@ export class VitalSignsProcessor {
   
   private signalHistory: number[] = [];
   private readonly HISTORY_SIZE = 50;
+  
+  // Umbrales de calidad por canal y suavizado robusto
+  private readonly QUALITY_THRESHOLDS = {
+    spo2: 55,
+    bloodPressure: 60,
+    hemoglobin: 50,
+    glucose: 50,
+    lipids: 50
+  } as const;
+  
+  private readonly MAX_DELTA = {
+    spo2: 2,
+    glucose: 5,
+    hemoglobin: 0.5,
+    systolic: 5,
+    diastolic: 4,
+    cholesterol: 10,
+    triglycerides: 15
+  } as const;
+  
+  private readonly EMA_ALPHA = 0.2;
   private channelHistories: Record<string, number[]> = {
     heart: [],
     spo2: [],
@@ -233,30 +254,81 @@ export class VitalSignsProcessor {
     const bpHist = this.channelHistories.bloodPressure.length > 0 ? this.channelHistories.bloodPressure : heartHist;
     const lipidHist = this.channelHistories.lipids.length > 0 ? this.channelHistories.lipids : heartHist;
 
-    // 1. SpO2 desde morfología estable
-    const newSpo2 = this.calculateSpO2Real(spo2Hist);
-    this.measurements.spo2 = this.clampAndStore('spo2', newSpo2, 85, 100);
+    // 1. SpO2 desde morfología estable con gating y suavizado
+    if ((channels.spo2?.quality ?? 0) >= this.QUALITY_THRESHOLDS.spo2) {
+      const newSpo2 = this.calculateSpO2Real(spo2Hist);
+      const smoothed = this.smoothAndStore('spo2', newSpo2, 85, 100, this.EMA_ALPHA, this.MAX_DELTA.spo2);
+      this.measurements.spo2 = smoothed;
+    }
 
     // 2. Glucosa con histograma canalizado y valor actual
-    const glucoseCurrent = channels.glucose?.output ?? 0;
-    const newGlucose = this.calculateGlucoseReal(glucoseHist, glucoseCurrent);
-    this.measurements.glucose = this.clampAndStore('glucose', newGlucose, 70, 400);
+    if ((channels.glucose?.quality ?? 0) >= this.QUALITY_THRESHOLDS.glucose) {
+      const glucoseCurrent = channels.glucose?.output ?? 0;
+      const newGlucose = this.calculateGlucoseReal(glucoseHist, glucoseCurrent);
+      const smoothed = this.smoothAndStore('glucose', newGlucose, 70, 400, this.EMA_ALPHA, this.MAX_DELTA.glucose);
+      this.measurements.glucose = smoothed;
+    }
 
     // 3. Hemoglobina desde amplitud/frecuencia del canal dedicado
-    const newHemoglobin = this.calculateHemoglobinReal(hemoHist);
-    this.measurements.hemoglobin = this.clampAndStore('hemoglobin', newHemoglobin, 8.0, 20.0);
+    if ((channels.hemoglobin?.quality ?? 0) >= this.QUALITY_THRESHOLDS.hemoglobin) {
+      const newHemoglobin = this.calculateHemoglobinReal(hemoHist);
+      const smoothed = this.smoothAndStore('hemoglobin', newHemoglobin, 8.0, 20.0, this.EMA_ALPHA, this.MAX_DELTA.hemoglobin);
+      this.measurements.hemoglobin = smoothed;
+    }
 
     // 4. Presión arterial usando RR + morfología del canal BP
-    if (rrData && rrData.intervals.length >= 3) {
+    if ((channels.bloodPressure?.quality ?? 0) >= this.QUALITY_THRESHOLDS.bloodPressure && rrData && rrData.intervals.length >= 3) {
       const pressureResult = this.calculateBloodPressureReal(rrData.intervals, bpHist);
-      this.measurements.systolicPressure = this.clampAndStore('systolic', pressureResult.systolic, 90, 200);
-      this.measurements.diastolicPressure = this.clampAndStore('diastolic', pressureResult.diastolic, 60, 120);
+      const systolic = this.smoothAndStore('systolic', pressureResult.systolic, 90, 200, this.EMA_ALPHA, this.MAX_DELTA.systolic);
+      const diastolic = this.smoothAndStore('diastolic', pressureResult.diastolic, 60, 120, this.EMA_ALPHA, this.MAX_DELTA.diastolic);
+      this.measurements.systolicPressure = systolic;
+      this.measurements.diastolicPressure = diastolic;
     }
 
     // 5. Lípidos desde turbulencia/viscosidad del canal
-    const lipidResult = this.calculateLipidsReal(lipidHist);
-    this.measurements.totalCholesterol = this.clampAndStore('cholesterol', lipidResult.totalCholesterol, 120, 300);
-    this.measurements.triglycerides = this.clampAndStore('triglycerides', lipidResult.triglycerides, 50, 400);
+    if ((channels.lipids?.quality ?? 0) >= this.QUALITY_THRESHOLDS.lipids) {
+      const lipidResult = this.calculateLipidsReal(lipidHist);
+      const chol = this.smoothAndStore('cholesterol', lipidResult.totalCholesterol, 120, 300, this.EMA_ALPHA, this.MAX_DELTA.cholesterol);
+      const trig = this.smoothAndStore('triglycerides', lipidResult.triglycerides, 50, 400, this.EMA_ALPHA, this.MAX_DELTA.triglycerides);
+      this.measurements.totalCholesterol = chol;
+      this.measurements.triglycerides = trig;
+    }
+  }
+
+  private smoothAndStore(
+    type: 'spo2' | 'glucose' | 'hemoglobin' | 'systolic' | 'diastolic' | 'cholesterol' | 'triglycerides',
+    value: number,
+    min: number,
+    max: number,
+    alpha: number,
+    maxDelta: number
+  ): number {
+    const clamped = Math.max(min, Math.min(max, value));
+    let previous = 0;
+    switch (type) {
+      case 'spo2': previous = this.measurements.spo2 || clamped; break;
+      case 'glucose': previous = this.measurements.glucose || clamped; break;
+      case 'hemoglobin': previous = this.measurements.hemoglobin || clamped; break;
+      case 'systolic': previous = this.measurements.systolicPressure || clamped; break;
+      case 'diastolic': previous = this.measurements.diastolicPressure || clamped; break;
+      case 'cholesterol': previous = this.measurements.totalCholesterol || clamped; break;
+      case 'triglycerides': previous = this.measurements.triglycerides || clamped; break;
+    }
+    // Limitar saltos máximos
+    const delta = clamped - previous;
+    const limited = Math.abs(delta) > maxDelta ? previous + Math.sign(delta) * maxDelta : clamped;
+    // Suavizado EMA
+    const smoothed = previous * (1 - alpha) + limited * alpha;
+    // Registrar en historial para ponderado final
+    switch (type) {
+      case 'spo2': return this.clampAndStore('spo2', smoothed, min, max);
+      case 'glucose': return this.clampAndStore('glucose', smoothed, min, max);
+      case 'hemoglobin': return this.clampAndStore('hemoglobin', smoothed, min, max);
+      case 'systolic': return this.clampAndStore('systolic', smoothed, min, max);
+      case 'diastolic': return this.clampAndStore('diastolic', smoothed, min, max);
+      case 'cholesterol': return this.clampAndStore('cholesterol', smoothed, min, max);
+      case 'triglycerides': return this.clampAndStore('triglycerides', smoothed, min, max);
+    }
   }
 
   private calculateVitalSignsWithCorrectFormat(
