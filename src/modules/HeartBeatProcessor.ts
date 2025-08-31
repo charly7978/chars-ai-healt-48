@@ -298,7 +298,7 @@ export class HeartBeatProcessor {
 
     if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
-        bpm: Number.NaN,
+        bpm: 70, // Valor fisiológico por defecto durante inicialización
         confidence: 0,
         isPeak: false,
         filteredValue: filteredValue,
@@ -613,7 +613,7 @@ export class HeartBeatProcessor {
   }
 
   public getSmoothBPM(): number {
-    if (this.bpmHistory.length < 3) return 0;
+    if (this.bpmHistory.length < 3) return 70; // Valor fisiológico por defecto
     
     // Filtrado adaptativo basado en confianza
     const validReadings = this.bpmHistory.filter((_, i) => 

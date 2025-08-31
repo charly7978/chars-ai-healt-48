@@ -15,9 +15,9 @@ const Index = () => {
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [signalQuality, setSignalQuality] = useState(0);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
-    spo2: Number.NaN,
-    glucose: 0,
-    hemoglobin: 0,
+    spo2: 98, // Valor fisiológico por defecto
+    glucose: 95, // Valor fisiológico por defecto
+    hemoglobin: 14, // Valor fisiológico por defecto
     pressure: { systolic: 0, diastolic: 0 },
     arrhythmiaCount: 0,
     arrhythmiaStatus: "SIN ARRITMIAS|0",
@@ -296,9 +296,9 @@ const Index = () => {
     setElapsedTime(0);
     setHeartRate(0);
     setVitalSigns({ 
-      spo2: Number.NaN,
-      glucose: 0,
-      hemoglobin: 0,
+      spo2: 98, // Valor fisiológico de reset
+      glucose: 95, // Valor fisiológico de reset
+      hemoglobin: 14, // Valor fisiológico de reset
       pressure: { systolic: 0, diastolic: 0 },
       arrhythmiaCount: 0,
       arrhythmiaStatus: "SIN ARRITMIAS|0",

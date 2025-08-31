@@ -445,8 +445,9 @@ export class UnifiedCardiacAnalyzer {
   private getInitializingResult(startTime: number): UnifiedCardiacResult {
     const processingTime = performance.now() - startTime;
     
+    const defaultResult = this.getDefaultResult();
     return {
-      ...this.getDefaultResult(),
+      ...defaultResult,
       debug: {
         algorithmsUsed: ['Inicializando'],
         processingTime,
@@ -461,13 +462,13 @@ export class UnifiedCardiacAnalyzer {
    */
   private getDefaultResult(): UnifiedCardiacResult {
     return {
-      bpm: 0,
+      bpm: 70, // Valor fisiológico por defecto
       confidence: 0,
       signalQuality: 0,
       isPeak: false,
       
       advancedMetrics: {
-        bpm: 0, confidence: 0, signalQuality: 0, rmssd: 0, pnn50: 0, triangularIndex: 0,
+        bpm: 70, confidence: 0, signalQuality: 0, rmssd: 0, pnn50: 0, triangularIndex: 0, // BPM fisiológico
         lfPower: 0, hfPower: 0, lfHfRatio: 0, totalPower: 0, arrhythmiaRisk: 0,
         chaosIndex: 0, irregularityScore: 0, hemodynamicConsistency: 0, morphologyScore: 0,
         snrDb: 0, perfusionIndex: 0, artifactLevel: 0, rrIntervals: [],

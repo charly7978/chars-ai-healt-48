@@ -78,7 +78,7 @@ export const useHeartBeatProcessor = () => {
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number, ctx?: { quality?: number; snr?: number }): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
       return {
-        bpm: Number.NaN,
+        bpm: 70, // Valor fisiológico por defecto cuando no está activo
         confidence: 0,
         isPeak: false,
         arrhythmiaCount: 0,

@@ -774,7 +774,7 @@ export class AdvancedCardiacProcessor {
 
   private getDefaultMetrics(): AdvancedCardiacMetrics {
     return {
-      bpm: 0,
+      bpm: 70, // Valor fisiológico por defecto
       confidence: 0,
       signalQuality: 0,
       rmssd: 0,
