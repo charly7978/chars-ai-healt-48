@@ -34,19 +34,16 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       exposureState: s.exposureState
     };
     
-    // Señal PPG DIRECTA y SIMPLE
-    // Usar solo el canal rojo que tiene la mayor pulsatilidad
-    const inputSignal = s.rMean;
+    // Extracción PROFESIONAL de señal PPG
+    // Método basado en literatura: maximizar componente pulsátil
+    const rNorm = s.rMean / Math.max(s.rMean + s.gMean + s.bMean, 1);
+    const gNorm = s.gMean / Math.max(s.rMean + s.gMean + s.bMean, 1);
     
-    // Debug cada 300 muestras
-    if (sampleCountRef.current % 300 === 0) {
-      console.log('📡 Señal PPG directa:', {
-        rMean: s.rMean.toFixed(1),
-        gMean: s.gMean.toFixed(1),
-        coverageRatio: (s.coverageRatio * 100).toFixed(1) + '%',
-        inputSignal: inputSignal.toFixed(1)
-      });
-    }
+    // Señal PPG óptima: enfatizar cambios en absorción de hemoglobina
+    const ppgSignal = s.rMean - 0.7 * s.gMean; // Verde ayuda a eliminar artefactos
+    
+    // Normalizar manteniendo rango dinámico
+    const inputSignal = Math.max(0, Math.min(255, 128 + (ppgSignal - 128) * 1.2));
     
     // Log detallado MUY ocasional para debug
     if (sampleCountRef.current % 600 === 0) {

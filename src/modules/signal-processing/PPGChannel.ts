@@ -12,7 +12,7 @@ import { savitzkyGolay } from './SavitzkyGolayFilter';
 import { Biquad } from './Biquad';
 import { goertzelPower } from './Goertzel';
 import { computeSNR } from './SignalQualityAnalyzer';
-import { SimplePPGDetector } from './SimplePPGDetector';
+import { improvedDetectPeaks } from './ImprovedPeakDetector';
 
 type Sample = { t: number; v: number };
 
@@ -23,30 +23,28 @@ export default class PPGChannel {
   private gain: number;
   private bufferStartTime: number = 0;
   
-  // Detector simple de PPG
-  private ppgDetector: SimplePPGDetector;
+  // Historia de RR para validación
   private rrHistory: number[] = [];
-  private debugCounter: number = 0;
   
   // Histéresis por canal para evitar flapping
   private detectionState: boolean = false;
   private consecutiveTrue: number = 0;
   private consecutiveFalse: number = 0;
-  private readonly MIN_TRUE_FRAMES = 2;  // Más rápido
-  private readonly MIN_FALSE_FRAMES = 15; // Más resistente
+  private readonly MIN_TRUE_FRAMES = 3;  // Balance entre velocidad y confiabilidad
+  private readonly MIN_FALSE_FRAMES = 12; // Evitar pérdidas prematuras
   private lastToggleMs: number = 0;
   private readonly HOLD_MS = 200; // Respuesta más rápida
   private qualityEma: number | null = null;
   
-  // CRÍTICO: Umbrales SIMPLES para mejor detección
-  private minRMeanForFinger = 50;   // Más permisivo
-  private maxRMeanForFinger = 250;  // Amplio rango
-  private minVarianceForPulse = 0.5; // Muy permisivo para captar señal débil
-  private minSNRForFinger = 0.8;    // SNR bajo para no perder señal
-  private maxFrameDiffForStability = 20; // Tolerar más movimiento
-  // Umbrales adicionales
-  private readonly minStdSmoothForPulse = 0.05; // Muy bajo para señales débiles
-  private readonly maxRRCoeffVar = 0.30;        // Permitir más variación
+  // CRÍTICO: Umbrales PROFESIONALES para detección precisa
+  private minRMeanForFinger = 70;   // Balance entre sensibilidad y precisión
+  private maxRMeanForFinger = 245;  // Evitar saturación
+  private minVarianceForPulse = 1.2; // Señal AC mínima clara
+  private minSNRForFinger = 1.5;    // SNR razonable
+  private maxFrameDiffForStability = 15; // Movimiento moderado
+  // Umbrales adicionales para robustecer gating
+  private readonly minStdSmoothForPulse = 0.15; // Amplitud mínima en señal filtrada
+  private readonly maxRRCoeffVar = 0.20;        // Máximo 20% variación RR
   private readonly EARLY_DETECT_MIN_SAMPLES = 60; // ~2s con 30FPS
   private readonly EARLY_DETECT_MAX_SAMPLES = 120; // ~4s ventana temprana
 
@@ -55,8 +53,7 @@ export default class PPGChannel {
     this.windowSec = windowSec;
     this.gain = initialGain;
     
-    // Inicializar detector simple
-    this.ppgDetector = new SimplePPGDetector();
+    // Sin inicialización adicional necesaria
     
     // Buffer circular para evitar problemas con shift()
     this.bufferStartTime = 0;
@@ -150,11 +147,14 @@ export default class PPGChannel {
       sampled.map(x => (x - mean) / std) : 
       sampled.map(x => x - mean);
 
-    // Filtrado SIMPLE - no perder la señal!
+    // Filtrado PROFESIONAL - pasabanda optimizado para señal cardíaca
     const fs = N / this.windowSec;
-    
-    // Solo suavizar ligeramente para quitar ruido de alta frecuencia
-    const smooth = this.simpleSmooth(normalized, 5); // ventana muy pequeña
+    const biquad = new Biquad();
+    biquad.setBandpass(1.2, 1.5, fs); // Centro 1.2Hz (72 bpm), ancho 1.5Hz para rango 45-150 BPM
+    const filtered = biquad.processArray(normalized);
+
+    // Suavizado Savitzky-Golay para preservar picos
+    const smooth = savitzkyGolay(filtered, 9); // Ventana optimizada
 
     // Análisis espectral MEJORADO con Goertzel
     const freqs = this.linspace(0.8, 4.0, 120); // Resolución suficiente con menor costo
@@ -191,37 +191,25 @@ export default class PPGChannel {
     // BPM del pico espectral con validación
     const bpmSpectral = maxPower > 1e-5 ? Math.round(peakFreq * 60) : null;
 
-    // Detección SIMPLE de latidos PPG
-    const simpleResult = this.ppgDetector.detectPeaks(smooth, fs);
-    const { peaks, bpm: simpleBPM, amplitude, isValid } = simpleResult;
+    // Detección PROFESIONAL de picos PPG mejorada
+    const { peaks, peakTimesMs, rr, confidence } = improvedDetectPeaks(smooth, fs, 300, 0.15);
     
-    // Calcular intervalos RR
-    const rr: number[] = [];
-    for (let i = 1; i < peaks.length; i++) {
-      rr.push((peaks[i] - peaks[i-1]) / fs * 1000);
+    // Calcular BPM temporal con validación
+    const bpmTemporal = rr.length >= 2 ? 
+      Math.round(60000 / (rr.reduce((a,b) => a+b, 0) / rr.length)) : null;
+    
+    // Actualizar historia de RR para análisis de tendencias
+    if (rr.length > 0) {
+      this.rrHistory = [...this.rrHistory, ...rr].slice(-20);
     }
     
-    // Debug cada 30 muestras cuando hay señal
-    this.debugCounter++;
-    if (this.debugCounter % 30 === 0 && peaks.length > 0) {
-      console.log(`🔍 Canal ${this.channelId} - Detección detallada:`, {
-        numPicos: peaks.length,
-        bpm: simpleBPM,
-        amplitud: amplitude.toFixed(3),
-        señalVálida: isValid,
-        primerPico: peaks[0] ? (peaks[0]/fs).toFixed(2) + 's' : 'none',
-        intervalosRR: rr.slice(0, 3).map(x => x.toFixed(0) + 'ms'),
-        stats: {
-          mean: mean.toFixed(1),
-          std: std.toFixed(2),
-          snr: snr.toFixed(2)
-        }
-      });
-    }
+    // Calcular métricas de calidad avanzadas
+    const peakAmplitudes = peaks.map(idx => smooth[idx]);
+    const avgAmplitude = peakAmplitudes.length > 0 ? 
+      peakAmplitudes.reduce((a,b) => a+b, 0) / peakAmplitudes.length : 0;
     
-    const bpmTemporal = simpleBPM;
-    const robustQuality = isValid ? 0.8 : 0.2;
-    const noiseLevel = amplitude > 0 ? 1 / (1 + amplitude) : 1;
+    const robustQuality = confidence || 0.5;
+    const noiseLevel = 1 / (1 + snr);
 
     // Chequeos adicionales: amplitud AC y regularidad RR
     const stdSmooth = this.stdArray(smooth);
@@ -241,10 +229,11 @@ export default class PPGChannel {
     const bpmOk = (bpmSpectral && bpmSpectral >= 45 && bpmSpectral <= 180) || 
                   (bpmTemporal && bpmTemporal >= 45 && bpmTemporal <= 180);
     
-    // Detección basada en resultado simple
-    const hasValidPeaks = peaks.length >= 3 && isValid;
-    const hasGoodAmplitude = amplitude > 0.1;
-    const peakConfidence = hasValidPeaks && hasGoodAmplitude;
+    // Detección basada en métricas profesionales
+    const hasValidPeaks = peaks.length >= 2 && rr.length >= 1;
+    const hasGoodConfidence = (confidence ?? 0) > 0.4;
+    const hasConsistentRR = rrConsistencyOk || this.rrHistory.length < 5;
+    const peakConfidence = hasValidPeaks && hasGoodConfidence && hasConsistentRR;
     
     // Si ya estamos detectando, ser más tolerante para mantener la detección
     if (this.detectionState) {

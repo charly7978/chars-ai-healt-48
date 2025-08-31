@@ -59,19 +59,9 @@ const Index = () => {
   const handleCameraSample = (sample: CameraSample) => {
     debugSampleCountRef.current++;
     
-    // ✅ ALIMENTAR ONDA DEL MONITOR CON SEÑAL PPG REAL
-    setHeartbeatSignal(sample.rMean);
-    
-    // Debug cada 150 muestras
-    if (debugSampleCountRef.current % 150 === 0) {
-      console.log('💓 Muestra de cámara:', {
-        muestra: debugSampleCountRef.current,
-        rMean: sample.rMean.toFixed(1),
-        gMean: sample.gMean.toFixed(1),
-        coverageRatio: (sample.coverageRatio * 100).toFixed(0) + '%',
-        fingerConfidence: (sample.fingerConfidence * 100).toFixed(0) + '%'
-      });
-    }
+    // ✅ ALIMENTAR ONDA DEL MONITOR CON SEÑAL PPG PROCESADA
+    const ppgValue = sample.rMean - 0.7 * sample.gMean;
+    setHeartbeatSignal(Math.max(0, Math.min(255, 128 + ppgValue)));
     
     // ✅ PROCESAR UNA SOLA VEZ - SIN DUPLICACIONES  
     handleSample(sample);
