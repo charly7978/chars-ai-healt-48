@@ -12,7 +12,7 @@ import { savitzkyGolay } from './SavitzkyGolayFilter';
 import { Biquad } from './Biquad';
 import { goertzelPower } from './Goertzel';
 import { computeSNR } from './SignalQualityAnalyzer';
-import { detectPeaks } from './TimeDomainPeak';
+import { detectAdvancedPeaks } from './AdvancedPeakDetector';
 
 type Sample = { t: number; v: number };
 
@@ -172,8 +172,8 @@ export default class PPGChannel {
     // BPM del pico espectral con validación
     const bpmSpectral = maxPower > 1e-5 ? Math.round(peakFreq * 60) : null;
 
-    // Detección de picos temporales para RR intervals
-    const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 350, 0.10); // Ajustado a 350ms y umbral 0.10
+    // Detección de picos AVANZADA con algoritmos múltiples
+    const { peaks, peakTimesMs, rr } = detectAdvancedPeaks(smooth, fs, 350, 0.10); // Detector avanzado
     const bpmTemporal = rr.length >= 2 ? 
       Math.round(60000 / (rr.reduce((a,b) => a+b, 0) / rr.length)) : null;
 

@@ -72,6 +72,7 @@ const Index = () => {
     processSignal: processHeartBeat, 
     setArrhythmiaState,
     reset: resetHeartBeat,
+    unifiedMetrics // NUEVAS MÉTRICAS UNIFICADAS AVANZADAS
   } = useHeartBeatProcessor();
   
   const { 
@@ -603,6 +604,7 @@ const Index = () => {
                 gatedSnr: lastHeartbeatDebug?.gatedSnr,
                 spectralOk: lastHeartbeatDebug?.spectralOk
               }}
+              unifiedMetrics={unifiedMetrics} // PASAR MÉTRICAS UNIFICADAS AVANZADAS
             />
           </div>
 

@@ -1,4 +1,5 @@
 import { KalmanFilter } from './signal-processing/KalmanFilter';
+import { AdvancedPeakDetector } from './signal-processing/AdvancedPeakDetector';
 
 export class HeartBeatProcessor {
   // ────────── CONFIGURACIONES MÁS ESTRICTAS PARA REDUCIR FALSOS POSITIVOS ──────────
@@ -94,6 +95,7 @@ export class HeartBeatProcessor {
   private currentSignalQuality: number = 0;
 
   private kalmanFilterInstance: KalmanFilter; // Instancia del filtro de Kalman
+  private advancedPeakDetector: AdvancedPeakDetector; // Detector de picos avanzado
   private audioEnabled: boolean = true; // ✅ ACTIVAR AUDIO/VIBRACIÓN PARA LATIDOS REALES
 
   constructor() {
@@ -105,6 +107,9 @@ export class HeartBeatProcessor {
     this.initAudio();
     this.startTime = Date.now();
     this.kalmanFilterInstance = new KalmanFilter(); // Inicializar la instancia del filtro de Kalman
+    this.advancedPeakDetector = new AdvancedPeakDetector(); // Inicializar detector avanzado
+    
+    console.log('🫀 HeartBeatProcessor MEJORADO con algoritmos avanzados de detección');
   }
 
   private async initAudio() {
