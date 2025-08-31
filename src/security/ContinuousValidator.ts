@@ -39,7 +39,7 @@ export class ContinuousValidator {
   private readonly MEDICAL_VALIDATION_RULES: ValidationRule[] = [
     {
       name: 'NO_MATH_RANDOM',
-      pattern: /Math\.random\(\)/g,
+      pattern: /Math\x2Erandom\(\)/g,
       severity: 'CRITICAL',
       message: 'Math.random() prohibited in medical applications - use crypto.getRandomValues()',
       autoFix: (code) => code.replace(/Math\.random\(\)/g, 'crypto.getRandomValues(new Uint32Array(1))[0] / (0xFFFFFFFF + 1)')

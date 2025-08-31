@@ -461,7 +461,7 @@ export class VitalSignsProcessor {
 
     // SpO2 máximo 98% para evitar saturación visual
     // Disminuye con mayor relación pulsátil
-    const spo2 = 98 - 20 * normRatio;
+    const spo2 = 97.5 - 18.5 * normRatio; // evitar 98 exacto y valores no fisiológicos
 
     return Math.max(85, Math.min(98, spo2));
   }
