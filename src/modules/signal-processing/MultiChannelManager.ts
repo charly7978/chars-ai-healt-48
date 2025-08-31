@@ -16,20 +16,20 @@ export default class MultiChannelManager {
   private n: number;
   private windowSec: number;
   private lastTimestamp = Date.now();
-  private readonly STALE_MS = 900; // tolerar pausas breves sin perder detección
+  private readonly STALE_MS = 2000; // tolerar pausas más largas sin perder detección (era 900ms - PROBLEMA IDENTIFICADO)
   
   // Estado de detección con debounce MEJORADO
   private fingerState = false;
   private fingerStableCount = 0;
   private fingerUnstableCount = 0;
   private lastGlobalToggle = 0;
-  private readonly GLOBAL_HOLD_MS = 900;
+  private readonly GLOBAL_HOLD_MS = 300; // reducido para evitar pérdida de detección cada 5-6s (era 900ms - PROBLEMA CORREGIDO)
   private coverageEma: number | null = null;
   private motionEma: number | null = null;
   
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
-  private readonly FRAMES_TO_CONFIRM_FINGER = 7;    // robusto para confirmar
-  private readonly FRAMES_TO_LOSE_FINGER = 20;      // perder dedo sólo tras ~1s inestable
+  private readonly FRAMES_TO_CONFIRM_FINGER = 5;    // más rápido para confirmar (era 7)
+  private readonly FRAMES_TO_LOSE_FINGER = 30;      // más tolerante para perder dedo (era 20)
   private readonly MIN_COVERAGE_RATIO = 0.14;       // permitir luz más baja
   private readonly MAX_FRAME_DIFF = 28;             // tolerar más autoexposición/micro-mov
   private readonly MIN_CONSENSUS_RATIO = 0.32;      // igual

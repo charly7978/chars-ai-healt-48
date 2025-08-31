@@ -24,9 +24,9 @@ export class HeartBeatProcessor {
   private readonly MIN_BEEP_INTERVAL_MS = 1200; // Intervalo mayor para evitar beeps repetidos
   private readonly VIBRATION_PATTERN = [40, 20, 60];
 
-  // AUTO-RESET más agresivo para falsos positivos
-  private readonly LOW_SIGNAL_THRESHOLD = 0.02; // Umbral más alto
-  private readonly LOW_SIGNAL_FRAMES = 15; // Reducido para reset más rápido
+  // AUTO-RESET menos agresivo para evitar interrupciones
+  private readonly LOW_SIGNAL_THRESHOLD = 0.005; // Umbral más bajo para ser menos agresivo (era 0.02)
+  private readonly LOW_SIGNAL_FRAMES = 60; // Aumentado para evitar resets frecuentes (era 15)
   private lowSignalCount = 0;
 
   // ────────── PARÁMETROS ADAPTATIVOS MÉDICAMENTE VÁLIDOS ──────────
