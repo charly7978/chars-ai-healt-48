@@ -17,7 +17,7 @@ const Index = () => {
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: 98, // Valor fisiológico por defecto
     glucose: 95, // Valor fisiológico por defecto
-    hemoglobin: 14, // Valor fisiológico por defecto
+    hemoglobin: 15, // Valor fisiológico por defecto (corregido)
     pressure: { systolic: 120, diastolic: 80 }, // Valores fisiológicos
     arrhythmiaCount: 0,
     arrhythmiaStatus: "SIN ARRITMIAS|0",
@@ -298,7 +298,7 @@ const Index = () => {
     setVitalSigns({ 
       spo2: 98, // Valor fisiológico de reset
       glucose: 95, // Valor fisiológico de reset
-      hemoglobin: 14, // Valor fisiológico de reset
+      hemoglobin: 15, // Valor fisiológico de reset (corregido)
       pressure: { systolic: 120, diastolic: 80 }, // Valores fisiológicos
       arrhythmiaCount: 0,
       arrhythmiaStatus: "SIN ARRITMIAS|0",

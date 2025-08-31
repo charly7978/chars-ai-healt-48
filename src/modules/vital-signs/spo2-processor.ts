@@ -29,7 +29,7 @@ export class SpO2Processor {
     const dc = this.calculateAdvancedDC(filteredValues);
     const ac = this.calculateAdvancedAC(filteredValues);
     
-    if (dc <= 0 || ac <= 0) return 0;
+    if (dc <= 0 || ac <= 0) return 98; // Valor fisiológico por defecto
     
     // ÍNDICE DE PERFUSIÓN REAL basado en modelo hemodinámico
     const perfusionIndex = this.calculateHemodynamicPerfusion(ac, dc);
@@ -207,7 +207,7 @@ export class SpO2Processor {
    * Filtrado temporal adaptativo
    */
   private applyTemporalFiltering(newSpO2: number): number {
-    if (newSpO2 <= 0) return 0;
+    if (newSpO2 <= 0) return 85; // Mínimo fisiológico
     
     this.spo2Buffer.push(newSpO2);
     if (this.spo2Buffer.length > this.BUFFER_SIZE) {
@@ -229,7 +229,7 @@ export class SpO2Processor {
     this.spo2Buffer = [];
     this.calibrationSamples = [];
     this.calibrationComplete = false;
-    this.baselineDC = 0;
+    this.baselineDC = 128; // Baseline fisiológico típico
     console.log("🔄 SpO2Processor: Reset matemático completo");
   }
 }

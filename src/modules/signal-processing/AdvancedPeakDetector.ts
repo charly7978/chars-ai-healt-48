@@ -21,9 +21,9 @@ export interface AdvancedPeakResult {
 }
 
 export class AdvancedPeakDetector {
-  private readonly MIN_PEAK_DISTANCE_MS = 300;  // 200 BPM máximo
+  private readonly MIN_PEAK_DISTANCE_MS = 350;  // 171 BPM máximo (valor seguro)
   private readonly MAX_PEAK_DISTANCE_MS = 1500; // 40 BPM mínimo
-  private readonly MIN_PEAK_HEIGHT = 0.2;       // Altura mínima normalizada
+  private readonly MIN_PEAK_HEIGHT = 0.25;      // Altura mínima normalizada (valor seguro)
   
   // Parámetros para análisis de morfología
   private readonly SYSTOLIC_RATIO_MIN = 0.6;    // Ratio sistólico mínimo
@@ -441,7 +441,7 @@ export class AdvancedPeakDetector {
     if (peaks.length < 2) {
       return {
         intervals: [],
-        statistics: { mean: 800, std: 50, cv: 0.06, regularity: 0.9 } // Estadísticas fisiológicas por defecto
+        statistics: { mean: 800, std: 60, cv: 0.075, regularity: 0.9 } // Estadísticas fisiológicas seguras
       };
     }
     
