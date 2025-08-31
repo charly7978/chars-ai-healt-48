@@ -45,6 +45,7 @@ const Index = () => {
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
+  const lastToggleTimeRef = useRef<number>(0);
   
   const { 
     handleSample,
@@ -181,6 +182,12 @@ const Index = () => {
   }, [lastValidResults, isMonitoring]);
 
   const startMonitoring = () => {
+    const now = Date.now();
+    if (now - lastToggleTimeRef.current < 1000) {
+      console.log('⏱️ Ignorando inicio rápido sucesivo');
+      return;
+    }
+    lastToggleTimeRef.current = now;
     if (systemState.current !== 'IDLE') {
       console.log('⚠️ PREVINIENDO INICIO MÚLTIPLE - Estado actual:', systemState.current);
       return;
@@ -218,7 +225,7 @@ const Index = () => {
         console.log('✅ Sistema ACTIVO - Procesamiento de latidos reales habilitado');
       }
       setIsCalibrating(false);
-    }, 2000);
+    }, 3500);
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -237,6 +244,12 @@ const Index = () => {
   };
 
   const finalizeMeasurement = () => {
+    const now = Date.now();
+    if (now - lastToggleTimeRef.current < 1000) {
+      console.log('⏱️ Ignorando detención rápida sucesiva');
+      return;
+    }
+    lastToggleTimeRef.current = now;
     if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') return;
     
     systemState.current = 'STOPPING';
@@ -328,14 +341,14 @@ const Index = () => {
     // ✅ SOLO PROCESAR SI ESTAMOS EN ESTADO ACTIVO DE MONITOREO
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 20;
+    const MIN_SIGNAL_QUALITY = 15;
     
     if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
       return;
     }
 
     // ✅ PROCESAMIENTO ÚNICO DE LATIDOS REALES - SIN DUPLICACIONES
-    const signalValue = bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0;
+    const signalValue = bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] ?? 0;
     const heartBeatResult = processHeartBeat(
       signalValue,
       bestChannel.isFingerDetected, 
@@ -406,6 +419,10 @@ const Index = () => {
   }, [isCalibrating, getCalibrationProgress]);
 
   const handleToggleMonitoring = () => {
+    // Debounce adicional a nivel de UI
+    const now = Date.now();
+    if (now - lastToggleTimeRef.current < 1000) return;
+    lastToggleTimeRef.current = now;
     if (isMonitoring) {
       finalizeMeasurement();
     } else {
@@ -549,14 +566,14 @@ const Index = () => {
     }}>
       {!isFullscreen && (
         <button 
-          onClick={enterFullScreen}
+          onClick={() => { enterFullScreen(); startMonitoring(); }}
           className="fixed inset-0 z-50 w-full h-full flex items-center justify-center bg-black/90 text-white"
         >
           <div className="text-center p-4 bg-primary/20 rounded-lg backdrop-blur-sm">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5m11 5v-4m0 4h-4m4 0l-5-5" />
             </svg>
-            <p className="text-lg font-semibold">Toca para modo pantalla completa</p>
+            <p className="text-lg font-semibold">Toca para pantalla completa e iniciar</p>
           </div>
         </button>
       )}
@@ -569,7 +586,7 @@ const Index = () => {
             targetFps={30}
             roiSize={320}
             enableTorch={true}
-            coverageThresholdPixelBrightness={40}
+            coverageThresholdPixelBrightness={25}
           />
         </div>
 
