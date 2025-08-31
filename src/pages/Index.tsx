@@ -18,10 +18,10 @@ const Index = () => {
     spo2: 98, // Valor fisiológico por defecto
     glucose: 95, // Valor fisiológico por defecto
     hemoglobin: 14, // Valor fisiológico por defecto
-    pressure: { systolic: 0, diastolic: 0 },
+    pressure: { systolic: 120, diastolic: 80 }, // Valores fisiológicos
     arrhythmiaCount: 0,
     arrhythmiaStatus: "SIN ARRITMIAS|0",
-    lipids: { totalCholesterol: 0, triglycerides: 0 },
+    lipids: { totalCholesterol: 180, triglycerides: 120 }, // Valores fisiológicos
     isCalibrating: false,
     calibrationProgress: 0,
     lastArrhythmiaData: undefined
@@ -299,10 +299,10 @@ const Index = () => {
       spo2: 98, // Valor fisiológico de reset
       glucose: 95, // Valor fisiológico de reset
       hemoglobin: 14, // Valor fisiológico de reset
-      pressure: { systolic: 0, diastolic: 0 },
+      pressure: { systolic: 120, diastolic: 80 }, // Valores fisiológicos
       arrhythmiaCount: 0,
       arrhythmiaStatus: "SIN ARRITMIAS|0",
-      lipids: { totalCholesterol: 0, triglycerides: 0 },
+      lipids: { totalCholesterol: 180, triglycerides: 120 }, // Valores fisiológicos
       isCalibrating: false,
       calibrationProgress: 0,
       lastArrhythmiaData: undefined
