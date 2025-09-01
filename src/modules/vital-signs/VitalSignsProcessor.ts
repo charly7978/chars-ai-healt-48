@@ -64,7 +64,7 @@ export class VitalSignsProcessor {
   
   // Umbrales de calidad por canal y suavizado robusto
   private readonly QUALITY_THRESHOLDS = {
-    spo2: 50,
+    oxygenSat: 50,
     bloodPressure: 50,
     hemoglobin: 50,
     glucose: 50,
@@ -72,7 +72,7 @@ export class VitalSignsProcessor {
   } as const;
   
   private readonly MAX_DELTA = {
-    spo2: 2,
+    oxygenSat: 2,
     glucose: 5,
     hemoglobin: 0.5,
     systolic: 8,
@@ -255,9 +255,9 @@ export class VitalSignsProcessor {
     const lipidHist = this.channelHistories.lipids.length > 0 ? this.channelHistories.lipids : heartHist;
 
     // 1. SpO2 desde morfología estable con gating y suavizado
-    if ((channels.spo2?.quality ?? 0) >= this.QUALITY_THRESHOLDS.spo2) {
+    if ((channels.spo2?.quality ?? 0) >= this.QUALITY_THRESHOLDS.oxygenSat) {
       const newSpo2 = this.calculateSpO2Real(spo2Hist);
-      const smoothed = this.smoothAndStore('spo2', newSpo2, 85, 100, this.EMA_ALPHA, this.MAX_DELTA.spo2);
+      const smoothed = this.smoothAndStore('spo2', newSpo2, 85, 100, this.EMA_ALPHA, this.MAX_DELTA.oxygenSat);
       this.measurements.spo2 = smoothed;
     }
 
@@ -531,9 +531,8 @@ export class VitalSignsProcessor {
     const ratio = Math.abs(acComponent / dcComponent);
     const normRatio = Math.max(0, Math.min(1, ratio));
 
-    // SpO2 máximo 98% para evitar saturación visual
-    // Disminuye con mayor relación pulsátil
-    const spo2 = 97.5 - 18.5 * normRatio; // evitar 98 exacto y valores no fisiológicos
+    // Saturación máxima ligeramente por debajo de 98 y mínima 85
+    const spo2 = 97.6 - 18.0 * normRatio;
 
     return Math.max(85, Math.min(98, spo2));
   }

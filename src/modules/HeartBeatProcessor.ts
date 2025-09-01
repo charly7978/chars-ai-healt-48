@@ -275,7 +275,7 @@ export class HeartBeatProcessor {
 
     if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
-        bpm: 0,
+        bpm: 30,
         confidence: 0,
         isPeak: false,
         filteredValue: filteredValue,
