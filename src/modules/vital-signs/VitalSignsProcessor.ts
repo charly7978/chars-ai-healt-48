@@ -64,8 +64,8 @@ export class VitalSignsProcessor {
   
   // Umbrales de calidad por canal y suavizado robusto
   private readonly QUALITY_THRESHOLDS = {
-    spo2: 55,
-    bloodPressure: 60,
+    spo2: 50,
+    bloodPressure: 50,
     hemoglobin: 50,
     glucose: 50,
     lipids: 50
@@ -75,8 +75,8 @@ export class VitalSignsProcessor {
     spo2: 2,
     glucose: 5,
     hemoglobin: 0.5,
-    systolic: 5,
-    diastolic: 4,
+    systolic: 8,
+    diastolic: 6,
     cholesterol: 10,
     triglycerides: 15
   } as const;
@@ -564,19 +564,23 @@ export class VitalSignsProcessor {
   private calculateBloodPressureReal(intervals: number[], signal: number[]): { systolic: number; diastolic: number } {
     if (intervals.length < 3) return { systolic: 0, diastolic: 0 };
     
-    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const ptt = 60000 / avgInterval;
-    
+    // Determinista: PTT (RR medio), amplitud y rigidez arterial
+    const avgIntervalMs = intervals.reduce((a, b) => a + b, 0) / intervals.length; // ms
+    const ptt = Math.max(250, Math.min(1500, avgIntervalMs)); // clamp 250–1500 ms
     const amplitude = this.calculateAmplitude(signal);
     const stiffness = this.calculateArterialStiffness(intervals);
-    
-    const systolic = 120 + (stiffness * 40) - (amplitude * 20);
-    const diastolic = 80 + (stiffness * 20) - (amplitude * 10);
-    
-    return {
-      systolic: Math.max(90, Math.min(200, systolic)),
-      diastolic: Math.max(60, Math.min(120, diastolic))
-    };
+
+    // Mapear PTT a presión base (menor PTT → mayor presión)
+    const baseSystolic = 200 - (ptt - 250) * (80 / (1500 - 250)); // 200→120
+    const baseDiastolic = 120 - (ptt - 250) * (50 / (1500 - 250)); // 120→70
+
+    // Ajustes por amplitud (más amplitud → mayor presión de pulso) y rigidez
+    const systolic = baseSystolic + stiffness * 20 - amplitude * 10;
+    const diastolic = baseDiastolic + stiffness * 10 - amplitude * 6;
+
+    const s = Math.max(90, Math.min(200, Math.round(systolic)));
+    const d = Math.max(50, Math.min(120, Math.round(diastolic)));
+    return { systolic: Math.max(s, d + 25), diastolic: Math.min(d, Math.max(s, d + 25) - 25) };
   }
 
   private calculateLipidsReal(signal: number[]): { totalCholesterol: number; triglycerides: number } {
