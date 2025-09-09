@@ -13,6 +13,7 @@ dist
 .idea
 .DS_Store
 MINERO/
+NUEVA CARPETA/
 dist-ssr
 *.local
 
