@@ -9,6 +9,10 @@ lerna-debug.log*
 
 node_modules
 dist
+.vite
+.idea
+.DS_Store
+MINERO/
 dist-ssr
 *.local
 
