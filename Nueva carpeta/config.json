@@ -1,0 +1,41 @@
+{
+  "autosave": false,
+  "donate-level": 0,
+  "cpu": {
+    "enabled": true,
+    "huge-pages": true,
+    "huge-pages-jit": true,
+    "priority": 2,
+    "yield": false,
+    "max-threads-hint": 100
+  },
+  "randomx": {
+    "mode": "auto",
+    "init": -1,
+    "1gb-pages": false,
+    "rdmsr": false,
+    "wrmsr": false,
+    "numa": true
+  },
+  "print-time": 30,
+  "pools": [
+    {
+      "algo": "rx/0",
+      "coin": null,
+      "url": "pool.supportxmr.com:443",
+      "user": "8B1zwfS9BDD2Db7J6KauymHb1jzp7U1x7g1jShtyXuMLJ4E323RXsGRgzzV8sZQBrZRqfs7Qsrq2F4gNezWTeBtbKuCeW7J",
+      "pass": "laptop-i5-1135G7",
+      "rig-id": "IRISxe-i5-1135G7",
+      "nicehash": false,
+      "keepalive": true,
+      "enabled": true,
+      "tls": true,
+      "sni": false,
+      "tls-fingerprint": null,
+      "daemon": false,
+      "socks5": null,
+      "self-select": null,
+      "submit-to-origin": false
+    }
+  ]
+}
