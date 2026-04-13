@@ -94,12 +94,19 @@ const CameraView = ({
         });
       }
 
-      const constraints: MediaStreamConstraints = {
-        video: baseVideoConstraints,
-        audio: false
+      const micAudio: MediaTrackConstraints = {
+        echoCancellation: false,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1
       };
 
-      // Intento principal y fallbacks controlados para asegurar cámara trasera
+      const constraints: MediaStreamConstraints = {
+        video: baseVideoConstraints,
+        audio: micAudio
+      };
+
+      // Intento principal y fallbacks controlados para asegurar cámara trasera (+ micrófono para PTT)
       let newStream: MediaStream | null = null;
       try {
         newStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -108,18 +115,22 @@ const CameraView = ({
         try {
           newStream = await navigator.mediaDevices.getUserMedia({
             video: { ...baseVideoConstraints, facingMode: { ideal: 'environment' } },
-            audio: false
+            audio: micAudio
           });
         } catch (secondaryErr) {
           console.warn(`⚠️ Fallback getUserMedia (string environment): ${secondaryErr}`);
           try {
             newStream = await navigator.mediaDevices.getUserMedia({
               video: { ...baseVideoConstraints, facingMode: 'environment' as any },
-              audio: false
+              audio: micAudio
             } as any);
           } catch (tertiaryErr) {
-            console.warn(`⚠️ Fallback getUserMedia (video:true): ${tertiaryErr}`);
-            newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            console.warn(`⚠️ Fallback getUserMedia (video:true, sin audio): ${tertiaryErr}`);
+            try {
+              newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: micAudio });
+            } catch {
+              newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            }
           }
         }
       }

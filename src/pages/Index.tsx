@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
@@ -8,6 +8,7 @@ import { useMultiChannelOptimizer } from "@/hooks/useMultiChannelOptimizer";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
+import { PulseTransitTimeEstimator } from "@/modules/signal-processing/PulseTransitTimeEstimator";
 import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
@@ -47,6 +48,7 @@ const Index = () => {
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
+  const pttEstimator = useMemo(() => new PulseTransitTimeEstimator(), []);
   
   // HOOKS ÚNICOS - UNA SOLA INSTANCIA GARANTIZADA
   const { 
@@ -74,7 +76,8 @@ const Index = () => {
     lastValidResults,
     startCalibration,
     forceCalibrationCompletion,
-    getCalibrationProgress
+    getCalibrationProgress,
+    setPulseTransitTimeMs
   } = useVitalSignsProcessor();
 
   // Optimizer multicanal (uso pasivo; se alimenta desde lastSignal)
@@ -175,6 +178,12 @@ const Index = () => {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      pttEstimator.detach();
+    };
+  }, [pttEstimator]);
+
   // SINCRONIZACIÓN ÚNICA DE RESULTADOS
   useEffect(() => {
     if (lastValidResults && !isMonitoring) {
@@ -204,6 +213,7 @@ const Index = () => {
     setIsMonitoring(true);
     setIsCameraOn(true);
     setShowResults(false);
+    pttEstimator.resetPeaks();
     
     // PROCESAMIENTO ÚNICO
     startProcessing();
@@ -281,6 +291,9 @@ const Index = () => {
       setVitalSigns(savedResults);
       setShowResults(true);
     }
+
+    pttEstimator.detach();
+    pttEstimator.resetPeaks();
     
     setElapsedTime(0);
     setSignalQuality(0);
@@ -307,6 +320,8 @@ const Index = () => {
     
     fullResetVitalSigns();
     resetHeartBeat();
+    pttEstimator.detach();
+    pttEstimator.resetPeaks();
     
     // RESET TOTAL DE ESTADOS
     setElapsedTime(0);
@@ -340,6 +355,8 @@ const Index = () => {
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
     console.log(`📹 Stream ÚNICO listo - ${sessionIdRef.current}`);
+
+    pttEstimator.attachStream(stream);
     
     const videoTrack = stream.getVideoTracks()[0];
     
@@ -407,6 +424,9 @@ const Index = () => {
     setSignalQuality(lastSignal.quality);
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
+
+    const pttNow = Date.now();
+    pttEstimator.sampleAudio(pttNow);
     
     const MIN_SIGNAL_QUALITY = 15; // Mucho más permisivo para detectar dedos reales
     
@@ -418,10 +438,13 @@ const Index = () => {
           false, // finger not fully detected but processing signal
           lastSignal.timestamp
         );
+        if (reducedBeatResult.isPeak) pttEstimator.onPpgPeak(pttNow);
+        setPulseTransitTimeMs(pttEstimator.getMedianPttMs());
         setHeartRate(reducedBeatResult.bpm * 0.8); // Reducir confianza
         setHeartbeatSignal(lastSignal.filteredValue * 0.7);
         setBeatMarker(reducedBeatResult.isPeak ? 0.5 : 0);
       } else {
+        setPulseTransitTimeMs(pttEstimator.getMedianPttMs());
         setHeartRate(0);
         setHeartbeatSignal(0);
         setBeatMarker(0);
@@ -437,6 +460,8 @@ const Index = () => {
       lastSignal.fingerDetected, 
       lastSignal.timestamp
     );
+    if (heartBeatResult.isPeak) pttEstimator.onPpgPeak(pttNow);
+    setPulseTransitTimeMs(pttEstimator.getMedianPttMs());
     
     setHeartRate(heartBeatResult.bpm);
     setHeartbeatSignal(lastSignal.filteredValue);
@@ -489,7 +514,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, processVitalChannels, setArrhythmiaState]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, processVitalChannels, setArrhythmiaState, pttEstimator, setPulseTransitTimeMs]);
 
   // CONTROL DE CALIBRACIÓN ÚNICO
   useEffect(() => {

@@ -111,9 +111,14 @@ export const useVitalSignsProcessor = () => {
     processedSignals.current = 0;
   }, [processor]);
 
+  const setPulseTransitTimeMs = useCallback((ms: number | null) => {
+    processor.setPulseTransitTimeMs(ms);
+  }, [processor]);
+
   return {
     processSignal,
     processChannels,
+    setPulseTransitTimeMs,
     reset,
     fullReset,
     startCalibration,

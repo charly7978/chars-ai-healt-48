@@ -1,4 +1,6 @@
 
+import { getSpO2EquivalentRatioScale } from './deviceSpO2Scale';
+
 export class SpO2Processor {
   // ALGORITMOS MATEMÁTICOS AVANZADOS REALES - SIN SIMULACIÓN
   private readonly BEER_LAMBERT_CONSTANT = 0.956; // Coeficiente de extinción hemoglobina
@@ -94,8 +96,8 @@ export class SpO2Processor {
     const blueTerm = ratioBG > 0.05 ? 1 / Math.min(ratioBG, 4) : ratioRG;
     const composite = 0.68 * ratioRG + 0.32 * blueTerm;
 
-    // Escalar composite al rango donde convertRatioToSpO2 es estable (empírico cámara RGB)
-    const equivalentRatio = composite * 0.52;
+    // Escalar composite al rango donde convertRatioToSpO2 es estable (empírico + calibración dispositivo)
+    const equivalentRatio = composite * getSpO2EquivalentRatioScale();
 
     let spo2 = this.convertRatioToSpO2(equivalentRatio, perfusionIndex);
     spo2 = Math.max(0, spo2);
