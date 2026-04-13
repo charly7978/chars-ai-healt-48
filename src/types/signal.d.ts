@@ -13,6 +13,8 @@ export interface ProcessedSignal {
     height: number;
   };
   perfusionIndex?: number;
+  /** Muestras RGB ROI sin preprocesado asimétrico (SpO2 multicanal) */
+  rgbRaw?: { r: number; g: number; b: number };
 }
 
 export interface ProcessingError {

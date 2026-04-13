@@ -2,6 +2,8 @@ import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
 import { SpO2Processor } from './spo2-processor';
 import type { MultiChannelOutputs } from '../../types/multichannel';
 
+export type RgbSample = { r: number; g: number; b: number };
+
 export interface VitalSignsResult {
   spo2: number;
   glucose: number;
@@ -30,6 +32,7 @@ export interface VitalSignsResult {
  */
 export class VitalSignsProcessor {
   private mathProcessor: AdvancedMathematicalProcessor;
+  private spo2Processor = new SpO2Processor();
   private calibrationSamples: number = 0;
   private readonly CALIBRATION_REQUIRED = 25;
   private isCalibrating: boolean = false;
@@ -61,6 +64,7 @@ export class VitalSignsProcessor {
   };
   
   private signalHistory: number[] = [];
+  private rgbHistory: { r: number[]; g: number[]; b: number[] } = { r: [], g: [], b: [] };
   private readonly HISTORY_SIZE = 50;
   
   // Umbrales de calidad por canal y suavizado robusto
@@ -130,6 +134,8 @@ export class VitalSignsProcessor {
     };
     
     this.signalHistory = [];
+    this.rgbHistory = { r: [], g: [], b: [] };
+    this.spo2Processor.reset();
   }
 
   forceCalibrationCompletion(): void {
@@ -140,7 +146,8 @@ export class VitalSignsProcessor {
 
   processSignal(
     signalValue: number, 
-    rrData?: { intervals: number[], lastPeakTime: number | null }
+    rrData?: { intervals: number[], lastPeakTime: number | null },
+    rgb?: RgbSample
   ): VitalSignsResult {
     
     // Actualizar historial de señal
@@ -148,6 +155,7 @@ export class VitalSignsProcessor {
     if (this.signalHistory.length > this.HISTORY_SIZE) {
       this.signalHistory.shift();
     }
+    this.pushRgbSample(rgb);
 
     // Control de calibración
     if (this.isCalibrating) {
@@ -189,7 +197,8 @@ export class VitalSignsProcessor {
    */
   processChannels(
     channels: MultiChannelOutputs,
-    rrData?: { intervals: number[], lastPeakTime: number | null }
+    rrData?: { intervals: number[], lastPeakTime: number | null },
+    rgb?: RgbSample
   ): VitalSignsResult {
     // Ingresar cada canal a su historial dedicado
     const channelKeys = ['heart', 'spo2', 'bloodPressure', 'hemoglobin', 'glucose', 'lipids'] as const;
@@ -211,6 +220,7 @@ export class VitalSignsProcessor {
     if (this.signalHistory.length > this.HISTORY_SIZE) {
       this.signalHistory.shift();
     }
+    this.pushRgbSample(rgb);
 
     // Control de calibración
     if (this.isCalibrating) {
@@ -523,12 +533,28 @@ export class VitalSignsProcessor {
     return Math.max(0.1, 1.0 - avgVariation * 2);
   }
 
+  private pushRgbSample(rgb?: RgbSample): void {
+    if (!rgb || !Number.isFinite(rgb.r) || !Number.isFinite(rgb.g) || !Number.isFinite(rgb.b)) return;
+    this.rgbHistory.r.push(rgb.r);
+    this.rgbHistory.g.push(rgb.g);
+    this.rgbHistory.b.push(rgb.b);
+    if (this.rgbHistory.r.length > this.HISTORY_SIZE) this.rgbHistory.r.shift();
+    if (this.rgbHistory.g.length > this.HISTORY_SIZE) this.rgbHistory.g.shift();
+    if (this.rgbHistory.b.length > this.HISTORY_SIZE) this.rgbHistory.b.shift();
+  }
+
   private calculateSpO2Real(signal: number[]): number {
     if (signal.length < 10) return 0;
-    
-    // Usar procesador SpO2 dedicado para asegurar cálculo PPG real
-    const proc = new SpO2Processor();
-    const spo2 = proc.calculateSpO2(signal);
+
+    const { r, g, b } = this.rgbHistory;
+    if (r.length >= 40 && g.length >= 40 && b.length >= 40) {
+      const multi = this.spo2Processor.calculateSpO2MultiChannel(r, g, b);
+      if (multi > 0) {
+        return Math.max(85, Math.min(100, multi));
+      }
+    }
+
+    const spo2 = this.spo2Processor.calculateSpO2(signal);
     return Math.max(85, Math.min(100, spo2));
   }
 
@@ -749,6 +775,8 @@ export class VitalSignsProcessor {
     const currentResults = this.getWeightedFinalResults();
     
     this.signalHistory = [];
+    this.rgbHistory = { r: [], g: [], b: [] };
+    this.spo2Processor.reset();
     this.isCalibrating = false;
 
     return this.measurements.spo2 > 0 ? currentResults : null;
@@ -782,6 +810,16 @@ export class VitalSignsProcessor {
     };
     
     this.signalHistory = [];
+    this.rgbHistory = { r: [], g: [], b: [] };
+    this.channelHistories = {
+      heart: [],
+      spo2: [],
+      bloodPressure: [],
+      hemoglobin: [],
+      glucose: [],
+      lipids: []
+    };
+    this.spo2Processor.reset();
     this.isCalibrating = false;
     this.calibrationSamples = 0;
   }

@@ -39,6 +39,8 @@ export interface FrameData {
   avgRed?: number;
   avgGreen?: number;
   avgBlue?: number;
+  /** Promedios ROI sin ganancia dinámica ni asimetrías — para ratio-of-ratios SpO2 */
+  rawRgb?: { r: number; g: number; b: number };
   textureScore: number;
   rToGRatio: number;
   rToBRatio: number;

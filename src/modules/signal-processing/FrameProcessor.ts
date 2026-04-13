@@ -38,6 +38,9 @@ export class FrameProcessor {
     let redSum = 0;
     let greenSum = 0;
     let blueSum = 0;
+    let rawRedSum = 0;
+    let rawGreenSum = 0;
+    let rawBlueSum = 0;
     let pixelCount = 0;
     let totalLuminance = 0;
     
@@ -73,6 +76,9 @@ export class FrameProcessor {
         const r = data[i];     // Canal rojo
         const g = data[i+1];   // Canal verde
         const b = data[i+2];   // Canal azul
+        rawRedSum += r;
+        rawGreenSum += g;
+        rawBlueSum += b;
         
         // Calculate pixel luminance
         const luminance = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
@@ -203,7 +209,8 @@ export class FrameProcessor {
         rToBRatio: 1,      // Ratio neutro
         avgRed: 0,
         avgGreen: 0,
-        avgBlue: 0
+        avgBlue: 0,
+        rawRgb: { r: 0, g: 0, b: 0 }
       };
     }
     
@@ -260,11 +267,18 @@ export class FrameProcessor {
       }
     });
     
+    const rawRgb = {
+      r: rawRedSum / pixelCount,
+      g: rawGreenSum / pixelCount,
+      b: rawBlueSum / pixelCount
+    };
+
     return {
       redValue: avgRed,
       avgRed,
       avgGreen,
       avgBlue,
+      rawRgb,
       textureScore,
       rToGRatio,
       rToBRatio

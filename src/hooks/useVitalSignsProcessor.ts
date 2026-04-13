@@ -1,6 +1,6 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
+import { VitalSignsProcessor, VitalSignsResult, type RgbSample } from '../modules/vital-signs/VitalSignsProcessor';
 import type { MultiChannelOutputs } from '../types/multichannel';
 
 /**
@@ -49,7 +49,7 @@ export const useVitalSignsProcessor = () => {
     processor.forceCalibrationCompletion();
   }, [processor]);
   
-  const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+  const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }, rgb?: RgbSample) => {
     processedSignals.current++;
     
     console.log("🔬 useVitalSignsProcessor: Procesando señal ÚNICA", {
@@ -61,7 +61,7 @@ export const useVitalSignsProcessor = () => {
     });
     
     // Procesamiento ÚNICO sin duplicaciones
-    const result = processor.processSignal(value, rrData);
+    const result = processor.processSignal(value, rrData, rgb);
     
     // Guardar resultados válidos (no negativos, no cero)
     if (result.spo2 > 0 && result.glucose > 0) {
@@ -79,9 +79,9 @@ export const useVitalSignsProcessor = () => {
     return result;
   }, [processor]);
 
-  const processChannels = useCallback((channels: MultiChannelOutputs, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+  const processChannels = useCallback((channels: MultiChannelOutputs, rrData?: { intervals: number[], lastPeakTime: number | null }, rgb?: RgbSample) => {
     processedSignals.current++;
-    const result = processor.processChannels(channels, rrData);
+    const result = processor.processChannels(channels, rrData, rgb);
     if (result.spo2 > 0 && result.glucose > 0) {
       setLastValidResults(result);
     }

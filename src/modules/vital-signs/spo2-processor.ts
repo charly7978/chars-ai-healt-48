@@ -1,6 +1,4 @@
 
-import { calculateAC, calculateDC } from './utils';
-
 export class SpO2Processor {
   // ALGORITMOS MATEMÁTICOS AVANZADOS REALES - SIN SIMULACIÓN
   private readonly BEER_LAMBERT_CONSTANT = 0.956; // Coeficiente de extinción hemoglobina
@@ -53,6 +51,55 @@ export class SpO2Processor {
     // FILTRADO TEMPORAL ADAPTATIVO
     spo2 = this.applyTemporalFiltering(spo2);
     
+    return Math.round(spo2);
+  }
+
+  /**
+   * SpO2 vía ratio-of-ratios multicanal (RGB ROI crudo), alineado con enfoques
+   * tipo "multi-channel RoR" en literatura de cámara-smartphone.
+   * PI_c = AC_c/DC_c; RoR principal ≈ PI_r/PI_g; refuerzo con PI_b/PI_g.
+   */
+  public calculateSpO2MultiChannel(r: number[], g: number[], b: number[]): number {
+    const minN = 40;
+    if (r.length < minN || g.length < minN || b.length < minN) return 0;
+
+    const n = Math.min(r.length, g.length, b.length);
+    const rs = r.slice(-n);
+    const gs = g.slice(-n);
+    const bs = b.slice(-n);
+
+    const fr = this.applySavitzkyGolayFilter(rs);
+    const fg = this.applySavitzkyGolayFilter(gs);
+    const fb = this.applySavitzkyGolayFilter(bs);
+
+    const dcr = this.calculateAdvancedDC(fr);
+    const dcg = this.calculateAdvancedDC(fg);
+    const dcb = this.calculateAdvancedDC(fb);
+    const acr = this.calculateAdvancedAC(fr);
+    const acg = this.calculateAdvancedAC(fg);
+    const acb = this.calculateAdvancedAC(fb);
+
+    if (dcr <= 0 || dcg <= 0 || dcb <= 0) return 0;
+
+    const PIr = acr / dcr;
+    const PIg = acg / dcg;
+    const PIb = acb / dcb;
+
+    const perfusionIndex = this.calculateHemodynamicPerfusion((acr + acg + acb) / 3, (dcr + dcg + dcb) / 3);
+    if (perfusionIndex < this.PERFUSION_THRESHOLD) return 0;
+
+    const ratioRG = PIr / Math.max(PIg, 1e-6);
+    const ratioBG = PIb / Math.max(PIg, 1e-6);
+    // Combinación estable: verde como referencia (análogo a segundo canal); azul desambigua espectro ancho
+    const blueTerm = ratioBG > 0.05 ? 1 / Math.min(ratioBG, 4) : ratioRG;
+    const composite = 0.68 * ratioRG + 0.32 * blueTerm;
+
+    // Escalar composite al rango donde convertRatioToSpO2 es estable (empírico cámara RGB)
+    const equivalentRatio = composite * 0.52;
+
+    let spo2 = this.convertRatioToSpO2(equivalentRatio, perfusionIndex);
+    spo2 = Math.max(0, spo2);
+    spo2 = this.applyTemporalFiltering(spo2);
     return Math.round(spo2);
   }
 

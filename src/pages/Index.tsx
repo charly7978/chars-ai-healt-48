@@ -460,10 +460,11 @@ const Index = () => {
         }
       });
     }
-    // PROCESAMIENTO ÚNICO DE SIGNOS VITALES (por canales optimizados)
+    // PROCESAMIENTO ÚNICO DE SIGNOS VITALES (por canales optimizados) + RGB crudo para SpO2 multicanal
+    const rgb = lastSignal.rgbRaw;
     const vitals = channelOutputs
-      ? processVitalChannels(channelOutputs, heartBeatResult.rrData)
-      : processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+      ? processVitalChannels(channelOutputs, heartBeatResult.rrData, rgb)
+      : processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData, rgb);
     if (vitals) {
       setVitalSigns(vitals);
       
@@ -488,7 +489,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, processVitalChannels, setArrhythmiaState]);
 
   // CONTROL DE CALIBRACIÓN ÚNICO
   useEffect(() => {

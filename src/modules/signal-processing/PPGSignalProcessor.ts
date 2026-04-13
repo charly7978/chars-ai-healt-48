@@ -176,7 +176,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       
       // 1. Extracción optimizada
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
+      const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue, rawRgb } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
       // 2. DETECCIÓN AVANZADA DE DEDO HUMANO - Sistema robusto anti-falsos positivos
@@ -261,7 +261,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         quality: quality,
         fingerDetected: fingerDetectionResult.isDetected,
         roi: roi,
-        perfusionIndex: Math.max(0, perfusionIndex)
+        perfusionIndex: Math.max(0, perfusionIndex),
+        rgbRaw: rawRgb ?? { r: redValue, g: avgGreen ?? 0, b: avgBlue ?? 0 }
       };
 
       this.onSignalReady(processedSignal);
