@@ -112,8 +112,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.detectionLogger = new DetectionLogger();
     this.acCoupling = new ACCouplingFilter();
     this.cardiacBandpass = new CardiacBandpassFilter(30);
-    this.fingerSmoother = new FingerStateSmoother(4, 12);
-    this.pulseGate = new PulsatilePresenceGate(30, 4);
+    this.fingerSmoother = new FingerStateSmoother(2, 10);
+    this.pulseGate = new PulsatilePresenceGate(30, 5);
   }
 
   async initialize(): Promise<void> {
@@ -200,7 +200,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       
       // 1. Extracción optimizada
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue, rawRgb } = extractionResult;
+      const { redValue, globalMeanRed, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue, rawRgb } =
+        extractionResult;
+      /** Media espacial + parche de contacto: la pulsación se ve mejor que en una sola tesela */
+      const pulseSample =
+        globalMeanRed != null && rawRgb
+          ? globalMeanRed * 0.55 + rawRgb.r * 0.45
+          : redValue;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
       // 2. Dedo humano (biofísico) + histéresis temporal anti-parpadeo
@@ -208,8 +214,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, imageData.width, imageData.height
       );
 
-      /** Puerta principal anti-FP: pulsación periférica estable (cPPG); sin pulso → no dedo */
-      const pulseOk = this.pulseGate.push(redValue);
+      /** Puerta pulsátil sobre señal más estable espacialmente */
+      const pulseOk = this.pulseGate.push(pulseSample);
 
       /** Color ROI coherente con tejido iluminado (sin "softAccept" que generaba FP permanentes) */
       const colorPlausible = this.isSkinColorPlausible(
@@ -543,15 +549,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     rToGRatio: number,
     v: HumanFingerValidation
   ): boolean {
-    if (redValue < 20 || redValue > 252) return false;
-    if (textureScore < 0.14) return false;
-    if (rToGRatio < 0.72 || rToGRatio > 4.8) return false;
+    if (redValue < 14 || redValue > 254) return false;
+    if (textureScore < 0.09) return false;
+    if (rToGRatio < 0.58 || rToGRatio > 5.4) return false;
     const sum = redValue + greenValue + blueValue + 1e-6;
     const rr = redValue / sum;
-    if (rr < 0.28 || rr > 0.72) return false;
-    if (v.isHumanFinger && v.confidence >= 0.32) return true;
-    if (v.validationDetails.skinColorValid && v.confidence >= 0.26) return true;
-    return redValue >= 38 && rr >= 0.33 && rr <= 0.62 && textureScore >= 0.2;
+    if (rr < 0.22 || rr > 0.78) return false;
+    if (v.isHumanFinger && v.confidence >= 0.24) return true;
+    if (v.validationDetails.skinColorValid && v.confidence >= 0.2) return true;
+    return redValue >= 26 && rr >= 0.28 && rr <= 0.68 && textureScore >= 0.12;
   }
 
   private computeAcPulsatilityIndex(): number {

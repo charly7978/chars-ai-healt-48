@@ -57,32 +57,31 @@ export class PulsatilePresenceGate {
     if (this.buf.length > this.maxLen) this.buf.shift();
 
     const n = this.buf.length;
-    // ~1.4 s a 30 fps — equilibrio entre latencia y estabilidad del PI
-    if (n < 42) {
+    // ~0,9 s a 30 fps — enganche más rápido sin exigir tanto historial
+    if (n < 28) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
     const m = mean(this.buf);
-    const dc = Math.max(m, 5);
+    const dc = Math.max(m, 4);
     const sd = stdev(this.buf);
     const pi = sd / dc;
 
-    // PI mínimo (contacto dedo; cámara móvil suele dar PI bajo en escala 0–255)
-    if (pi < 0.0028) {
+    if (pi < 0.0016) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
-    const det = this.detrendMovingAverage(this.buf, Math.max(7, Math.round(this.sampleRateHz * 0.35)));
+    const det = this.detrendMovingAverage(this.buf, Math.max(5, Math.round(this.sampleRateHz * 0.28)));
     const noise = stdev(det);
-    if (noise < 0.28) {
+    if (noise < 0.14) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
-    const peaks = this.findPeaks(det, Math.max(0.35 * noise, 0.2));
-    if (peaks.length < 3) {
+    const peaks = this.findPeaks(det, Math.max(0.28 * noise, 0.12));
+    if (peaks.length < 2) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
@@ -93,14 +92,13 @@ export class PulsatilePresenceGate {
     }
 
     const medI = median(intervals);
-    // Banda ~35–170 lpm a 30 fps
-    if (medI < 10 || medI > 54) {
+    if (medI < 7 || medI > 62) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
     const cv = stdev(intervals) / (medI + 1e-6);
-    if (cv > 0.45) {
+    if (cv > 0.58) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
@@ -108,7 +106,7 @@ export class PulsatilePresenceGate {
     this.consecutiveHits++;
     this.consecutiveMiss = 0;
 
-    return this.consecutiveHits >= 2;
+    return this.consecutiveHits >= 1;
   }
 
   private latchedFalse(): boolean {
@@ -142,7 +140,7 @@ export class PulsatilePresenceGate {
         v >= signal[i + 2] &&
         v > minProminence
       ) {
-        if (idx.length === 0 || i - idx[idx.length - 1] >= 7) {
+        if (idx.length === 0 || i - idx[idx.length - 1] >= 4) {
           idx.push(i);
         }
       }

@@ -47,6 +47,9 @@ export class FrameProcessor {
     const tc = new Array(gw * gh).fill(0);
     let totalLuminance = 0;
     let pixelCount = 0;
+    let sumRAll = 0;
+    let sumGAll = 0;
+    let sumBAll = 0;
 
     for (let y = sy; y < ey; y++) {
       for (let x = sx; x < ex; x++) {
@@ -54,6 +57,9 @@ export class FrameProcessor {
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
+        sumRAll += r;
+        sumGAll += g;
+        sumBAll += b;
         const tx = Math.min(gw - 1, Math.floor((x - sx) / tw));
         const ty = Math.min(gh - 1, Math.floor((y - sy) / th));
         const ti = ty * gw + tx;
@@ -69,6 +75,7 @@ export class FrameProcessor {
     if (pixelCount < 1) {
       return {
         redValue: 0,
+        globalMeanRed: 0,
         textureScore: 0,
         rToGRatio: 1,
         rToBRatio: 1,
@@ -84,8 +91,7 @@ export class FrameProcessor {
       tileMr.push(tc[ti] > 0 ? tr[ti] / tc[ti] : 0);
     }
 
-    let bestIdx = 0;
-    let bestScore = -1;
+    const tileScores: { idx: number; score: number }[] = [];
     for (let ti = 0; ti < gw * gh; ti++) {
       if (tc[ti] < 1) continue;
       const mr = tileMr[ti];
@@ -93,19 +99,31 @@ export class FrameProcessor {
       const mb = tb[ti] / tc[ti];
       const rg = mr / (mg + 1);
       let score = mr;
-      if (rg >= 0.7 && rg <= 4.3 && mr > mb * 0.68) {
-        score = mr * 1.22;
+      if (rg >= 0.65 && rg <= 4.5 && mr > mb * 0.62) {
+        score = mr * 1.2;
       }
-      if (score > bestScore) {
-        bestScore = score;
-        bestIdx = ti;
-      }
+      tileScores.push({ idx: ti, score });
     }
+    tileScores.sort((a, b) => b.score - a.score);
 
-    const nPix = Math.max(1, tc[bestIdx]);
-    const mr = tr[bestIdx] / nPix;
-    const mg = tg[bestIdx] / nPix;
-    const mb = tb[bestIdx] / nPix;
+    const topK = Math.min(3, tileScores.length);
+    let blendR = 0;
+    let blendG = 0;
+    let blendB = 0;
+    let blendW = 0;
+    for (let k = 0; k < topK; k++) {
+      const ti = tileScores[k].idx;
+      blendR += tr[ti];
+      blendG += tg[ti];
+      blendB += tb[ti];
+      blendW += tc[ti];
+    }
+    const nPix = Math.max(1, blendW);
+    const mr = blendR / nPix;
+    const mg = blendG / nPix;
+    const mb = blendB / nPix;
+
+    const globalMeanRed = pixelCount > 0 ? sumRAll / pixelCount : mr;
 
     const rawRgb = { r: mr, g: mg, b: mb };
 
@@ -152,6 +170,7 @@ export class FrameProcessor {
 
     return {
       redValue: avgRed,
+      globalMeanRed,
       avgRed,
       avgGreen,
       avgBlue,

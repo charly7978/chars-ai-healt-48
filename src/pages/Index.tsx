@@ -428,11 +428,11 @@ const Index = () => {
     const pttNow = Date.now();
     pttEstimator.sampleAudio(pttNow);
     
-    const MIN_SIGNAL_QUALITY = 12;
+    const MIN_SIGNAL_QUALITY = 8;
     
     if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
       // Procesamiento reducido pero no bloqueo total
-      if (lastSignal.quality >= 10) {
+      if (lastSignal.quality >= 6) {
         const reducedBeatResult = processHeartBeat(
           lastSignal.filteredValue * 0.5, 
           false, // finger not fully detected but processing signal

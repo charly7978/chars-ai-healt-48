@@ -36,6 +36,8 @@ export interface DetectorScores {
 
 export interface FrameData {
   redValue: number;
+  /** Media R en casi todo el sensor — mejor periodicidad para la puerta pulsátil que una sola tesela */
+  globalMeanRed?: number;
   avgRed?: number;
   avgGreen?: number;
   avgBlue?: number;
