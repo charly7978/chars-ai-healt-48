@@ -57,31 +57,31 @@ export class PulsatilePresenceGate {
     if (this.buf.length > this.maxLen) this.buf.shift();
 
     const n = this.buf.length;
-    // ~0,9 s a 30 fps — enganche más rápido sin exigir tanto historial
-    if (n < 28) {
+    // ≥2,4 s a 30 fps: varios ciclos cardíacos reales (reduce FP por ruido/flicker)
+    if (n < 72) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
     const m = mean(this.buf);
-    const dc = Math.max(m, 4);
+    const dc = Math.max(m, 6);
     const sd = stdev(this.buf);
     const pi = sd / dc;
 
-    if (pi < 0.0016) {
+    if (pi < 0.0034) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
-    const det = this.detrendMovingAverage(this.buf, Math.max(5, Math.round(this.sampleRateHz * 0.28)));
+    const det = this.detrendMovingAverage(this.buf, Math.max(9, Math.round(this.sampleRateHz * 0.32)));
     const noise = stdev(det);
-    if (noise < 0.14) {
+    if (noise < 0.22) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
-    const peaks = this.findPeaks(det, Math.max(0.28 * noise, 0.12));
-    if (peaks.length < 2) {
+    const peaks = this.findPeaks(det, Math.max(0.38 * noise, 0.18));
+    if (peaks.length < 4) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
@@ -92,13 +92,13 @@ export class PulsatilePresenceGate {
     }
 
     const medI = median(intervals);
-    if (medI < 7 || medI > 62) {
+    if (medI < 9 || medI > 52) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
     const cv = stdev(intervals) / (medI + 1e-6);
-    if (cv > 0.58) {
+    if (cv > 0.36) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
@@ -106,7 +106,7 @@ export class PulsatilePresenceGate {
     this.consecutiveHits++;
     this.consecutiveMiss = 0;
 
-    return this.consecutiveHits >= 1;
+    return this.consecutiveHits >= 3;
   }
 
   private latchedFalse(): boolean {
@@ -140,7 +140,7 @@ export class PulsatilePresenceGate {
         v >= signal[i + 2] &&
         v > minProminence
       ) {
-        if (idx.length === 0 || i - idx[idx.length - 1] >= 4) {
+        if (idx.length === 0 || i - idx[idx.length - 1] >= 7) {
           idx.push(i);
         }
       }

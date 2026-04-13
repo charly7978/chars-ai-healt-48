@@ -12,6 +12,7 @@ import { ACCouplingFilter } from './ACCouplingFilter';
 import { CardiacBandpassFilter } from './CardiacBandpassFilter';
 import { FingerStateSmoother } from './FingerStateSmoother';
 import { PulsatilePresenceGate } from './PulsatilePresenceGate';
+import { isStrictHemoglobinSkinContact } from './StrictSkinContactGate';
 
 /**
  * PROCESADOR PPG — pipeline clínico: Kalman → S-G → AC → paso banda cardíaca → histéresis dedo
@@ -112,8 +113,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.detectionLogger = new DetectionLogger();
     this.acCoupling = new ACCouplingFilter();
     this.cardiacBandpass = new CardiacBandpassFilter(30);
-    this.fingerSmoother = new FingerStateSmoother(2, 10);
-    this.pulseGate = new PulsatilePresenceGate(30, 5);
+    this.fingerSmoother = new FingerStateSmoother(7, 5);
+    this.pulseGate = new PulsatilePresenceGate(30, 6);
   }
 
   async initialize(): Promise<void> {
@@ -200,13 +201,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       
       // 1. Extracción optimizada
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, globalMeanRed, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue, rawRgb } =
-        extractionResult;
-      /** Media espacial + parche de contacto: la pulsación se ve mejor que en una sola tesela */
-      const pulseSample =
-        globalMeanRed != null && rawRgb
-          ? globalMeanRed * 0.55 + rawRgb.r * 0.45
-          : redValue;
+      const { redValue, textureScore, avgGreen, avgBlue, rawRgb } = extractionResult;
+      /** Solo canal R del parche de contacto: la media global captaba flicker/parpadeo como "pulso" (FP) */
+      const pulseSample = rawRgb ? rawRgb.r : redValue;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
       // 2. Dedo humano (biofísico) + histéresis temporal anti-parpadeo
@@ -214,20 +211,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, imageData.width, imageData.height
       );
 
-      /** Puerta pulsátil sobre señal más estable espacialmente */
       const pulseOk = this.pulseGate.push(pulseSample);
 
-      /** Color ROI coherente con tejido iluminado (sin "softAccept" que generaba FP permanentes) */
-      const colorPlausible = this.isSkinColorPlausible(
-        redValue,
-        avgGreen ?? 0,
-        avgBlue ?? 0,
-        textureScore,
-        rToGRatio,
-        humanFingerValidation
-      );
+      const rgbR = rawRgb?.r ?? redValue;
+      const rgbG = rawRgb?.g ?? (avgGreen ?? 0);
+      const rgbB = rawRgb?.b ?? (avgBlue ?? 0);
 
-      const rawFingerCandidate = pulseOk && colorPlausible;
+      const strictSkin = isStrictHemoglobinSkinContact(rgbR, rgbG, rgbB, textureScore);
+      const bioConfirmed =
+        humanFingerValidation.validationDetails.skinColorValid &&
+        humanFingerValidation.validationDetails.perfusionValid &&
+        humanFingerValidation.confidence >= 0.43;
+
+      const rawFingerCandidate = pulseOk && strictSkin && bioConfirmed;
 
       const smoothedFinger = this.fingerSmoother.update(rawFingerCandidate);
       if (this.prevSmoothedFinger && !smoothedFinger) {
@@ -235,9 +231,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       }
       this.prevSmoothedFinger = smoothedFinger;
 
-      const fingerConfidence = smoothedFinger
-        ? humanFingerValidation.confidence
-        : Math.min(0.22, humanFingerValidation.confidence * 0.35);
+      const fingerConfidence = smoothedFinger ? humanFingerValidation.confidence : 0;
 
       const fingerDetectionResult = {
         isDetected: smoothedFinger,
@@ -293,9 +287,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           255,
           Math.max(0, dcEstimate + pulseMix * preciseGain * 2.05 + 6)
         );
-      } else {
-        const warm = this.acCoupling.filter(redValue);
-        filteredValue = Math.min(255, Math.max(0, warm.dcEstimate + warm.ac * 0.35));
       }
 
       // 4. Buffer circular ultra-preciso
@@ -307,13 +298,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       void this.calculateOptimizedSNR();
       const snrDb = this.fingerDetectionState.signalToNoiseRatio;
       const acPulse = this.computeAcPulsatilityIndex();
-      const quality = this.calculateProfessionalQuality(
+      let quality = this.calculateProfessionalQuality(
         fingerConfidence,
         textureScore,
         redValue,
         snrDb,
         acPulse
       );
+      if (!smoothedFinger) {
+        quality = 0;
+      }
 
       // 7. Índice de perfusión preciso
       const perfusionIndex = this.calculatePrecisePerfusion(
@@ -536,28 +530,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const detectionBoost = detectionResult.detectionScore * 0.5;
     
     return Math.min(3.0, Math.max(1.2, baseGain + detectionBoost));
-  }
-
-  /**
-   * Coherencia cromática bajo flash (no sustituye la puerta pulsátil).
-   */
-  private isSkinColorPlausible(
-    redValue: number,
-    greenValue: number,
-    blueValue: number,
-    textureScore: number,
-    rToGRatio: number,
-    v: HumanFingerValidation
-  ): boolean {
-    if (redValue < 14 || redValue > 254) return false;
-    if (textureScore < 0.09) return false;
-    if (rToGRatio < 0.58 || rToGRatio > 5.4) return false;
-    const sum = redValue + greenValue + blueValue + 1e-6;
-    const rr = redValue / sum;
-    if (rr < 0.22 || rr > 0.78) return false;
-    if (v.isHumanFinger && v.confidence >= 0.24) return true;
-    if (v.validationDetails.skinColorValid && v.confidence >= 0.2) return true;
-    return redValue >= 26 && rr >= 0.28 && rr <= 0.68 && textureScore >= 0.12;
   }
 
   private computeAcPulsatilityIndex(): number {

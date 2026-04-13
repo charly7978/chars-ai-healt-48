@@ -428,29 +428,18 @@ const Index = () => {
     const pttNow = Date.now();
     pttEstimator.sampleAudio(pttNow);
     
-    const MIN_SIGNAL_QUALITY = 8;
-    
-    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
-      // Procesamiento reducido pero no bloqueo total
-      if (lastSignal.quality >= 6) {
-        const reducedBeatResult = processHeartBeat(
-          lastSignal.filteredValue * 0.5, 
-          false, // finger not fully detected but processing signal
-          lastSignal.timestamp
-        );
-        if (reducedBeatResult.isPeak) pttEstimator.onPpgPeak(pttNow);
-        setPulseTransitTimeMs(pttEstimator.getMedianPttMs());
-        setHeartRate(reducedBeatResult.bpm * 0.8); // Reducir confianza
-        setHeartbeatSignal(lastSignal.filteredValue * 0.7);
-        setBeatMarker(reducedBeatResult.isPeak ? 0.5 : 0);
-      } else {
-        setPulseTransitTimeMs(pttEstimator.getMedianPttMs());
-        setHeartRate(0);
-        setHeartbeatSignal(0);
-        setBeatMarker(0);
-      }
-      // Alimentar igualmente al optimizador para mantener estado, aunque degradado
-      pushRawSample(lastSignal.timestamp, lastSignal.filteredValue * 0.5, lastSignal.quality);
+    const MIN_SIGNAL_QUALITY = 22;
+    const MIN_FINGER_CONF = 0.42;
+
+    if (
+      !lastSignal.fingerDetected ||
+      lastSignal.quality < MIN_SIGNAL_QUALITY ||
+      (lastSignal.fingerConfidence != null && lastSignal.fingerConfidence < MIN_FINGER_CONF)
+    ) {
+      setPulseTransitTimeMs(pttEstimator.getMedianPttMs());
+      setHeartRate(0);
+      setHeartbeatSignal(0);
+      setBeatMarker(0);
       return;
     }
 
