@@ -11,6 +11,24 @@ export const getQualityColor = (quality: number, isFingerDetected = true): strin
   return '#ef4444'; // red-500
 };
 
+/** Guía breve para el usuario (comodidad + precisión) */
+export function getPpgUserGuidance(
+  quality: number,
+  fingerDetected: boolean,
+  fingerConfidence?: number
+): string {
+  if (!fingerDetected) {
+    if ((fingerConfidence ?? 0) > 0.12) {
+      return 'Casi… Mantén la yema sobre el flash, presión suave y constante.';
+    }
+    return 'Cubre por completo el flash con la yema; mano apoyada y quieto.';
+  }
+  if (quality >= 78) return 'Señal óptima. Mantén la posición unos segundos más.';
+  if (quality >= 55) return 'Buena señal. Evita apretar demasiado o mover el brazo.';
+  if (quality >= 35) return 'Ajusta la presión del dedo: ni muy fuerte ni muy floja.';
+  return 'Mejora el contacto: dedo limpio, sin huecos respecto al cristal.';
+}
+
 export const getQualityText = (quality: number, isFingerDetected = true, context = 'default'): string => {
   if (!isFingerDetected) return context === 'meter' ? 'Sin detección' : 'Sin señal';
   if (quality > 75) return context === 'meter' ? 'Señal óptima' : 'Excelente';

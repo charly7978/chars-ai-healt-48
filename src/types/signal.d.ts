@@ -15,6 +15,10 @@ export interface ProcessedSignal {
   perfusionIndex?: number;
   /** Muestras RGB ROI sin preprocesado asimétrico (SpO2 multicanal) */
   rgbRaw?: { r: number; g: number; b: number };
+  /** Confianza dedo tras histéresis temporal [0,1] */
+  fingerConfidence?: number;
+  /** SNR estimado (dB) en ventana corta */
+  snrEstimateDb?: number;
 }
 
 export interface ProcessingError {

@@ -8,9 +8,12 @@ import { CalibrationHandler } from './CalibrationHandler';
 import { SignalAnalyzer } from './SignalAnalyzer';
 import { HumanFingerDetector, HumanFingerValidation } from './HumanFingerDetector';
 import { DetectionLogger } from '../../utils/DetectionLogger';
+import { ACCouplingFilter } from './ACCouplingFilter';
+import { CardiacBandpassFilter } from './CardiacBandpassFilter';
+import { FingerStateSmoother } from './FingerStateSmoother';
 
 /**
- * PROCESADOR PPG OPTIMIZADO - DETECCIÓN PERFECTA SIN FALSOS POSITIVOS
+ * PROCESADOR PPG — pipeline clínico: Kalman → S-G → AC → paso banda cardíaca → histéresis dedo
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -23,6 +26,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private signalAnalyzer: SignalAnalyzer;
   private humanFingerDetector: HumanFingerDetector;
   private detectionLogger: DetectionLogger;
+  private acCoupling: ACCouplingFilter;
+  private cardiacBandpass: CardiacBandpassFilter;
+  private fingerSmoother: FingerStateSmoother;
+  private acHistory: number[] = [];
+  private readonly AC_HISTORY_MAX = 45;
+  private qualityEma = 0;
+  private prevSmoothedFinger = false;
   
   // SISTEMA OPTIMIZADO DE DETECCIÓN
   private fingerDetectionState = {
@@ -53,9 +63,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // UMBRALES MÁS PERMISIVOS PERO PRECISOS
     MIN_RED_THRESHOLD: 20,  // Más bajo para mejor detección
     MAX_RED_THRESHOLD: 250,
-    MIN_DETECTION_SCORE: 0.4, // Más permisivo
-    MIN_CONSECUTIVE_FOR_DETECTION: 3, // Menos frames requeridos
-    MAX_CONSECUTIVE_FOR_LOSS: 8,
+    MIN_DETECTION_SCORE: 0.42,
+    MIN_CONSECUTIVE_FOR_DETECTION: 4,
+    MAX_CONSECUTIVE_FOR_LOSS: 9,
     
     // VALIDACIÓN EQUILIBRADA
     MIN_SNR_REQUIRED: 8.0, // SNR más bajo pero funcional
@@ -98,6 +108,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     });
     this.humanFingerDetector = new HumanFingerDetector();
     this.detectionLogger = new DetectionLogger();
+    this.acCoupling = new ACCouplingFilter();
+    this.cardiacBandpass = new CardiacBandpassFilter(30);
+    this.fingerSmoother = new FingerStateSmoother(5, 9);
   }
 
   async initialize(): Promise<void> {
@@ -120,6 +133,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         peakHistory: [],
         valleyHistory: []
       };
+
+      this.acCoupling.reset();
+      this.cardiacBandpass.reset();
+      this.fingerSmoother.reset();
+      this.acHistory = [];
+      this.qualityEma = 0;
+      this.prevSmoothedFinger = false;
       
       this.kalmanFilter.reset();
       this.sgFilter.reset();
@@ -179,21 +199,36 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue, rawRgb } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
-      // 2. DETECCIÓN AVANZADA DE DEDO HUMANO - Sistema robusto anti-falsos positivos
+      // 2. Dedo humano (biofísico) + histéresis temporal anti-parpadeo
       const humanFingerValidation = this.humanFingerDetector.detectHumanFinger(
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, imageData.width, imageData.height
       );
 
-      // Solo procesar si es un dedo humano real detectado
+      const smoothedFinger = this.fingerSmoother.update(humanFingerValidation.isHumanFinger);
+      if (this.prevSmoothedFinger && !smoothedFinger) {
+        this.cardiacBandpass.reset();
+      }
+      this.prevSmoothedFinger = smoothedFinger;
+
+      const fingerConfidence = smoothedFinger
+        ? humanFingerValidation.confidence
+        : Math.min(0.22, humanFingerValidation.confidence * 0.35);
+
       const fingerDetectionResult = {
-        isDetected: humanFingerValidation.isHumanFinger,
-        detectionScore: humanFingerValidation.confidence,
+        isDetected: smoothedFinger,
+        detectionScore: fingerConfidence,
         opticalCoherence: humanFingerValidation.opticalCoherence
       };
 
+      // Historial SIEMPRE alimentado (SNR / pulsatility reales — antes incompleto)
+      this.fingerDetectionState.signalHistory.push(redValue);
+      if (this.fingerDetectionState.signalHistory.length > 30) {
+        this.fingerDetectionState.signalHistory.shift();
+      }
+
       // LOGGING TRANSPARENTE DE DETECCIÓN
       this.detectionLogger.logDetectionAttempt(
-        humanFingerValidation.isHumanFinger,
+        smoothedFinger,
         humanFingerValidation.validationDetails,
         {
           biophysicalScore: humanFingerValidation.biophysicalScore,
@@ -208,20 +243,33 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           noiseLevel: 0, // Se calculará en el contexto apropiado
           snrRatio: this.fingerDetectionState.signalToNoiseRatio
         },
-        !humanFingerValidation.isHumanFinger ? 
+        !smoothedFinger ? 
           `Fallo: skin=${humanFingerValidation.validationDetails.skinColorValid}, perfusion=${humanFingerValidation.validationDetails.perfusionValid}` : 
           undefined
       );
 
-      // 3. Procesamiento mejorado
+      // 3. Cadena PPG: Kalman → Savitzky-Golay → AC → paso banda cardíaca → reconstrucción amplitud
       let filteredValue = redValue;
-      if (fingerDetectionResult.isDetected) {
-        filteredValue = this.kalmanFilter.filter(redValue);
-        filteredValue = this.sgFilter.filter(filteredValue);
-        
-        // Amplificación controlada
-        const preciseGain = this.calculateOptimizedGain(fingerDetectionResult);
-        filteredValue = filteredValue * preciseGain;
+      if (smoothedFinger && humanFingerValidation.confidence >= 0.32) {
+        const k1 = this.kalmanFilter.filter(redValue);
+        const k2 = this.sgFilter.filter(k1);
+        const { ac, dcEstimate } = this.acCoupling.filter(k2);
+        const bp = this.cardiacBandpass.process(ac);
+        this.acHistory.push(ac);
+        if (this.acHistory.length > this.AC_HISTORY_MAX) this.acHistory.shift();
+
+        const pulseMix = 0.64 * bp + 0.36 * ac;
+        const preciseGain = this.calculateOptimizedGain({
+          detectionScore: humanFingerValidation.confidence,
+          opticalCoherence: humanFingerValidation.opticalCoherence
+        });
+        filteredValue = Math.min(
+          255,
+          Math.max(0, dcEstimate + pulseMix * preciseGain * 2.05 + 6)
+        );
+      } else {
+        const warm = this.acCoupling.filter(redValue);
+        filteredValue = Math.min(255, Math.max(0, warm.dcEstimate + warm.ac * 0.35));
       }
 
       // 4. Buffer circular ultra-preciso
@@ -229,27 +277,30 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.bufferIndex = (this.bufferIndex + 1) % this.BUFFER_SIZE;
       if (this.bufferIndex === 0) this.bufferFull = true;
 
-      // 5. Análisis de tendencia estricto
-      const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
-      
-      // 6. Calidad ultra-precisa
-      const quality = this.calculateUltraPreciseQuality(
-        fingerDetectionResult, textureScore, redValue, this.fingerDetectionState.signalToNoiseRatio
+      // 5. SNR (historial válido) + calidad profesional suavizada
+      void this.calculateOptimizedSNR();
+      const snrDb = this.fingerDetectionState.signalToNoiseRatio;
+      const acPulse = this.computeAcPulsatilityIndex();
+      const quality = this.calculateProfessionalQuality(
+        fingerConfidence,
+        textureScore,
+        redValue,
+        snrDb,
+        acPulse
       );
 
       // 7. Índice de perfusión preciso
       const perfusionIndex = this.calculatePrecisePerfusion(
-        redValue, fingerDetectionResult.isDetected, quality, fingerDetectionResult.detectionScore
+        redValue, smoothedFinger, quality, fingerConfidence
       );
 
-      // Logging optimizado cada 30 frames
-      if (this.frameCount % 30 === 0) {
-        console.log("🎯 Detección optimizada:", {
-          red: redValue.toFixed(2),
-          detected: fingerDetectionResult.isDetected,
-          score: fingerDetectionResult.detectionScore.toFixed(3),
-          consecutivas: this.fingerDetectionState.consecutiveDetections,
-          snr: this.fingerDetectionState.signalToNoiseRatio.toFixed(1)
+      if (this.frameCount % 120 === 0) {
+        console.log("PPG:", {
+          red: redValue.toFixed(1),
+          dedo: smoothedFinger,
+          conf: fingerConfidence.toFixed(2),
+          snr: snrDb.toFixed(1),
+          Q: quality
         });
       }
 
@@ -259,10 +310,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         rawValue: redValue,
         filteredValue: filteredValue,
         quality: quality,
-        fingerDetected: fingerDetectionResult.isDetected,
+        fingerDetected: smoothedFinger,
         roi: roi,
         perfusionIndex: Math.max(0, perfusionIndex),
-        rgbRaw: rawRgb ?? { r: redValue, g: avgGreen ?? 0, b: avgBlue ?? 0 }
+        rgbRaw: rawRgb ?? { r: redValue, g: avgGreen ?? 0, b: avgBlue ?? 0 },
+        fingerConfidence: Math.round(fingerConfidence * 100) / 100,
+        snrEstimateDb: Math.round(snrDb * 10) / 10
       };
 
       this.onSignalReady(processedSignal);
@@ -459,29 +512,46 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return Math.min(3.0, Math.max(1.2, baseGain + detectionBoost));
   }
 
-  private calculateUltraPreciseQuality(
-    detectionResult: { detectionScore: number }, 
-    textureScore: number, 
+  /** Variación relativa del componente AC = pulsatilidad útil */
+  private computeAcPulsatilityIndex(): number {
+    if (this.acHistory.length < 8) return 0;
+    const slice = this.acHistory.slice(-32);
+    const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
+    const variance = slice.reduce((s, x) => s + (x - mean) * (x - mean), 0) / slice.length;
+    return Math.sqrt(variance) / (Math.abs(mean) + 2);
+  }
+
+  /**
+   * Índice 0–100: confianza dedo, textura ROI, nivel óptico, SNR, pulsatility AC.
+   * EMA temporal para lectura estable para el usuario.
+   */
+  private calculateProfessionalQuality(
+    fingerConf: number,
+    textureScore: number,
     redValue: number,
-    snr: number
+    snrDb: number,
+    acPulsatility: number
   ): number {
-    if (detectionResult.detectionScore < 0.5) return 0;
-    
-    const detectionQuality = Math.pow(detectionResult.detectionScore, 0.8) * 40;
-    const textureQuality = textureScore * 25;
-    const signalQuality = Math.min(25, (redValue / 8));
-    const snrQuality = Math.min(10, Math.max(0, snr - 10));
-    
-    const finalQuality = Math.min(100, Math.max(0, 
-      detectionQuality + textureQuality + signalQuality + snrQuality));
-    
-    return finalQuality;
+    if (fingerConf < 0.2) {
+      this.qualityEma = this.qualityEma * 0.88;
+      return Math.round(Math.max(0, this.qualityEma));
+    }
+
+    const dq = Math.pow(Math.min(1, fingerConf), 0.78) * 36;
+    const tq = textureScore * 21;
+    const sq = Math.min(20, (redValue / 255) * 20);
+    const snrQ = Math.min(17, Math.max(0, (snrDb - 5.5) * 0.82));
+    const pulseQ = Math.min(14, acPulsatility * 38);
+
+    const raw = Math.min(100, Math.max(0, dq + tq + sq + snrQ + pulseQ));
+    this.qualityEma = this.qualityEma === 0 ? raw : raw * 0.13 + this.qualityEma * 0.87;
+    return Math.round(Math.min(100, this.qualityEma));
   }
 
   private calculatePrecisePerfusion(
     redValue: number, isDetected: boolean, quality: number, detectionScore: number
   ): number {
-    if (!isDetected || quality < 50 || detectionScore < 0.7) return 0;
+    if (!isDetected || quality < 42 || detectionScore < 0.45) return 0;
     
     const normalizedRed = Math.min(1, redValue / 120);
     const perfusionBase = Math.log1p(normalizedRed * 2) * 2.0;
@@ -506,6 +576,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.signalAnalyzer.reset();
     this.humanFingerDetector.reset();
     this.detectionLogger.reset();
+    this.acCoupling.reset();
+    this.cardiacBandpass.reset();
+    this.fingerSmoother.reset();
+    this.acHistory = [];
+    this.qualityEma = 0;
+    this.prevSmoothedFinger = false;
   }
 
   private handleError(code: string, message: string): void {
