@@ -7,8 +7,8 @@ export class FingerStateSmoother {
   private locked = false;
 
   constructor(
-    private readonly framesToEngage = 5,
-    private readonly framesToRelease = 8
+    private readonly framesToEngage = 3,
+    private readonly framesToRelease = 10
   ) {}
 
   /** Entrada: detección cruda por frame; salida: estado estable */

@@ -204,7 +204,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, imageData.width, imageData.height
       );
 
-      const smoothedFinger = this.fingerSmoother.update(humanFingerValidation.isHumanFinger);
+      const softAccept =
+        !humanFingerValidation.isHumanFinger &&
+        humanFingerValidation.confidence >= 0.27 &&
+        redValue >= 32 &&
+        textureScore >= 0.19 &&
+        (humanFingerValidation.validationDetails.skinColorValid || redValue >= 50);
+
+      const rawFingerCandidate =
+        humanFingerValidation.isHumanFinger || softAccept;
+
+      const plausible = this.isPhysicallyPlausibleFinger(
+        redValue,
+        textureScore,
+        humanFingerValidation.confidence
+      );
+
+      const smoothedFinger = this.fingerSmoother.update(rawFingerCandidate && plausible);
       if (this.prevSmoothedFinger && !smoothedFinger) {
         this.cardiacBandpass.reset();
       }
@@ -226,31 +242,32 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.fingerDetectionState.signalHistory.shift();
       }
 
-      // LOGGING TRANSPARENTE DE DETECCIÓN
-      this.detectionLogger.logDetectionAttempt(
-        smoothedFinger,
-        humanFingerValidation.validationDetails,
-        {
-          biophysicalScore: humanFingerValidation.biophysicalScore,
-          opticalCoherence: humanFingerValidation.opticalCoherence,
-          bloodFlowIndicator: humanFingerValidation.bloodFlowIndicator,
-          tissueConsistency: humanFingerValidation.tissueConsistency,
-          overallConfidence: humanFingerValidation.confidence
-        },
-        {
-          redValue: redValue,
-          signalStrength: redValue / 255,
-          noiseLevel: 0, // Se calculará en el contexto apropiado
-          snrRatio: this.fingerDetectionState.signalToNoiseRatio
-        },
-        !smoothedFinger ? 
-          `Fallo: skin=${humanFingerValidation.validationDetails.skinColorValid}, perfusion=${humanFingerValidation.validationDetails.perfusionValid}` : 
-          undefined
-      );
+      if (this.frameCount % 10 === 0) {
+        this.detectionLogger.logDetectionAttempt(
+          smoothedFinger,
+          humanFingerValidation.validationDetails,
+          {
+            biophysicalScore: humanFingerValidation.biophysicalScore,
+            opticalCoherence: humanFingerValidation.opticalCoherence,
+            bloodFlowIndicator: humanFingerValidation.bloodFlowIndicator,
+            tissueConsistency: humanFingerValidation.tissueConsistency,
+            overallConfidence: humanFingerValidation.confidence
+          },
+          {
+            redValue: redValue,
+            signalStrength: redValue / 255,
+            noiseLevel: 0,
+            snrRatio: this.fingerDetectionState.signalToNoiseRatio
+          },
+          !smoothedFinger
+            ? `Fallo: skin=${humanFingerValidation.validationDetails.skinColorValid}, perfusion=${humanFingerValidation.validationDetails.perfusionValid}`
+            : undefined
+        );
+      }
 
       // 3. Cadena PPG: Kalman → Savitzky-Golay → AC → paso banda cardíaca → reconstrucción amplitud
       let filteredValue = redValue;
-      if (smoothedFinger && humanFingerValidation.confidence >= 0.32) {
+      if (smoothedFinger && humanFingerValidation.confidence >= 0.24) {
         const k1 = this.kalmanFilter.filter(redValue);
         const k2 = this.sgFilter.filter(k1);
         const { ac, dcEstimate } = this.acCoupling.filter(k2);
@@ -513,6 +530,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /** Variación relativa del componente AC = pulsatilidad útil */
+  /**
+   * Rechazo de objetos/superficies improbables sin cubrir flash (falsos positivos).
+   * No cambia la UI; solo filtra la decisión "dedo".
+   */
+  private isPhysicallyPlausibleFinger(
+    redValue: number,
+    textureScore: number,
+    confidence: number
+  ): boolean {
+    if (redValue < 15) return false;
+    if (redValue > 245 && textureScore < 0.13) return false;
+    if (confidence < 0.17 && redValue < 34 && textureScore < 0.17) return false;
+    return true;
+  }
+
   private computeAcPulsatilityIndex(): number {
     if (this.acHistory.length < 8) return 0;
     const slice = this.acHistory.slice(-32);

@@ -428,7 +428,7 @@ const Index = () => {
     const pttNow = Date.now();
     pttEstimator.sampleAudio(pttNow);
     
-    const MIN_SIGNAL_QUALITY = 15; // Mucho más permisivo para detectar dedos reales
+    const MIN_SIGNAL_QUALITY = 12;
     
     if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
       // Procesamiento reducido pero no bloqueo total

@@ -132,18 +132,15 @@ export class HumanFingerDetector {
   private isPhysiologicallyValid(r: number, g: number, b: number): boolean {
     // Rangos fisiológicos humanos más permisivos para mejor detección
     const total = r + g + b;
-    if (total < 50 || total > 700) return false; // Más amplio
+    if (total < 42 || total > 740) return false;
     
-    // Ratio R/G más permisivo para diferentes tonos de piel
     const rgRatio = r / (g + 1);
-    if (rgRatio < 0.6 || rgRatio > 3.5) return false; // Más amplio
+    if (rgRatio < 0.52 || rgRatio > 3.85) return false;
     
-    // Componente roja menos estricta
-    if (r < Math.max(g, b) * 0.7) return false; // Menos estricto
+    if (r < Math.max(g, b) * 0.62) return false;
     
-    // Varianza mínima reducida para mayor sensibilidad
     const variance = Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b);
-    if (variance < 15) return false; // Más permisivo
+    if (variance < 10) return false;
     
     return true;
   }
@@ -178,8 +175,8 @@ export class HumanFingerDetector {
                             Math.max(0, 1 - Math.abs(redDominance - 0.38) * 3);
     
     // Validación de color de piel humana
-    const skinColorValid = redDominance >= 0.25 && redDominance <= 0.55 && 
-                          biophysicalScore >= 0.3 && opticalCoherence >= 0.4;
+    const skinColorValid = redDominance >= 0.23 && redDominance <= 0.58 && 
+                          biophysicalScore >= 0.24 && opticalCoherence >= 0.34;
     
     return {
       biophysicalScore,
@@ -206,8 +203,8 @@ export class HumanFingerDetector {
     const bloodFlowIndicator = Math.min(1.0, pulsatility * perfusionIndex / 2);
     
     // Validación de perfusión más permisiva para dedos reales
-    const perfusionValid = perfusionIndex >= 0.2 && perfusionIndex <= 20.0 && 
-                          bloodFlowIndicator >= 0.1; // Más permisivo
+    const perfusionValid = perfusionIndex >= 0.12 && perfusionIndex <= 22.0 && 
+                          bloodFlowIndicator >= 0.06;
     
     return {
       perfusionIndex: Math.max(0, perfusionIndex),
@@ -274,18 +271,16 @@ export class HumanFingerDetector {
       this.temporalAnalysisBuffer.shift();
     }
     
-    if (this.temporalAnalysisBuffer.length < 15) {
-      return { consistency: 0.5, temporalValid: false };
+    if (this.temporalAnalysisBuffer.length < 12) {
+      return { consistency: 0.55, temporalValid: false };
     }
     
-    // Análisis de consistencia temporal
     const recent = this.temporalAnalysisBuffer.slice(-15);
     const redVariance = this.calculateVariance(recent.map(item => item.redValue));
     const perfusionVariance = this.calculateVariance(recent.map(item => item.perfusionIndex));
     
-    // Consistencia debe ser estable pero con variación fisiológica
-    const consistency = Math.max(0, 1 - (redVariance / 400) - (perfusionVariance / 4));
-    const temporalValid = consistency >= 0.4 && redVariance >= 10; // Mínima variación necesaria
+    const consistency = Math.max(0, 1 - (redVariance / 480) - (perfusionVariance / 4.5));
+    const temporalValid = consistency >= 0.34 && redVariance >= 5;
     
     return { consistency, temporalValid };
   }
@@ -297,8 +292,7 @@ export class HumanFingerDetector {
     textureScore: number, width: number, height: number
   ): { spatialValid: boolean } {
     
-    // Textura debe indicar tejido orgánico, no superficie lisa
-    const textureValid = textureScore >= 0.3 && textureScore <= 0.9;
+    const textureValid = textureScore >= 0.22 && textureScore <= 0.94;
     
     // Área mínima para dedo humano adulto
     const area = width * height;
@@ -409,17 +403,14 @@ export class HumanFingerDetector {
    * DECISIÓN FINAL DE DETECCIÓN HUMANA
    */
   private makeHumanFingerDecision(confidence: number): boolean {
-    // Umbral más permisivo para mejor detección de dedos reales
-    let threshold = 0.50; // Base equilibrada; reduce falsos positivos
+    let threshold = 0.40;
     
-    // Reducir umbral si hay detecciones previas válidas recientes
-    if (Date.now() - this.lastValidHumanTime < 5000) {
-      threshold = 0.40;
+    if (Date.now() - this.lastValidHumanTime < 6000) {
+      threshold = 0.32;
     }
     
-    // Aumentar umbral solo si hay muchas detecciones falsas
-    if (this.consecutiveNonHumanDetections > 15) {
-      threshold = 0.65;
+    if (this.consecutiveNonHumanDetections > 28) {
+      threshold = 0.48;
     }
     
     return confidence >= threshold;
