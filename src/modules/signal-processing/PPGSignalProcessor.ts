@@ -11,6 +11,7 @@ import { DetectionLogger } from '../../utils/DetectionLogger';
 import { ACCouplingFilter } from './ACCouplingFilter';
 import { CardiacBandpassFilter } from './CardiacBandpassFilter';
 import { FingerStateSmoother } from './FingerStateSmoother';
+import { PulsatilePresenceGate } from './PulsatilePresenceGate';
 
 /**
  * PROCESADOR PPG — pipeline clínico: Kalman → S-G → AC → paso banda cardíaca → histéresis dedo
@@ -29,6 +30,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private acCoupling: ACCouplingFilter;
   private cardiacBandpass: CardiacBandpassFilter;
   private fingerSmoother: FingerStateSmoother;
+  private pulseGate: PulsatilePresenceGate;
   private acHistory: number[] = [];
   private readonly AC_HISTORY_MAX = 45;
   private qualityEma = 0;
@@ -92,7 +94,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.trendAnalyzer = new SignalTrendAnalyzer();
     this.biophysicalValidator = new BiophysicalValidator();
     this.frameProcessor = new FrameProcessor({
-      TEXTURE_GRID_SIZE: 16,
+      TEXTURE_GRID_SIZE: 5,
       ROI_SIZE_FACTOR: 0.85
     });
     this.calibrationHandler = new CalibrationHandler({
@@ -110,7 +112,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.detectionLogger = new DetectionLogger();
     this.acCoupling = new ACCouplingFilter();
     this.cardiacBandpass = new CardiacBandpassFilter(30);
-    this.fingerSmoother = new FingerStateSmoother(5, 9);
+    this.fingerSmoother = new FingerStateSmoother(4, 12);
+    this.pulseGate = new PulsatilePresenceGate(30, 4);
   }
 
   async initialize(): Promise<void> {
@@ -137,6 +140,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.acCoupling.reset();
       this.cardiacBandpass.reset();
       this.fingerSmoother.reset();
+      this.pulseGate.reset();
       this.acHistory = [];
       this.qualityEma = 0;
       this.prevSmoothedFinger = false;
@@ -204,23 +208,22 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, imageData.width, imageData.height
       );
 
-      const softAccept =
-        !humanFingerValidation.isHumanFinger &&
-        humanFingerValidation.confidence >= 0.27 &&
-        redValue >= 32 &&
-        textureScore >= 0.19 &&
-        (humanFingerValidation.validationDetails.skinColorValid || redValue >= 50);
+      /** Puerta principal anti-FP: pulsación periférica estable (cPPG); sin pulso → no dedo */
+      const pulseOk = this.pulseGate.push(redValue);
 
-      const rawFingerCandidate =
-        humanFingerValidation.isHumanFinger || softAccept;
-
-      const plausible = this.isPhysicallyPlausibleFinger(
+      /** Color ROI coherente con tejido iluminado (sin "softAccept" que generaba FP permanentes) */
+      const colorPlausible = this.isSkinColorPlausible(
         redValue,
+        avgGreen ?? 0,
+        avgBlue ?? 0,
         textureScore,
-        humanFingerValidation.confidence
+        rToGRatio,
+        humanFingerValidation
       );
 
-      const smoothedFinger = this.fingerSmoother.update(rawFingerCandidate && plausible);
+      const rawFingerCandidate = pulseOk && colorPlausible;
+
+      const smoothedFinger = this.fingerSmoother.update(rawFingerCandidate);
       if (this.prevSmoothedFinger && !smoothedFinger) {
         this.cardiacBandpass.reset();
       }
@@ -267,7 +270,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       // 3. Cadena PPG: Kalman → Savitzky-Golay → AC → paso banda cardíaca → reconstrucción amplitud
       let filteredValue = redValue;
-      if (smoothedFinger && humanFingerValidation.confidence >= 0.24) {
+      if (smoothedFinger) {
         const k1 = this.kalmanFilter.filter(redValue);
         const k2 = this.sgFilter.filter(k1);
         const { ac, dcEstimate } = this.acCoupling.filter(k2);
@@ -529,20 +532,26 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return Math.min(3.0, Math.max(1.2, baseGain + detectionBoost));
   }
 
-  /** Variación relativa del componente AC = pulsatilidad útil */
   /**
-   * Rechazo de objetos/superficies improbables sin cubrir flash (falsos positivos).
-   * No cambia la UI; solo filtra la decisión "dedo".
+   * Coherencia cromática bajo flash (no sustituye la puerta pulsátil).
    */
-  private isPhysicallyPlausibleFinger(
+  private isSkinColorPlausible(
     redValue: number,
+    greenValue: number,
+    blueValue: number,
     textureScore: number,
-    confidence: number
+    rToGRatio: number,
+    v: HumanFingerValidation
   ): boolean {
-    if (redValue < 15) return false;
-    if (redValue > 245 && textureScore < 0.13) return false;
-    if (confidence < 0.17 && redValue < 34 && textureScore < 0.17) return false;
-    return true;
+    if (redValue < 20 || redValue > 252) return false;
+    if (textureScore < 0.14) return false;
+    if (rToGRatio < 0.72 || rToGRatio > 4.8) return false;
+    const sum = redValue + greenValue + blueValue + 1e-6;
+    const rr = redValue / sum;
+    if (rr < 0.28 || rr > 0.72) return false;
+    if (v.isHumanFinger && v.confidence >= 0.32) return true;
+    if (v.validationDetails.skinColorValid && v.confidence >= 0.26) return true;
+    return redValue >= 38 && rr >= 0.33 && rr <= 0.62 && textureScore >= 0.2;
   }
 
   private computeAcPulsatilityIndex(): number {
@@ -611,6 +620,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.acCoupling.reset();
     this.cardiacBandpass.reset();
     this.fingerSmoother.reset();
+    this.pulseGate.reset();
     this.acHistory = [];
     this.qualityEma = 0;
     this.prevSmoothedFinger = false;
