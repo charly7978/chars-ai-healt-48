@@ -1,522 +1,393 @@
 import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { KalmanFilter } from './KalmanFilter';
 import { SavitzkyGolayFilter } from './SavitzkyGolayFilter';
-import { SignalTrendAnalyzer } from './SignalTrendAnalyzer';
-import { BiophysicalValidator } from './BiophysicalValidator';
-import { FrameProcessor } from './FrameProcessor';
-import { CalibrationHandler } from './CalibrationHandler';
-import { SignalAnalyzer } from './SignalAnalyzer';
-import { HumanFingerDetector, HumanFingerValidation } from './HumanFingerDetector';
-import { DetectionLogger } from '../../utils/DetectionLogger';
+import { AdaptiveROIMask, ROIMaskResult } from './AdaptiveROIMask';
+import { PressureProxyEstimator, PressureEstimate } from './PressureProxyEstimator';
+import { SignalSourceRanker, RankerOutput, SourceType } from './SignalSourceRanker';
+import { SignalQualityEstimator, SQIResult } from './SignalQualityEstimator';
+import { RingBuffer } from './RingBuffer';
 
 /**
- * PROCESADOR PPG OPTIMIZADO - DETECCIÓN PERFECTA SIN FALSOS POSITIVOS
+ * CONTACT STATES V2 — extended state machine
+ */
+export type ContactState =
+  | 'NO_CONTACT'
+  | 'ACQUIRING_CONTACT'
+  | 'UNSTABLE_CONTACT'
+  | 'STABLE_CONTACT'
+  | 'SATURATED_CONTACT'
+  | 'EXCESSIVE_PRESSURE';
+
+export interface PPGDiagnostics {
+  contactState: ContactState;
+  pressureState: string;
+  activeSource: SourceType;
+  sqi: SQIResult;
+  fps: number;
+  processingTimeMs: number;
+  coverage: number;
+  clipHigh: number;
+  clipLow: number;
+  perfusionIndex: number;
+  maskStability: number;
+  validPixels: number;
+  guidanceMessage: string;
+}
+
+/**
+ * PPGSignalProcessor V2 — Production-grade finger-PPG pipeline
+ * Adaptive ROI, pressure proxy, multi-source ranking, comprehensive SQI
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
-  public isProcessing: boolean = false;
-  private kalmanFilter: KalmanFilter;
-  private sgFilter: SavitzkyGolayFilter;
-  private trendAnalyzer: SignalTrendAnalyzer;
-  private biophysicalValidator: BiophysicalValidator;
-  private frameProcessor: FrameProcessor;
-  private calibrationHandler: CalibrationHandler;
-  private signalAnalyzer: SignalAnalyzer;
-  private humanFingerDetector: HumanFingerDetector;
-  private detectionLogger: DetectionLogger;
-  
-  // SISTEMA OPTIMIZADO DE DETECCIÓN
-  private fingerDetectionState = {
-    isDetected: false,
-    detectionScore: 0,
-    consecutiveDetections: 0,
-    consecutiveNonDetections: 0,
-    lastDetectionTime: 0,
-    stabilityBuffer: [] as number[],
-    signalHistory: [] as number[],
-    noiseLevel: 0,
-    signalToNoiseRatio: 0,
-    peakHistory: [] as number[],
-    valleyHistory: [] as number[]
-  };
-  
-  // Buffer circular ultra-preciso
-  private readonly BUFFER_SIZE = 64;
-  private signalBuffer: Float32Array;
-  private bufferIndex: number = 0;
-  private bufferFull: boolean = false;
-  
-  private isCalibrating: boolean = false;
-  private frameCount: number = 0;
-  
-  // CONFIGURACIÓN OPTIMIZADA PARA DETECCIÓN REAL
-  private readonly CONFIG = {
-    // UMBRALES MÁS PERMISIVOS PERO PRECISOS
-    MIN_RED_THRESHOLD: 20,  // Más bajo para mejor detección
-    MAX_RED_THRESHOLD: 250,
-    MIN_DETECTION_SCORE: 0.4, // Más permisivo
-    MIN_CONSECUTIVE_FOR_DETECTION: 3, // Menos frames requeridos
-    MAX_CONSECUTIVE_FOR_LOSS: 8,
-    
-    // VALIDACIÓN EQUILIBRADA
-    MIN_SNR_REQUIRED: 8.0, // SNR más bajo pero funcional
-    SKIN_COLOR_STRICTNESS: 0.6, // Más permisivo
-    PULSATILITY_MIN_REQUIRED: 0.1, // Más bajo para señales débiles
-    TEXTURE_HUMAN_MIN: 0.4, // Más permisivo
-    STABILITY_FRAMES: 10, // Menos frames para estabilidad
-    
-    NOISE_THRESHOLD: 1.5,
-    PEAK_PROMINENCE: 0.15, // Más sensible para detectar latidos débiles
-    VALLEY_DEPTH: 0.1,
-    SIGNAL_CONSISTENCY: 0.5
-  };
-  
+  public isProcessing = false;
+
+  // Sub-systems
+  private roiMask = new AdaptiveROIMask();
+  private pressureEstimator = new PressureProxyEstimator();
+  private sourceRanker = new SignalSourceRanker();
+  private sqiEstimator = new SignalQualityEstimator();
+  private kalman = new KalmanFilter();
+  private sgFilter = new SavitzkyGolayFilter();
+
+  // Buffers (ring-buffer based, no push/shift)
+  private redBuffer = new RingBuffer(90);
+  private greenBuffer = new RingBuffer(90);
+  private acBuffer = new RingBuffer(60);
+
+  // Previous frame values for temporal diff source
+  private prevAvgR = 0;
+  private prevAvgG = 0;
+
+  // Contact state machine
+  private contactState: ContactState = 'NO_CONTACT';
+  private contactScore = 0;
+  private consecutiveGoodFrames = 0;
+  private consecutiveBadFrames = 0;
+
+  // Frame counting & timing
+  private frameCount = 0;
+  private lastFrameTime = 0;
+  private fps = 0;
+  private lastProcessingTime = 0;
+
+  // Diagnostics (exposed for debug overlay)
+  public lastDiagnostics: PPGDiagnostics | null = null;
+
+  // Thresholds (adaptive base)
+  private readonly MIN_COVERAGE = 0.15;
+  private readonly MIN_RED_FOR_FINGER = 40;
+  private readonly STABLE_ENTRY_FRAMES = 8;
+  private readonly UNSTABLE_EXIT_FRAMES = 12;
+
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    console.log("🎯 PPGSignalProcessor: Sistema OPTIMIZADO activado");
-    
-    this.signalBuffer = new Float32Array(this.BUFFER_SIZE);
-    this.kalmanFilter = new KalmanFilter();
-    this.sgFilter = new SavitzkyGolayFilter();
-    this.trendAnalyzer = new SignalTrendAnalyzer();
-    this.biophysicalValidator = new BiophysicalValidator();
-    this.frameProcessor = new FrameProcessor({
-      TEXTURE_GRID_SIZE: 16,
-      ROI_SIZE_FACTOR: 0.85
-    });
-    this.calibrationHandler = new CalibrationHandler({
-      CALIBRATION_SAMPLES: 30,
-      MIN_RED_THRESHOLD: this.CONFIG.MIN_RED_THRESHOLD,
-      MAX_RED_THRESHOLD: this.CONFIG.MAX_RED_THRESHOLD
-    });
-    this.signalAnalyzer = new SignalAnalyzer({
-      QUALITY_LEVELS: 100,
-      QUALITY_HISTORY_SIZE: 50,
-      MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_FOR_DETECTION,
-      MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_FOR_LOSS
-    });
-    this.humanFingerDetector = new HumanFingerDetector();
-    this.detectionLogger = new DetectionLogger();
+    console.log("🎯 PPGSignalProcessor V2: Pipeline inicializado");
   }
 
   async initialize(): Promise<void> {
-    try {
-      this.signalBuffer.fill(0);
-      this.bufferIndex = 0;
-      this.bufferFull = false;
-      this.frameCount = 0;
-      
-      this.fingerDetectionState = {
-        isDetected: false,
-        detectionScore: 0,
-        consecutiveDetections: 0,
-        consecutiveNonDetections: 0,
-        lastDetectionTime: 0,
-        stabilityBuffer: [],
-        signalHistory: [],
-        noiseLevel: 0,
-        signalToNoiseRatio: 0,
-        peakHistory: [],
-        valleyHistory: []
-      };
-      
-      this.kalmanFilter.reset();
-      this.sgFilter.reset();
-      this.trendAnalyzer.reset();
-      this.biophysicalValidator.reset();
-      this.signalAnalyzer.reset();
-      
-      console.log("✅ PPGSignalProcessor: Sistema ultra-preciso inicializado");
-    } catch (error) {
-      console.error("❌ PPGSignalProcessor: Error inicialización", error);
-      this.handleError("INIT_ERROR", "Error inicializando procesador");
-    }
+    this.reset();
   }
 
   start(): void {
     if (this.isProcessing) return;
     this.isProcessing = true;
-    this.initialize();
-    console.log("🚀 PPGSignalProcessor: Sistema ultra-preciso iniciado");
+    this.reset();
+    console.log("🚀 PPGSignalProcessor V2: Iniciado");
   }
 
   stop(): void {
     this.isProcessing = false;
     this.reset();
-    console.log("⏹️ PPGSignalProcessor: Sistema detenido");
+    console.log("⏹️ PPGSignalProcessor V2: Detenido");
   }
 
   async calibrate(): Promise<boolean> {
-    try {
-      console.log("🔧 PPGSignalProcessor: Calibración ultra-precisa iniciada");
-      await this.initialize();
-      
-      this.isCalibrating = true;
-      
-      setTimeout(() => {
-        this.isCalibrating = false;
-        console.log("✅ PPGSignalProcessor: Calibración ultra-precisa completada");
-      }, 3000);
-      
-      return true;
-    } catch (error) {
-      console.error("❌ PPGSignalProcessor: Error calibración", error);
-      this.handleError("CALIBRATION_ERROR", "Error durante calibración");
-      this.isCalibrating = false;
-      return false;
-    }
+    this.reset();
+    return true;
   }
 
+  /**
+   * MAIN PROCESSING PIPELINE — called once per video frame
+   */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
 
-    try {
-      this.frameCount = (this.frameCount + 1) % 10000;
-      
-      // 1. Extracción optimizada
-      const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue, rawRgb } = extractionResult;
-      const roi = this.frameProcessor.detectROI(redValue, imageData);
+    const t0 = performance.now();
+    this.frameCount++;
 
-      // 2. DETECCIÓN AVANZADA DE DEDO HUMANO - Sistema robusto anti-falsos positivos
-      const humanFingerValidation = this.humanFingerDetector.detectHumanFinger(
-        redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, imageData.width, imageData.height
-      );
+    // ──── 1. ADAPTIVE ROI MASK (excludes clipped/saturated pixels) ────
+    const roi: ROIMaskResult = this.roiMask.process(imageData, 0.75);
 
-      // Solo procesar si es un dedo humano real detectado
-      const fingerDetectionResult = {
-        isDetected: humanFingerValidation.isHumanFinger,
-        detectionScore: humanFingerValidation.confidence,
-        opticalCoherence: humanFingerValidation.opticalCoherence
-      };
+    // ──── 2. FINGER DETECTION via tile analysis ────
+    const fingerDetected = this.evaluateFingerContact(roi);
 
-      // LOGGING TRANSPARENTE DE DETECCIÓN
-      this.detectionLogger.logDetectionAttempt(
-        humanFingerValidation.isHumanFinger,
-        humanFingerValidation.validationDetails,
-        {
-          biophysicalScore: humanFingerValidation.biophysicalScore,
-          opticalCoherence: humanFingerValidation.opticalCoherence,
-          bloodFlowIndicator: humanFingerValidation.bloodFlowIndicator,
-          tissueConsistency: humanFingerValidation.tissueConsistency,
-          overallConfidence: humanFingerValidation.confidence
-        },
-        {
-          redValue: redValue,
-          signalStrength: redValue / 255,
-          noiseLevel: 0, // Se calculará en el contexto apropiado
-          snrRatio: this.fingerDetectionState.signalToNoiseRatio
-        },
-        !humanFingerValidation.isHumanFinger ? 
-          `Fallo: skin=${humanFingerValidation.validationDetails.skinColorValid}, perfusion=${humanFingerValidation.validationDetails.perfusionValid}` : 
-          undefined
-      );
+    // ──── 3. BUFFERS ────
+    this.redBuffer.push(roi.avgR);
+    this.greenBuffer.push(roi.avgG);
 
-      // 3. Procesamiento mejorado
-      let filteredValue = redValue;
-      if (fingerDetectionResult.isDetected) {
-        filteredValue = this.kalmanFilter.filter(redValue);
-        filteredValue = this.sgFilter.filter(filteredValue);
-        
-        // Amplificación controlada
-        const preciseGain = this.calculateOptimizedGain(fingerDetectionResult);
-        filteredValue = filteredValue * preciseGain;
-      }
+    // AC component (recent max-min of red)
+    const redStats = this.redBuffer.stats();
+    const acComponent = redStats.max - redStats.min;
+    this.acBuffer.push(acComponent);
+    const dcComponent = redStats.mean;
 
-      // 4. Buffer circular ultra-preciso
-      this.signalBuffer[this.bufferIndex] = filteredValue;
-      this.bufferIndex = (this.bufferIndex + 1) % this.BUFFER_SIZE;
-      if (this.bufferIndex === 0) this.bufferFull = true;
+    // ──── 4. TILE UNIFORMITY (simplified: variance of R across coarse grid) ────
+    const uniformity = this.computeUniformity(imageData, roi.roiBounds);
 
-      // 5. Análisis de tendencia estricto
-      const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
-      
-      // 6. Calidad ultra-precisa
-      const quality = this.calculateUltraPreciseQuality(
-        fingerDetectionResult, textureScore, redValue, this.fingerDetectionState.signalToNoiseRatio
-      );
+    // ──── 5. PRESSURE PROXY ────
+    const pressure: PressureEstimate = this.pressureEstimator.estimate(
+      roi.avgR, roi.coverage, roi.clipHighRatio, uniformity, acComponent, dcComponent
+    );
 
-      // 7. Índice de perfusión preciso
-      const perfusionIndex = this.calculatePrecisePerfusion(
-        redValue, fingerDetectionResult.isDetected, quality, fingerDetectionResult.detectionScore
-      );
+    // ──── 6. CONTACT STATE MACHINE ────
+    this.updateContactState(fingerDetected, pressure, roi);
 
-      // Logging optimizado cada 30 frames
-      if (this.frameCount % 30 === 0) {
-        console.log("🎯 Detección optimizada:", {
-          red: redValue.toFixed(2),
-          detected: fingerDetectionResult.isDetected,
-          score: fingerDetectionResult.detectionScore.toFixed(3),
-          consecutivas: this.fingerDetectionState.consecutiveDetections,
-          snr: this.fingerDetectionState.signalToNoiseRatio.toFixed(1)
-        });
-      }
+    // ──── 7. MULTI-SOURCE SIGNAL RANKING ────
+    const ranked: RankerOutput = this.sourceRanker.rank(
+      roi.avgR, roi.avgG, roi.avgB,
+      this.prevAvgR, this.prevAvgG,
+      roi.clipHighRatio, roi.clipLowRatio
+    );
+    this.prevAvgR = roi.avgR;
+    this.prevAvgG = roi.avgG;
 
-      // 8. Señal procesada final
-      const processedSignal: ProcessedSignal = {
-        timestamp: Date.now(),
-        rawValue: redValue,
-        filteredValue: filteredValue,
-        quality: quality,
-        fingerDetected: fingerDetectionResult.isDetected,
-        roi: roi,
-        perfusionIndex: Math.max(0, perfusionIndex),
-        rgbRaw: rawRgb ?? { r: redValue, g: avgGreen ?? 0, b: avgBlue ?? 0 }
-      };
-
-      this.onSignalReady(processedSignal);
-    } catch (error) {
-      console.error("❌ PPGSignalProcessor: Error procesando frame", error);
-      this.handleError("PROCESSING_ERROR", "Error en procesamiento");
+    // ──── 8. FILTERING (only when finger detected) ────
+    let filteredValue = ranked.activeValue;
+    if (this.contactState === 'STABLE_CONTACT' || this.contactState === 'UNSTABLE_CONTACT') {
+      filteredValue = this.kalman.filter(filteredValue);
+      filteredValue = this.sgFilter.filter(filteredValue);
     }
+
+    // ──── 9. PERFUSION INDEX ────
+    const perfusionIndex = dcComponent > 0 ? (acComponent / dcComponent) * 100 : 0;
+
+    // ──── 10. COMPREHENSIVE SQI ────
+    const isDetected = this.contactState === 'STABLE_CONTACT' || this.contactState === 'UNSTABLE_CONTACT';
+    const sqi: SQIResult = this.sqiEstimator.calculate({
+      sourceSQI: ranked.activeSQI,
+      perfusionIndex,
+      clipHighRatio: roi.clipHighRatio,
+      clipLowRatio: roi.clipLowRatio,
+      coverage: roi.coverage,
+      maskStability: roi.maskStability,
+      pressureState: pressure.state,
+      pressureScore: pressure.score,
+      activeSource: ranked.activeSource,
+      validPixels: roi.validPixels,
+      fingerDetected: isDetected,
+      acDcRatio: dcComponent > 0 ? acComponent / dcComponent : 0
+    });
+
+    // ──── 11. FPS CALCULATION ────
+    const now = performance.now();
+    if (this.lastFrameTime > 0) {
+      const dt = now - this.lastFrameTime;
+      this.fps = this.fps * 0.9 + (1000 / dt) * 0.1;
+    }
+    this.lastFrameTime = now;
+    this.lastProcessingTime = now - t0;
+
+    // ──── 12. DIAGNOSTICS ────
+    this.lastDiagnostics = {
+      contactState: this.contactState,
+      pressureState: pressure.state,
+      activeSource: ranked.activeSource,
+      sqi,
+      fps: Math.round(this.fps),
+      processingTimeMs: Math.round(this.lastProcessingTime * 10) / 10,
+      coverage: roi.coverage,
+      clipHigh: roi.clipHighRatio,
+      clipLow: roi.clipLowRatio,
+      perfusionIndex,
+      maskStability: roi.maskStability,
+      validPixels: roi.validPixels,
+      guidanceMessage: sqi.guidanceMessage
+    };
+
+    // Log every 60 frames
+    if (this.frameCount % 60 === 0) {
+      console.log("📊 PPG V2:", {
+        contact: this.contactState,
+        pressure: pressure.state,
+        source: ranked.activeSource,
+        sqi: sqi.sqiGlobal,
+        fps: Math.round(this.fps),
+        coverage: (roi.coverage * 100).toFixed(0) + '%',
+        clipH: (roi.clipHighRatio * 100).toFixed(1) + '%',
+        perfusion: perfusionIndex.toFixed(2),
+        procMs: this.lastProcessingTime.toFixed(1)
+      });
+    }
+
+    // ──── 13. EMIT PROCESSED SIGNAL ────
+    const processedSignal: ProcessedSignal = {
+      timestamp: now,
+      rawValue: roi.avgR,
+      filteredValue,
+      quality: sqi.sqiGlobal,
+      fingerDetected: isDetected,
+      roi: {
+        x: roi.roiBounds.x,
+        y: roi.roiBounds.y,
+        width: roi.roiBounds.w,
+        height: roi.roiBounds.h
+      },
+      perfusionIndex: Math.max(0, perfusionIndex),
+      rgbRaw: { r: roi.rawR, g: roi.rawG, b: roi.rawB }
+    };
+
+    this.onSignalReady(processedSignal);
   }
 
   /**
-   * DETECCIÓN OPTIMIZADA EQUILIBRADA
+   * Evaluate whether a finger is on the camera based on ROI mask results.
+   * Uses adaptive thresholds based on recent history.
    */
-  private detectFingerOptimized(
-    red: number, green: number, blue: number, 
-    textureScore: number, rToGRatio: number, rToBRatio: number,
-    imageData: ImageData
-  ): { isDetected: boolean; detectionScore: number; opticalCoherence: number } {
-    
-    // 1. VALIDACIÓN BÁSICA MÁS PERMISIVA
-    if (red < this.CONFIG.MIN_RED_THRESHOLD || red > this.CONFIG.MAX_RED_THRESHOLD) {
-      this.resetDetectionState();
-      return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
+  private evaluateFingerContact(roi: ROIMaskResult): boolean {
+    // Primary checks
+    if (roi.coverage < this.MIN_COVERAGE) return false;
+    if (roi.avgR < this.MIN_RED_FOR_FINGER) return false;
+
+    // Red dominance check (finger transmits mostly red via hemoglobin)
+    const total = roi.avgR + roi.avgG + roi.avgB + 1e-6;
+    const redRatio = roi.avgR / total;
+    if (redRatio < 0.30) return false;
+
+    // R/G ratio for skin (with flash, finger should be red-dominant)
+    const rgRatio = roi.avgR / (roi.avgG + 1);
+    if (rgRatio < 0.8 || rgRatio > 5.0) return false;
+
+    // Reject excessive clipping
+    if (roi.clipHighRatio > 0.6) return false;
+    if (roi.clipLowRatio > 0.5) return false;
+
+    // Require minimum mask stability after initial frames
+    if (this.frameCount > 10 && roi.maskStability < 0.4) return false;
+
+    // Pulsatility check (need some variation in red channel)
+    if (this.redBuffer.length >= 15) {
+      const stats = this.redBuffer.stats();
+      const cv = Math.sqrt(stats.variance) / (stats.mean + 1e-6);
+      // Too uniform = not a real finger or excessive pressure
+      if (cv < 0.001) return false;
     }
 
-    // 2. Actualizar historial
-    this.fingerDetectionState.signalHistory.push(red);
-    if (this.fingerDetectionState.signalHistory.length > 30) {
-      this.fingerDetectionState.signalHistory.shift();
+    return true;
+  }
+
+  /**
+   * Contact state machine with hysteresis.
+   */
+  private updateContactState(
+    fingerDetected: boolean,
+    pressure: PressureEstimate,
+    roi: ROIMaskResult
+  ): void {
+    if (fingerDetected) {
+      this.consecutiveGoodFrames++;
+      this.consecutiveBadFrames = 0;
+    } else {
+      this.consecutiveBadFrames++;
+      this.consecutiveGoodFrames = 0;
     }
 
-    // 3. VALIDACIONES OPTIMIZADAS
-    const skinColorScore = this.validateOptimizedSkinColor(red, green, blue);
-    const textureHumanScore = Math.min(1.0, textureScore * 2.0); // Más permisivo
-    const pulsatilityScore = this.validateOptimizedPulsatility(red);
-    const stabilityScore = this.validateOptimizedStability();
-    const snrScore = this.calculateOptimizedSNR();
-    
-    // 4. SCORE EQUILIBRADO
-    const weights = [0.3, 0.2, 0.25, 0.15, 0.1];
-    const scores = [skinColorScore, textureHumanScore, pulsatilityScore, stabilityScore, snrScore];
-    const rawDetectionScore = scores.reduce((sum, score, i) => sum + score * weights[i], 0);
+    // Determine target state
+    if (!fingerDetected) {
+      if (this.consecutiveBadFrames >= this.UNSTABLE_EXIT_FRAMES) {
+        this.contactState = 'NO_CONTACT';
+      } else if (this.contactState !== 'NO_CONTACT') {
+        this.contactState = 'ACQUIRING_CONTACT';
+      }
+      return;
+    }
 
-    // 5. UMBRAL OPTIMIZADO
-    const shouldDetect = rawDetectionScore >= this.CONFIG.MIN_DETECTION_SCORE;
+    // Finger detected — check sub-states
+    if (pressure.state === 'HIGH_PRESSURE') {
+      this.contactState = 'EXCESSIVE_PRESSURE';
+      return;
+    }
 
-    // 6. CONTROL DE CONSECUTIVIDAD OPTIMIZADO
-    if (shouldDetect) {
-      this.fingerDetectionState.consecutiveDetections++;
-      this.fingerDetectionState.consecutiveNonDetections = 0;
-      
-      if (this.fingerDetectionState.consecutiveDetections >= this.CONFIG.MIN_CONSECUTIVE_FOR_DETECTION) {
-        if (!this.fingerDetectionState.isDetected) {
-          console.log("✅ DEDO DETECTADO", {
-            score: rawDetectionScore.toFixed(3),
-            consecutivas: this.fingerDetectionState.consecutiveDetections
-          });
-        }
-        this.fingerDetectionState.isDetected = true;
-        this.fingerDetectionState.lastDetectionTime = Date.now();
+    if (roi.clipHighRatio > 0.35) {
+      this.contactState = 'SATURATED_CONTACT';
+      return;
+    }
+
+    if (this.consecutiveGoodFrames >= this.STABLE_ENTRY_FRAMES && pressure.state === 'OPTIMAL_PRESSURE') {
+      this.contactState = 'STABLE_CONTACT';
+    } else if (this.consecutiveGoodFrames >= 3) {
+      if (this.contactState === 'STABLE_CONTACT') {
+        // Stay stable unless degraded for long
+      } else {
+        this.contactState = 'UNSTABLE_CONTACT';
       }
     } else {
-      this.fingerDetectionState.consecutiveNonDetections++;
-      this.fingerDetectionState.consecutiveDetections = 0;
-      
-      if (this.fingerDetectionState.consecutiveNonDetections >= this.CONFIG.MAX_CONSECUTIVE_FOR_LOSS) {
-        if (this.fingerDetectionState.isDetected) {
-          console.log("❌ DEDO PERDIDO");
-        }
-        this.fingerDetectionState.isDetected = false;
-      }
+      this.contactState = 'ACQUIRING_CONTACT';
     }
-
-    this.fingerDetectionState.detectionScore = rawDetectionScore;
-    
-    return {
-      isDetected: this.fingerDetectionState.isDetected,
-      detectionScore: rawDetectionScore,
-      opticalCoherence: skinColorScore
-    };
   }
 
   /**
-   * VALIDACIONES OPTIMIZADAS
+   * Compute spatial uniformity from a 5x5 tile grid (0=varied, 1=perfectly uniform).
+   * High uniformity with a finger = possibly too much pressure.
    */
-  private validateOptimizedSkinColor(r: number, g: number, b: number): number {
-    const total = r + g + b + 1e-10;
-    const redRatio = r / total;
-    
-    // Rangos más amplios para mejor detección
-    if (redRatio >= 0.25 && redRatio <= 0.65) {
-      return Math.min(1.0, redRatio * 2.0);
-    }
-    
-    return 0;
-  }
+  private computeUniformity(imageData: ImageData, bounds: { x: number; y: number; w: number; h: number }): number {
+    const { data, width } = imageData;
+    const gridSize = 5;
+    const tileW = Math.floor(bounds.w / gridSize);
+    const tileH = Math.floor(bounds.h / gridSize);
+    if (tileW < 2 || tileH < 2) return 0.5;
 
-  private validateOptimizedPulsatility(currentValue: number): number {
-    if (this.fingerDetectionState.signalHistory.length < 10) return 0.5; // Valor por defecto
-    
-    const recent = this.fingerDetectionState.signalHistory.slice(-10);
-    const max = Math.max(...recent);
-    const min = Math.min(...recent);
-    
-    const pulsatility = (max - min) / max;
-    
-    return pulsatility >= this.CONFIG.PULSATILITY_MIN_REQUIRED ? 
-           Math.min(1.0, pulsatility * 5) : pulsatility * 2; // Más permisivo
-  }
-
-  private validateOptimizedStability(): number {
-    if (this.fingerDetectionState.signalHistory.length < this.CONFIG.STABILITY_FRAMES) return 0.5;
-    
-    const recent = this.fingerDetectionState.signalHistory.slice(-this.CONFIG.STABILITY_FRAMES);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / recent.length;
-    const cv = Math.sqrt(variance) / mean;
-    
-    return Math.max(0.2, 1 - cv); // Mínimo 0.2 en lugar de 0
-  }
-
-  private calculateOptimizedSNR(): number {
-    if (this.fingerDetectionState.signalHistory.length < 20) return 0.5;
-    
-    const signal = this.fingerDetectionState.signalHistory.slice(-20);
-    const signalPower = this.calculateSignalPower(signal);
-    const noisePower = this.calculateNoisePower(signal);
-    
-    if (noisePower === 0) return 1.0;
-    
-    const snr = 10 * Math.log10(signalPower / noisePower);
-    this.fingerDetectionState.signalToNoiseRatio = snr;
-    
-    return snr >= this.CONFIG.MIN_SNR_REQUIRED ? 
-           Math.min(1.0, snr / 20) : Math.max(0.1, snr / 20); // Más permisivo
-  }
-
-  private detectRealPeaks(signal: number[]): number[] {
-    const peaks: number[] = [];
-    for (let i = 2; i < signal.length - 2; i++) {
-      if (signal[i] > signal[i-1] && signal[i] > signal[i+1] && 
-          signal[i] > signal[i-2] && signal[i] > signal[i+2]) {
-        const prominence = Math.min(signal[i] - signal[i-1], signal[i] - signal[i+1]);
-        if (prominence >= this.CONFIG.PEAK_PROMINENCE) {
-          peaks.push(signal[i]);
+    const tileMeans: number[] = [];
+    for (let gy = 0; gy < gridSize; gy++) {
+      for (let gx = 0; gx < gridSize; gx++) {
+        const sx = bounds.x + gx * tileW;
+        const sy = bounds.y + gy * tileH;
+        let sum = 0, count = 0;
+        // Sample every 2nd pixel for speed
+        for (let y = sy; y < sy + tileH; y += 2) {
+          for (let x = sx; x < sx + tileW; x += 2) {
+            const pi = (y * width + x) * 4;
+            sum += data[pi]; // Red channel
+            count++;
+          }
         }
+        if (count > 0) tileMeans.push(sum / count);
       }
     }
-    return peaks;
-  }
 
-  private detectRealValleys(signal: number[]): number[] {
-    const valleys: number[] = [];
-    for (let i = 2; i < signal.length - 2; i++) {
-      if (signal[i] < signal[i-1] && signal[i] < signal[i+1] && 
-          signal[i] < signal[i-2] && signal[i] < signal[i+2]) {
-        const depth = Math.min(signal[i-1] - signal[i], signal[i+1] - signal[i]);
-        if (depth >= this.CONFIG.VALLEY_DEPTH) {
-          valleys.push(signal[i]);
-        }
-      }
-    }
-    return valleys;
-  }
+    if (tileMeans.length < 4) return 0.5;
+    const mean = tileMeans.reduce((a, b) => a + b, 0) / tileMeans.length;
+    const variance = tileMeans.reduce((a, b) => a + (b - mean) ** 2, 0) / tileMeans.length;
+    const cv = Math.sqrt(variance) / (mean + 1e-6);
 
-  private calculateSignalPower(signal: number[]): number {
-    // Potencia en banda cardíaca (0.8-3.5 Hz aproximado)
-    let power = 0;
-    for (let i = 1; i < signal.length; i++) {
-      const diff = signal[i] - signal[i-1];
-      power += diff * diff;
-    }
-    return power / (signal.length - 1);
-  }
-
-  private calculateNoisePower(signal: number[]): number {
-    // Estimación de ruido usando diferencias de segundo orden
-    let noisePower = 0;
-    for (let i = 2; i < signal.length; i++) {
-      const secondDiff = signal[i] - 2 * signal[i-1] + signal[i-2];
-      noisePower += secondDiff * secondDiff;
-    }
-    return noisePower / (signal.length - 2);
-  }
-
-  private resetDetectionState(): void {
-    this.fingerDetectionState.consecutiveDetections = 0;
-    this.fingerDetectionState.consecutiveNonDetections++;
-  }
-
-  private calculateOptimizedGain(detectionResult: { detectionScore: number; opticalCoherence: number }): number {
-    const baseGain = 2.0;
-    const detectionBoost = detectionResult.detectionScore * 0.5;
-    
-    return Math.min(3.0, Math.max(1.2, baseGain + detectionBoost));
-  }
-
-  private calculateUltraPreciseQuality(
-    detectionResult: { detectionScore: number }, 
-    textureScore: number, 
-    redValue: number,
-    snr: number
-  ): number {
-    if (detectionResult.detectionScore < 0.5) return 0;
-    
-    const detectionQuality = Math.pow(detectionResult.detectionScore, 0.8) * 40;
-    const textureQuality = textureScore * 25;
-    const signalQuality = Math.min(25, (redValue / 8));
-    const snrQuality = Math.min(10, Math.max(0, snr - 10));
-    
-    const finalQuality = Math.min(100, Math.max(0, 
-      detectionQuality + textureQuality + signalQuality + snrQuality));
-    
-    return finalQuality;
-  }
-
-  private calculatePrecisePerfusion(
-    redValue: number, isDetected: boolean, quality: number, detectionScore: number
-  ): number {
-    if (!isDetected || quality < 50 || detectionScore < 0.7) return 0;
-    
-    const normalizedRed = Math.min(1, redValue / 120);
-    const perfusionBase = Math.log1p(normalizedRed * 2) * 2.0;
-    
-    const qualityFactor = Math.tanh(quality / 40) * 0.3;
-    const confidenceFactor = Math.sqrt(detectionScore) * 0.3;
-    
-    const totalPerfusion = (perfusionBase + qualityFactor + confidenceFactor) * 6;
-    
-    return Math.min(10, Math.max(0, totalPerfusion));
+    // cv near 0 = very uniform; cv > 0.3 = varied
+    return Math.max(0, Math.min(1, 1 - cv * 3));
   }
 
   private reset(): void {
-    this.signalBuffer.fill(0);
-    this.bufferIndex = 0;
-    this.bufferFull = false;
-    this.frameCount = 0;
-    this.kalmanFilter.reset();
+    this.roiMask.reset();
+    this.pressureEstimator.reset();
+    this.sourceRanker.reset();
+    this.kalman.reset();
     this.sgFilter.reset();
-    this.trendAnalyzer.reset();
-    this.biophysicalValidator.reset();
-    this.signalAnalyzer.reset();
-    this.humanFingerDetector.reset();
-    this.detectionLogger.reset();
+    this.redBuffer.clear();
+    this.greenBuffer.clear();
+    this.acBuffer.clear();
+    this.prevAvgR = 0;
+    this.prevAvgG = 0;
+    this.contactState = 'NO_CONTACT';
+    this.contactScore = 0;
+    this.consecutiveGoodFrames = 0;
+    this.consecutiveBadFrames = 0;
+    this.frameCount = 0;
+    this.lastFrameTime = 0;
+    this.fps = 0;
+    this.lastDiagnostics = null;
   }
 
   private handleError(code: string, message: string): void {
-    console.error("❌ PPGSignalProcessor:", code, message);
-    const error: ProcessingError = {
-      code,
-      message,
-      timestamp: Date.now()
-    };
-    if (typeof this.onError === 'function') {
-      this.onError(error);
-    }
+    const error: ProcessingError = { code, message, timestamp: Date.now() };
+    if (typeof this.onError === 'function') this.onError(error);
   }
 }

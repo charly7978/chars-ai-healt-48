@@ -32,13 +32,13 @@ export interface ChannelResult {
   feedback?: ChannelFeedback; // feedback upstream
 }
 
-export interface MultiChannelSnapshot {
+export type MultiChannelSnapshot = {
   [key in VitalChannel]?: ChannelState;
-}
+};
 
-export interface MultiChannelOutputs {
+export type MultiChannelOutputs = {
   [key in VitalChannel]?: ChannelResult;
-}
+};
 
 export interface OptimizerConfig {
   samplingRateHz?: number; // nominal effective sampling of PPG-derived scalar
