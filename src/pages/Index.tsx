@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
-import CameraView, { CameraDiagnostics } from "@/components/CameraView";
+import CameraView, { CameraDiagnostics, CameraViewRef } from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
@@ -10,6 +10,7 @@ import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import { PPGDiagnostics } from "@/modules/signal-processing/PPGSignalProcessor";
+import { FrameCaptureEngine, CapturedFrame } from "@/modules/capture/FrameCaptureEngine";
 
 const Index = () => {
   // ═══ STATE ═══
@@ -36,7 +37,6 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [showDebug, setShowDebug] = useState(false);
-  const [ppgDiagnostics, setPpgDiagnostics] = useState<PPGDiagnostics | null>(null);
   const [cameraDiag, setCameraDiag] = useState<CameraDiagnostics | null>(null);
 
   // ═══ REFS ═══
@@ -46,22 +46,24 @@ const Index = () => {
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
   const sessionIdRef = useRef("");
   const initializationLock = useRef(false);
-  const videoFrameCallbackId = useRef<number | null>(null);
-  const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const tempCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const cameraViewRef = useRef<CameraViewRef>(null);
+  const frameCaptureEngineRef = useRef<FrameCaptureEngine | null>(null);
+  const prevFrameRgbRef = useRef<{ r: number; g: number; b: number } | null>(null);
 
   // Frame timing
   const frameTimingRef = useRef({
     lastCaptureTime: 0,
     realFps: 0,
     droppedFrames: 0,
-    frameCount: 0
+    frameCount: 0,
+    avgProcessingMs: 0
   });
 
   // ═══ HOOKS ═══
   const { 
     startProcessing, stopProcessing, lastSignal, processFrame, 
-    isProcessing, framesProcessed, debugInfo: signalDebugInfo
+    isProcessing, framesProcessed, debugInfo: signalDebugInfo,
+    diagnostics: ppgDiagnostics
   } = useSignalProcessor();
   
   const { 
@@ -84,7 +86,18 @@ const Index = () => {
     if (initializationLock.current) return;
     initializationLock.current = true;
     sessionIdRef.current = `main_${Date.now().toString(36)}`;
-    return () => { initializationLock.current = false; };
+    
+    // Initialize frame capture engine
+    frameCaptureEngineRef.current = new FrameCaptureEngine({
+      analysisWidth: 320,
+      analysisHeight: 240,
+      maxProcessingMs: 16
+    });
+    
+    return () => { 
+      initializationLock.current = false;
+      frameCaptureEngineRef.current?.stop();
+    };
   }, []);
 
   // Fullscreen
@@ -188,10 +201,8 @@ const Index = () => {
     setIsCalibrating(false);
     stopProcessing();
 
-    // Cancel video frame callback
-    if (videoFrameCallbackId.current !== null) {
-      videoFrameCallbackId.current = null;
-    }
+    // Stop frame capture engine
+    frameCaptureEngineRef.current?.stop();
 
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -214,7 +225,7 @@ const Index = () => {
     setShowResults(false);
     setIsCalibrating(false);
     stopProcessing();
-    if (videoFrameCallbackId.current !== null) videoFrameCallbackId.current = null;
+    frameCaptureEngineRef.current?.stop();
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
       measurementTimerRef.current = null;
@@ -239,88 +250,33 @@ const Index = () => {
     lastArrhythmiaData.current = null;
     setCalibrationProgress(0);
     arrhythmiaDetectedRef.current = false;
-    setPpgDiagnostics(null);
     systemState.current = 'IDLE';
   };
 
-  // ═══ STREAM READY — Setup requestVideoFrameCallback with real frame timing ═══
+  // ═══ STREAM READY — Setup FrameCaptureEngine with video ref ═══
   const handleStreamReady = (stream: MediaStream) => {
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
 
-    const videoTrack = stream.getVideoTracks()[0];
-    if ((videoTrack.getCapabilities() as any)?.torch) {
-      videoTrack.applyConstraints({ advanced: [{ torch: true } as any] }).catch(() => {});
+    // Get video element from CameraView ref
+    const videoElement = cameraViewRef.current?.videoRef.current;
+    if (!videoElement) {
+      console.error('CameraView videoRef not available');
+      return;
     }
 
-    // Create canvas once
-    if (!tempCanvasRef.current) {
-      tempCanvasRef.current = document.createElement('canvas');
-      tempCtxRef.current = tempCanvasRef.current.getContext('2d', { willReadFrequently: true });
-    }
-    const canvas = tempCanvasRef.current!;
-    const ctx = tempCtxRef.current!;
-    if (!ctx) return;
+    // Attach video to capture engine
+    frameCaptureEngineRef.current?.attachVideo(videoElement);
 
-    const videoElement = document.querySelector('video') as HTMLVideoElement;
-    if (!videoElement) return;
-
-    // Use requestVideoFrameCallback if available, else requestAnimationFrame
-    const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
-
-    const processImage = (now: number, metadata?: any) => {
+    // Start frame capture
+    frameCaptureEngineRef.current?.start((capturedFrame: CapturedFrame) => {
       if (!isMonitoring || systemState.current !== 'ACTIVE') return;
 
-      // Real frame timestamp from metadata or performance.now()
-      const frameTime = metadata?.mediaTime ? metadata.mediaTime * 1000 : now;
-      const timing = frameTimingRef.current;
+      // Update timing stats
+      frameTimingRef.current = capturedFrame.timing;
 
-      // FPS calculation
-      if (timing.lastCaptureTime > 0) {
-        const dt = frameTime - timing.lastCaptureTime;
-        if (dt > 0) timing.realFps = timing.realFps * 0.9 + (1000 / dt) * 0.1;
-      }
-      timing.lastCaptureTime = frameTime;
-      timing.frameCount++;
-
-      // Dropped frames detection
-      if (metadata?.presentedFrames !== undefined) {
-        const expected = timing.frameCount;
-        const presented = metadata.presentedFrames;
-        if (presented > expected + 1) {
-          timing.droppedFrames += (presented - expected - 1);
-        }
-      }
-
-      try {
-        if (videoElement.readyState >= 2) {
-          const tw = Math.min(320, videoElement.videoWidth || 320);
-          const th = Math.min(240, videoElement.videoHeight || 240);
-          canvas.width = tw;
-          canvas.height = th;
-          ctx.drawImage(videoElement, 0, 0, videoElement.videoWidth, videoElement.videoHeight, 0, 0, tw, th);
-          const imageData = ctx.getImageData(0, 0, tw, th);
-          processFrame(imageData);
-        }
-      } catch (e) {
-        console.error("Frame processing error:", e);
-      }
-
-      // Schedule next
-      if (isMonitoring && systemState.current === 'ACTIVE') {
-        if (hasRVFC) {
-          videoFrameCallbackId.current = (videoElement as any).requestVideoFrameCallback(processImage);
-        } else {
-          requestAnimationFrame((t) => processImage(t));
-        }
-      }
-    };
-
-    // Start loop
-    if (hasRVFC) {
-      videoFrameCallbackId.current = (videoElement as any).requestVideoFrameCallback(processImage);
-    } else {
-      requestAnimationFrame((t) => processImage(t));
-    }
+      // Process frame through signal processor
+      processFrame(capturedFrame.imageData);
+    });
   };
 
   // ═══ SIGNAL PROCESSING ═══
@@ -432,6 +388,7 @@ const Index = () => {
       <div className="flex-1 relative">
         <div className="absolute inset-0">
           <CameraView 
+            ref={cameraViewRef}
             onStreamReady={handleStreamReady}
             onDiagnostics={setCameraDiag}
             isMonitoring={isCameraOn}
@@ -463,18 +420,19 @@ const Index = () => {
           {/* DEBUG OVERLAY */}
           {showDebug && (
             <div className="px-3 py-2 bg-black/80 text-green-400 text-xs font-mono space-y-0.5 max-h-[min(52vh,420px)] overflow-y-auto">
-              <div>FPS: {Math.round(frameTimingRef.current.realFps)} | Frames: {framesProcessed} | Drops: {frameTimingRef.current.droppedFrames}</div>
+              <div>FPS: {Math.round(frameTimingRef.current.realFps)} | Frames: {framesProcessed} | Drops: {frameTimingRef.current.droppedFrames} | ProcMs: {frameTimingRef.current.avgProcessingMs.toFixed(1)}</div>
               <div>Processing: {isProcessing ? 'ON' : 'OFF'} | Calibrating: {isCalibrating ? 'YES' : 'NO'}</div>
               {cameraDiag && (
                 <div>Cam: {cameraDiag.resolution.w}x{cameraDiag.resolution.h} | Torch: {cameraDiag.torchActive ? 'ON' : 'OFF'} | Applied: {cameraDiag.constraintsApplied.join(',')}</div>
               )}
-              {lastSignal && (
+              {ppgDiagnostics && (
                 <>
-                  <div>Raw R: {lastSignal.rawValue.toFixed(1)} | Filtered: {lastSignal.filteredValue.toFixed(3)} | Quality: {lastSignal.quality}</div>
-                  <div>Perfusion: {(lastSignal.perfusionIndex || 0).toFixed(2)} | RGB: {lastSignal.rgbRaw?.r.toFixed(0)},{lastSignal.rgbRaw?.g.toFixed(0)},{lastSignal.rgbRaw?.b.toFixed(0)}</div>
-                  {lastSignal.contactState && (
-                    <div>Contact: {lastSignal.contactState} | Press: {lastSignal.pressureState ?? '—'} | Src: {lastSignal.activeSource ?? '—'}</div>
-                  )}
+                  <div>Raw R: {lastSignal?.rawValue.toFixed(1)} | Filtered: {lastSignal?.filteredValue.toFixed(3)} | Quality: {lastSignal?.quality}</div>
+                  <div>Perfusion: {ppgDiagnostics.perfusionIndex.toFixed(2)} | SNR: {ppgDiagnostics.snr.toFixed(2)} | RGB: {lastSignal?.rgbRaw?.r.toFixed(0)},{lastSignal?.rgbRaw?.g.toFixed(0)},{lastSignal?.rgbRaw?.b.toFixed(0)}</div>
+                  <div>Contact: {ppgDiagnostics.contactState} | Press: {ppgDiagnostics.pressureState} | Src: {ppgDiagnostics.activeSource}</div>
+                  <div>Coverage: {(ppgDiagnostics.coverage * 100).toFixed(0)}% | Stability: {(ppgDiagnostics.maskStability * 100).toFixed(0)}% | Motion: {ppgDiagnostics.motionScore.toFixed(2)}</div>
+                  <div>ClipH: {(ppgDiagnostics.clipHigh * 100).toFixed(1)}% | ClipL: {(ppgDiagnostics.clipLow * 100).toFixed(1)}% | Pressure: {ppgDiagnostics.pressureScore.toFixed(2)}</div>
+                  <div>Guidance: {ppgDiagnostics.guidanceMessage}</div>
                 </>
               )}
               {lastHeartBeatOutput && (

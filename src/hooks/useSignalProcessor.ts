@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PPGSignalProcessor } from '../modules/signal-processing/PPGSignalProcessor';
+import { PPGSignalProcessor, PPGDiagnostics } from '../modules/signal-processing/PPGSignalProcessor';
 import { ProcessedSignal, ProcessingError } from '../types/signal';
 
 /**
@@ -13,6 +13,7 @@ export const useSignalProcessor = () => {
   const [lastSignal, setLastSignal] = useState<ProcessedSignal | null>(null);
   const [error, setError] = useState<ProcessingError | null>(null);
   const [framesProcessed, setFramesProcessed] = useState(0);
+  const [diagnostics, setDiagnostics] = useState<PPGDiagnostics | null>(null);
   
   // CONTROL ÚNICO DE INSTANCIA - PREVENIR DUPLICIDADES ABSOLUTAMENTE
   const instanceLock = useRef<boolean>(false);
@@ -43,6 +44,11 @@ export const useSignalProcessor = () => {
       setLastSignal(signal);
       setError(null);
       setFramesProcessed(prev => prev + 1);
+      
+      // Expose diagnostics from processor
+      if (processorRef.current?.lastDiagnostics) {
+        setDiagnostics(processorRef.current.lastDiagnostics);
+      }
     };
 
     const onError = (error: ProcessingError) => {
@@ -147,6 +153,7 @@ export const useSignalProcessor = () => {
     stopProcessing,
     calibrate,
     processFrame,
+    diagnostics,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,

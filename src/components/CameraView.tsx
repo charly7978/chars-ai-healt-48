@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 import { toast } from "@/components/ui/use-toast";
 
 export interface CameraDiagnostics {
@@ -12,6 +12,15 @@ export interface CameraDiagnostics {
   resolution: { w: number; h: number };
   constraintsApplied: string[];
   constraintsFailed: string[];
+  exposureMode?: string;
+  focusMode?: string;
+  whiteBalanceMode?: string;
+}
+
+export interface CameraViewRef {
+  videoRef: React.RefObject<HTMLVideoElement>;
+  getStream: () => MediaStream | null;
+  toggleTorch: (enabled: boolean) => Promise<boolean>;
 }
 
 interface CameraViewProps {
@@ -23,32 +32,57 @@ interface CameraViewProps {
 }
 
 /**
- * CameraView V2 — Phased constraint application, diagnostics export
+ * CameraView V3 — Centralized camera control, exposed videoRef, PPG-oriented configuration
  */
-const CameraView = ({ 
+const CameraView = forwardRef<CameraViewRef, CameraViewProps>(({ 
   onStreamReady, 
   onDiagnostics,
   isMonitoring, 
   isFingerDetected = false, 
   signalQuality = 0,
-}: CameraViewProps) => {
+}, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [deviceSupportsTorch, setDeviceSupportsTorch] = useState(false);
   const cameraInitialized = useRef(false);
   const sessionIdRef = useRef("");
+  const stabilizationTimerRef = useRef<number | null>(null);
   const diagRef = useRef<CameraDiagnostics>({
     hasTorch: false, torchActive: false, exposureLocked: false,
     focusLocked: false, whiteBalanceLocked: false, actualFrameRate: 0,
     resolution: { w: 0, h: 0 }, constraintsApplied: [], constraintsFailed: []
   });
 
+  // Expose videoRef and control methods to parent
+  useImperativeHandle(ref, () => ({
+    videoRef,
+    getStream: () => stream,
+    toggleTorch: async (enabled: boolean) => {
+      if (!stream || !deviceSupportsTorch) return false;
+      try {
+        const track = stream.getVideoTracks()[0];
+        await track.applyConstraints({ advanced: [{ torch: enabled } as any] });
+        setTorchEnabled(enabled);
+        diagRef.current.torchActive = enabled;
+        onDiagnostics?.({ ...diagRef.current });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }), [stream, deviceSupportsTorch, onDiagnostics]);
+
   useEffect(() => {
     sessionIdRef.current = `cam_${Date.now().toString(36)}`;
   }, []);
 
   const stopCamera = async () => {
+    if (stabilizationTimerRef.current) {
+      clearTimeout(stabilizationTimerRef.current);
+      stabilizationTimerRef.current = null;
+    }
+
     if (!stream) return;
     stream.getTracks().forEach(track => {
       if (track.kind === 'video') {
@@ -78,7 +112,7 @@ const CameraView = ({
       const applied: string[] = [];
       const failed: string[] = [];
 
-      // ═══ PHASE 1: Get rear camera stream ═══
+      // ═══ PHASE 1: Get rear camera stream with PPG-optimized constraints ═══
       const baseConstraints: MediaTrackConstraints = {
         facingMode: { exact: 'environment' },
         width: { ideal: 1280, min: 640 },
@@ -90,7 +124,8 @@ const CameraView = ({
       const attempts: MediaStreamConstraints[] = [
         { video: baseConstraints, audio: false },
         { video: { ...baseConstraints, facingMode: { ideal: 'environment' } }, audio: false },
-        { video: { facingMode: 'environment', frameRate: { ideal: 30 } }, audio: false },
+        { video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }, audio: false },
+        { video: { facingMode: 'environment' }, audio: false },
         { video: true, audio: false }
       ];
 
@@ -132,18 +167,30 @@ const CameraView = ({
         }
       }
 
-      // ═══ PHASE 4: Fine locks (each individually, fail gracefully) ═══
+      // ═══ PHASE 4: Stabilization window (800-1500ms) before fine locks ═══
+      await new Promise(resolve => {
+        stabilizationTimerRef.current = window.setTimeout(resolve, 1000);
+      });
+
+      // ═══ PHASE 5: Fine locks with PPG-oriented settings (each individually, fail gracefully) ═══
       const fineConstraints: Array<{ name: string; constraint: any; diagKey?: keyof CameraDiagnostics }> = [
+        // Try to lock exposure to prevent pumping
         { name: 'exposureMode', constraint: { exposureMode: 'manual' }, diagKey: 'exposureLocked' },
+        // Continuous focus is better than auto for PPG
         { name: 'focusMode', constraint: { focusMode: 'continuous' }, diagKey: 'focusLocked' },
+        // Continuous white balance
         { name: 'whiteBalanceMode', constraint: { whiteBalanceMode: 'continuous' }, diagKey: 'whiteBalanceLocked' },
       ];
 
-      // Add exposure compensation if available
+      // Try to set exposure compensation to reasonable value for PPG
       if (caps.exposureCompensation) {
+        const range = caps.exposureCompensation;
+ const midValue = range.min !== undefined && range.max !== undefined 
+          ? (range.min + range.max) / 2 
+          : 0;
         fineConstraints.push({
           name: 'exposureCompensation',
-          constraint: { exposureCompensation: caps.exposureCompensation.min || 0 }
+          constraint: { exposureCompensation: midValue }
         });
       }
 
@@ -153,6 +200,10 @@ const CameraView = ({
             await videoTrack.applyConstraints({ advanced: [fc.constraint] });
             applied.push(fc.name);
             if (fc.diagKey) (diagRef.current as any)[fc.diagKey] = true;
+            // Store actual mode in diagnostics
+            if (fc.name === 'exposureMode') diagRef.current.exposureMode = 'manual';
+            if (fc.name === 'focusMode') diagRef.current.focusMode = 'continuous';
+            if (fc.name === 'whiteBalanceMode') diagRef.current.whiteBalanceMode = 'continuous';
           } catch {
             failed.push(fc.name);
           }
@@ -243,6 +294,8 @@ const CameraView = ({
       }}
     />
   );
-};
+});
+
+CameraView.displayName = 'CameraView';
 
 export default CameraView;
