@@ -70,7 +70,7 @@ const Index = () => {
   const { 
     processSignal: processHeartBeat, setArrhythmiaState,
     reset: resetHeartBeat, debugInfo: heartDebugInfo,
-    lastHeartBeatOutput, arrhythmiaResult
+    lastHeartBeatOutput, arrhythmiaResult, heartDiagnostics
   } = useHeartBeatProcessor();
   
   const { 
@@ -451,6 +451,17 @@ const Index = () => {
                   <div>ClipH: {(ppgDiagnostics.clipHigh * 100).toFixed(1)}% | ClipL: {(ppgDiagnostics.clipLow * 100).toFixed(1)}% | Pressure: {ppgDiagnostics.pressureScore.toFixed(2)}</div>
                   <div>Guidance: {ppgDiagnostics.guidanceMessage}</div>
                 </>
+              )}
+              {heartDiagnostics && (
+                <div className="border-t border-cyan-500/50 pt-1 mt-1 text-cyan-400/95">
+                  <div className="text-white/90 font-semibold">DIAGNÓSTICOS CARDÍACOS NUEVOS</div>
+                  <div>State: {heartDiagnostics.heartState} | Source: {heartDiagnostics.heartDiagnostics.activeBpmSource}</div>
+                  <div>Instant: {heartDiagnostics.heartDiagnostics.instantBpm.toFixed(0)} | Temporal: {heartDiagnostics.heartDiagnostics.temporalBpm.toFixed(0)} | Spectral: {heartDiagnostics.heartDiagnostics.spectralBpm.toFixed(0)} | Final: {heartDiagnostics.heartDiagnostics.finalBpm.toFixed(0)}</div>
+                  <div>Conf: {(heartDiagnostics.heartDiagnostics.confidence * 100).toFixed(0)}% | TemporalSQI: {(heartDiagnostics.heartDiagnostics.temporalSQI * 100).toFixed(0)}% | SpectralSQI: {(heartDiagnostics.heartDiagnostics.spectralSQI * 100).toFixed(0)}% | GlobalSQI: {(heartDiagnostics.heartDiagnostics.globalSQI * 100).toFixed(0)}%</div>
+                  <div>DomFreq: {heartDiagnostics.heartDiagnostics.dominantFrequencyHz.toFixed(2)}Hz ({heartDiagnostics.heartDiagnostics.dominantFrequencyBpm.toFixed(0)}BPM)</div>
+                  <div>Beats: {heartDiagnostics.heartDiagnostics.acceptedBeats} acc / {heartDiagnostics.heartDiagnostics.rejectedBeats} rej | RR: {heartDiagnostics.heartDiagnostics.rrCount} | Mean: {heartDiagnostics.heartDiagnostics.rrMean.toFixed(0)}ms | Median: {heartDiagnostics.heartDiagnostics.rrMedian.toFixed(0)}ms</div>
+                  <div>OutlierRatio: {(heartDiagnostics.heartDiagnostics.rrOutlierRatio * 100).toFixed(1)}% | ProcTime: {heartDiagnostics.heartDiagnostics.processingTimeMs.toFixed(1)}ms</div>
+                </div>
               )}
               {arrhythmiaResult && (
                 <div className="border-t border-red-500/50 pt-1 mt-1 text-red-400/95">

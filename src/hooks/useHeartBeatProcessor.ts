@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
-import type { HeartBeatProcessInputFull, HeartBeatProcessOutput } from '../modules/heartbeat/types';
+import type { HeartBeatProcessInputFull, HeartBeatProcessOutput } from '../modules/HeartBeatProcessor';
 import type { ProcessedSignal } from '../types/signal';
 import type { ArrhythmiaResult } from '../modules/signal-processing/ArrhythmiaDetector';
+import type { HeartDiagnostics, HeartProcessOutput as NewHeartProcessOutput } from '../modules/heartbeat/cardiac-types';
 
 export interface HeartBeatResult extends HeartBeatProcessOutput {
   arrhythmiaCount: number;
@@ -119,6 +120,14 @@ export const useHeartBeatProcessor = () => {
         setArrhythmiaResult(arrhythmia);
       }
 
+      // Actualizar diagnósticos cardíacos
+      if (processedSignalsRef.current % 10 === 0) {
+        const newOutput = processorRef.current.getLastOutput();
+        if (newOutput) {
+          setHeartDiagnostics(newOutput.diagnostics);
+        }
+      }
+
       if (processedSignalsRef.current % 120 === 0) {
         console.log('[HB]', result.bpm, 'bpmConf', result.bpmConfidence?.toFixed(2), 'beatSQI', result.beatSQI);
       }
@@ -155,6 +164,7 @@ export const useHeartBeatProcessor = () => {
     setArrhythmiaState,
     lastHeartBeatOutput: lastRich,
     arrhythmiaResult,
+    heartDiagnostics,
     debugInfo: {
       sessionId: sessionIdRef.current,
       processingState: processingStateRef.current,
