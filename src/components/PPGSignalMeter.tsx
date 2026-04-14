@@ -1,15 +1,13 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Fingerprint, AlertCircle } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
-import { getQualityColor, getQualityText, getPpgUserGuidance } from '@/utils/qualityUtils';
+import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
 
 interface PPGSignalMeterProps {
   value: number;
   quality: number;
   isFingerDetected: boolean;
-  /** Confianza dedo 0–1 (pipeline PPG) */
-  fingerConfidence?: number;
   onStartMeasurement: () => void;
   onReset: () => void;
   arrhythmiaStatus?: string;
@@ -25,21 +23,12 @@ const PPGSignalMeter = ({
   value, 
   quality, 
   isFingerDetected,
-  fingerConfidence,
   onStartMeasurement,
   onReset,
   arrhythmiaStatus,
   rawArrhythmiaData,
   preserveResults = false
 }: PPGSignalMeterProps) => {
-  // DEBUG: Log de props recibidas
-  const renderCount = useRef(0);
-  renderCount.current++;
-  if (renderCount.current % 60 === 0 || (isFingerDetected && renderCount.current < 10)) {
-    console.log(`📊 PPGSignalMeter: value=${value.toFixed(1)}, quality=${quality}, fingerDetected=${isFingerDetected}, confidence=${fingerConfidence?.toFixed(2)}`);
-  }
-  
-  const guidance = getPpgUserGuidance(quality, isFingerDetected, fingerConfidence);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
   const baselineRef = useRef<number | null>(null);
@@ -407,15 +396,9 @@ const PPGSignalMeter = ({
             strokeWidth={1.5}
           />
           <span className="text-[8px] text-center font-medium text-blue-200"> {/* Texto claro */}
-            {isFingerDetected ? "Dedo estable" : "Coloca el dedo"}
+            {isFingerDetected ? "Dedo detectado" : "Ubique su dedo"}
           </span>
         </div>
-      </div>
-
-      <div className="absolute top-14 left-0 right-0 px-3 z-10 pointer-events-none">
-        <p className="text-center text-[10px] leading-snug text-blue-100/90 max-w-md mx-auto drop-shadow-sm">
-          {guidance}
-        </p>
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 h-[60px] grid grid-cols-2 bg-transparent z-10">

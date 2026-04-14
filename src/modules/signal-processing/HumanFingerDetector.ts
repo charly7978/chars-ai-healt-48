@@ -132,15 +132,18 @@ export class HumanFingerDetector {
   private isPhysiologicallyValid(r: number, g: number, b: number): boolean {
     // Rangos fisiológicos humanos más permisivos para mejor detección
     const total = r + g + b;
-    if (total < 42 || total > 740) return false;
+    if (total < 50 || total > 700) return false; // Más amplio
     
+    // Ratio R/G más permisivo para diferentes tonos de piel
     const rgRatio = r / (g + 1);
-    if (rgRatio < 0.52 || rgRatio > 3.85) return false;
+    if (rgRatio < 0.6 || rgRatio > 3.5) return false; // Más amplio
     
-    if (r < Math.max(g, b) * 0.62) return false;
+    // Componente roja menos estricta
+    if (r < Math.max(g, b) * 0.7) return false; // Menos estricto
     
+    // Varianza mínima reducida para mayor sensibilidad
     const variance = Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b);
-    if (variance < 10) return false;
+    if (variance < 15) return false; // Más permisivo
     
     return true;
   }
@@ -169,14 +172,14 @@ export class HumanFingerDetector {
     const absorptionPattern = (expectedR + expectedB) / (expectedG + 1);
     const biophysicalScore = Math.min(1.0, Math.max(0, absorptionPattern / 2.5));
     
-    // Coherencia óptica - RELAJADO para más tonos de piel
+    // Coherencia óptica - patrones característicos de tejido vivo
     const redDominance = r / total;
-    const opticalCoherence = (redDominance >= 0.20 && redDominance <= 0.65) ? 1.0 : 
-                            Math.max(0, 1 - Math.abs(redDominance - 0.42) * 2);
+    const opticalCoherence = (redDominance >= 0.28 && redDominance <= 0.48) ? 1.0 : 
+                            Math.max(0, 1 - Math.abs(redDominance - 0.38) * 3);
     
-    // Validación de color de piel humana - RELAJADO
-    const skinColorValid = redDominance >= 0.18 && redDominance <= 0.75 && 
-                          biophysicalScore >= 0.15 && opticalCoherence >= 0.25;
+    // Validación de color de piel humana
+    const skinColorValid = redDominance >= 0.25 && redDominance <= 0.55 && 
+                          biophysicalScore >= 0.3 && opticalCoherence >= 0.4;
     
     return {
       biophysicalScore,
@@ -202,9 +205,9 @@ export class HumanFingerDetector {
     const pulsatility = this.calculatePulsatility();
     const bloodFlowIndicator = Math.min(1.0, pulsatility * perfusionIndex / 2);
     
-    // Validación de perfusión RELAJADA para inicio rápido
-    const perfusionValid = perfusionIndex >= 0.05 && perfusionIndex <= 35.0 && 
-                          bloodFlowIndicator >= 0.03;
+    // Validación de perfusión más permisiva para dedos reales
+    const perfusionValid = perfusionIndex >= 0.2 && perfusionIndex <= 20.0 && 
+                          bloodFlowIndicator >= 0.1; // Más permisivo
     
     return {
       perfusionIndex: Math.max(0, perfusionIndex),
@@ -235,7 +238,9 @@ export class HumanFingerDetector {
   private calculatePulsatility(): number {
     if (this.temporalAnalysisBuffer.length < 20) return 0.1;
     
-    const values = this.temporalAnalysisBuffer.slice(-20).map(item => item.redValue);
+    const values = this.temporalAnalysisBuffer
+      .slice(-20)
+      .map(item => item.redValue);
     
     let peakCount = 0;
     for (let i = 2; i < values.length - 2; i++) {
@@ -269,16 +274,18 @@ export class HumanFingerDetector {
       this.temporalAnalysisBuffer.shift();
     }
     
-    if (this.temporalAnalysisBuffer.length < 12) {
-      return { consistency: 0.55, temporalValid: false };
+    if (this.temporalAnalysisBuffer.length < 15) {
+      return { consistency: 0.5, temporalValid: false };
     }
     
+    // Análisis de consistencia temporal
     const recent = this.temporalAnalysisBuffer.slice(-15);
     const redVariance = this.calculateVariance(recent.map(item => item.redValue));
     const perfusionVariance = this.calculateVariance(recent.map(item => item.perfusionIndex));
     
-    const consistency = Math.max(0, 1 - (redVariance / 480) - (perfusionVariance / 4.5));
-    const temporalValid = consistency >= 0.34 && redVariance >= 5;
+    // Consistencia debe ser estable pero con variación fisiológica
+    const consistency = Math.max(0, 1 - (redVariance / 400) - (perfusionVariance / 4));
+    const temporalValid = consistency >= 0.4 && redVariance >= 10; // Mínima variación necesaria
     
     return { consistency, temporalValid };
   }
@@ -290,7 +297,8 @@ export class HumanFingerDetector {
     textureScore: number, width: number, height: number
   ): { spatialValid: boolean } {
     
-    const textureValid = textureScore >= 0.22 && textureScore <= 0.94;
+    // Textura debe indicar tejido orgánico, no superficie lisa
+    const textureValid = textureScore >= 0.3 && textureScore <= 0.9;
     
     // Área mínima para dedo humano adulto
     const area = width * height;
@@ -401,15 +409,17 @@ export class HumanFingerDetector {
    * DECISIÓN FINAL DE DETECCIÓN HUMANA
    */
   private makeHumanFingerDecision(confidence: number): boolean {
-    // RELAJADO: Umbral base más bajo para detectar más fácilmente
-    let threshold = 0.28;
+    // Umbral más permisivo para mejor detección de dedos reales
+    let threshold = 0.50; // Base equilibrada; reduce falsos positivos
     
-    if (Date.now() - this.lastValidHumanTime < 6000) {
-      threshold = 0.22; // Más permisivo si ya detectamos antes
+    // Reducir umbral si hay detecciones previas válidas recientes
+    if (Date.now() - this.lastValidHumanTime < 5000) {
+      threshold = 0.40;
     }
     
-    if (this.consecutiveNonHumanDetections > 20) {
-      threshold = 0.38; // Menos estricto después de fallos
+    // Aumentar umbral solo si hay muchas detecciones falsas
+    if (this.consecutiveNonHumanDetections > 15) {
+      threshold = 0.65;
     }
     
     return confidence >= threshold;

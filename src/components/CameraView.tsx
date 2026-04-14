@@ -70,11 +70,8 @@ const CameraView = ({
       console.log(`📹 Iniciando cámara unificada avanzada - ${sessionIdRef.current}`);
       
       if (!navigator.mediaDevices?.getUserMedia) {
-        console.error(`❌ getUserMedia no soportado`);
         throw new Error("getUserMedia no soportado en este navegador");
       }
-      
-      console.log(`📹 getUserMedia disponible, solicitando acceso...`);
 
       // DETECCIÓN UNIFICADA DE PLATAFORMA
       const isAndroid = /android/i.test(navigator.userAgent);
@@ -97,19 +94,12 @@ const CameraView = ({
         });
       }
 
-      const micAudio: MediaTrackConstraints = {
-        echoCancellation: false,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1
-      };
-
       const constraints: MediaStreamConstraints = {
         video: baseVideoConstraints,
-        audio: micAudio
+        audio: false
       };
 
-      // Intento principal y fallbacks controlados para asegurar cámara trasera (+ micrófono para PTT)
+      // Intento principal y fallbacks controlados para asegurar cámara trasera
       let newStream: MediaStream | null = null;
       try {
         newStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -118,22 +108,18 @@ const CameraView = ({
         try {
           newStream = await navigator.mediaDevices.getUserMedia({
             video: { ...baseVideoConstraints, facingMode: { ideal: 'environment' } },
-            audio: micAudio
+            audio: false
           });
         } catch (secondaryErr) {
           console.warn(`⚠️ Fallback getUserMedia (string environment): ${secondaryErr}`);
           try {
             newStream = await navigator.mediaDevices.getUserMedia({
               video: { ...baseVideoConstraints, facingMode: 'environment' as any },
-              audio: micAudio
+              audio: false
             } as any);
           } catch (tertiaryErr) {
-            console.warn(`⚠️ Fallback getUserMedia (video:true, sin audio): ${tertiaryErr}`);
-            try {
-              newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: micAudio });
-            } catch {
-              newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-            }
+            console.warn(`⚠️ Fallback getUserMedia (video:true): ${tertiaryErr}`);
+            newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           }
         }
       }
@@ -244,12 +230,9 @@ const CameraView = ({
 
   // CONTROL UNIFICADO DEL CICLO DE VIDA DE LA CÁMARA
   useEffect(() => {
-    console.log(`📹 CAMERA EFFECT: isMonitoring=${isMonitoring}, stream=${!!stream}, cameraInitialized=${cameraInitialized.current}`);
     if (isMonitoring && !stream && !cameraInitialized.current) {
-      console.log(`📹 Iniciando cámara...`);
       startCamera();
     } else if (!isMonitoring && stream) {
-      console.log(`📹 Deteniendo cámara...`);
       stopCamera();
     }
     

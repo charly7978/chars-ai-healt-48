@@ -38,17 +38,7 @@ export const useSignalProcessor = () => {
 
     // CALLBACKS ÚNICOS SIN MEMORY LEAKS
     const onSignalReady = (signal: ProcessedSignal) => {
-      // DEBUG: Log cada señal importante
-      if (signal.quality > 0 || signal.fingerDetected) {
-        console.log(`📡 Signal recibido: quality=${signal.quality}, finger=${signal.fingerDetected}, initState=${initializationState.current}`);
-      }
-      
-      // CORREGIDO: Siempre procesar señales válidas, no bloquear por initState
-      // El initState es solo para control de setup, no para filtrar datos
-      if (initializationState.current === 'ERROR') {
-        console.warn(`⚠️ Ignorando señal - initState=ERROR`);
-        return;
-      }
+      if (initializationState.current !== 'READY') return;
       
       setLastSignal(signal);
       setError(null);
@@ -84,10 +74,8 @@ export const useSignalProcessor = () => {
 
   // INICIO ÚNICO SIN DUPLICIDADES
   const startProcessing = useCallback(() => {
-    console.log(`🔍 START CHECK: processor=${!!processorRef.current}, initState=${initializationState.current}, isProcessing=${isProcessing}`);
-    
     if (!processorRef.current || initializationState.current !== 'READY') {
-      console.warn(`⚠️ Procesador no listo - Estado: ${initializationState.current}, processor=${!!processorRef.current} - ${sessionIdRef.current}`);
+      console.warn(`⚠️ Procesador no listo - Estado: ${initializationState.current} - ${sessionIdRef.current}`);
       return;
     }
 
@@ -140,10 +128,6 @@ export const useSignalProcessor = () => {
   // PROCESAMIENTO DE FRAME ÚNICO
   const processFrame = useCallback((imageData: ImageData) => {
     if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
-      // DEBUG: Log por qué no se procesa
-      if (Math.floor(performance.now()) % 500 < 50) {
-        console.log(`⏸️ Frame skip: processor=${!!processorRef.current}, initState=${initializationState.current}, isProcessing=${isProcessing}`);
-      }
       return;
     }
     

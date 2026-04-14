@@ -76,12 +76,26 @@ export class DetectionLogger {
       this.consecutiveSuccessfulDetections = 0;
     }
     
-    if (this.logHistory.length % 180 === 0 && this.logHistory.length > 0) {
+    // Logging detallado cada 10 intentos
+    if (this.logHistory.length % 10 === 0) {
       this.logDetailedStatus();
     }
     
-    if (this.consecutiveFailedDetections === 60) {
-      console.warn("⚠️ Detección: muchos intentos fallidos — comprueba dedo sobre flash y linterna.");
+    // Alertas de problemas persistentes
+    if (this.consecutiveFailedDetections >= 15) {
+      console.warn("⚠️ DETECCIÓN PERSISTENTE FALLIDA - Revisar posicionamiento del dedo", {
+        fallosConsecutivos: this.consecutiveFailedDetections,
+        últimaRazón: reason,
+        recomendación: "Asegurar dedo completamente cubriendo cámara y flash activado"
+      });
+    }
+    
+    // Confirmación de detección estable
+    if (this.consecutiveSuccessfulDetections === 5) {
+      console.log("✅ DETECCIÓN ESTABLE CONFIRMADA - Procesando datos PPG reales", {
+        éxitosConsecutivos: this.consecutiveSuccessfulDetections,
+        calidadPromedio: this.calculateAverageQuality()
+      });
     }
   }
   

@@ -33,8 +33,6 @@ export interface VitalSignsResult {
 export class VitalSignsProcessor {
   private mathProcessor: AdvancedMathematicalProcessor;
   private spo2Processor = new SpO2Processor();
-  /** PTT micrófono+PPG (ms); null si aún no hay estimación estable */
-  private lastPttMs: number | null = null;
   private calibrationSamples: number = 0;
   private readonly CALIBRATION_REQUIRED = 25;
   private isCalibrating: boolean = false;
@@ -104,13 +102,6 @@ export class VitalSignsProcessor {
     this.mathProcessor = new AdvancedMathematicalProcessor();
   }
 
-  /** Actualiza PTT desde PulseTransitTimeEstimator; solo sustituye si hay mediana válida (evita borrar estimación estable) */
-  public setPulseTransitTimeMs(ms: number | null): void {
-    if (ms !== null && Number.isFinite(ms)) {
-      this.lastPttMs = ms;
-    }
-  }
-
   startCalibration(): void {
     console.log("🎯 VitalSignsProcessor: Iniciando calibración");
     this.isCalibrating = true;
@@ -145,7 +136,6 @@ export class VitalSignsProcessor {
     this.signalHistory = [];
     this.rgbHistory = { r: [], g: [], b: [] };
     this.spo2Processor.reset();
-    this.lastPttMs = null;
   }
 
   forceCalibrationCompletion(): void {
@@ -593,49 +583,24 @@ export class VitalSignsProcessor {
 
   private calculateBloodPressureReal(intervals: number[], signal: number[]): { systolic: number; diastolic: number } {
     if (intervals.length < 3) return { systolic: 0, diastolic: 0 };
-
+    
+    // Determinista: PTT (RR medio), amplitud y rigidez arterial
+    const avgIntervalMs = intervals.reduce((a, b) => a + b, 0) / intervals.length; // ms
+    const ptt = Math.max(250, Math.min(1500, avgIntervalMs)); // clamp 250–1500 ms
     const amplitude = this.calculateAmplitude(signal);
     const stiffness = this.calculateArterialStiffness(intervals);
 
-    // Modelo previo: pseudo-PTT vía intervalo RR (pulso global), no tránsito arterial real
-    const avgIntervalMs = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const pseudoPtt = Math.max(250, Math.min(1500, avgIntervalMs));
-    const baseSystolic = 200 - (pseudoPtt - 250) * (80 / (1500 - 250));
-    const baseDiastolic = 120 - (pseudoPtt - 250) * (50 / (1500 - 250));
-    let systRr = baseSystolic + stiffness * 20 - amplitude * 10;
-    let diastRr = baseDiastolic + stiffness * 10 - amplitude * 6;
+    // Mapear PTT a presión base (menor PTT → mayor presión)
+    const baseSystolic = 200 - (ptt - 250) * (80 / (1500 - 250)); // 200→120
+    const baseDiastolic = 120 - (ptt - 250) * (50 / (1500 - 250)); // 120→70
 
-    let s = Math.max(90, Math.min(200, Math.round(systRr)));
-    let d = Math.max(50, Math.min(120, Math.round(diastRr)));
-    const rrPair = { systolic: Math.max(s, d + 25), diastolic: Math.min(d, Math.max(s, d + 25) - 25) };
+    // Ajustes por amplitud (más amplitud → mayor presión de pulso) y rigidez
+    const systolic = baseSystolic + stiffness * 20 - amplitude * 10;
+    const diastolic = baseDiastolic + stiffness * 10 - amplitude * 6;
 
-    // PTT real (micrófono + PPG): tránsito ~90–420 ms; menor PTT → mayor presión típicamente
-    const ptt = this.lastPttMs;
-    if (ptt !== null && Number.isFinite(ptt) && ptt >= 55 && ptt <= 430) {
-      const pttBp = this.mapPttMsToBloodPressure(ptt, stiffness, amplitude);
-      const w = 0.58;
-      const systolic = Math.round(w * pttBp.systolic + (1 - w) * rrPair.systolic);
-      const diastolic = Math.round(w * pttBp.diastolic + (1 - w) * rrPair.diastolic);
-      const s2 = Math.max(90, Math.min(200, systolic));
-      const d2 = Math.max(50, Math.min(120, diastolic));
-      return { systolic: Math.max(s2, d2 + 22), diastolic: Math.min(d2, Math.max(s2, d2 + 22) - 22) };
-    }
-
-    return { systolic: rrPair.systolic, diastolic: rrPair.diastolic };
-  }
-
-  /** Mapa PTT (ms) → TA; combina con rigidez/amplitud del ciclo RR+PPG */
-  private mapPttMsToBloodPressure(
-    pttMs: number,
-    stiffness: number,
-    amplitude: number
-  ): { systolic: number; diastolic: number } {
-    const p = Math.max(70, Math.min(420, pttMs));
-    let systolic = 168 - 0.34 * (p - 130) + stiffness * 14 - amplitude * 8;
-    let diastolic = 102 - 0.21 * (p - 130) + stiffness * 8 - amplitude * 5;
     const s = Math.max(90, Math.min(200, Math.round(systolic)));
     const d = Math.max(50, Math.min(120, Math.round(diastolic)));
-    return { systolic: Math.max(s, d + 22), diastolic: Math.min(d, Math.max(s, d + 22) - 22) };
+    return { systolic: Math.max(s, d + 25), diastolic: Math.min(d, Math.max(s, d + 25) - 25) };
   }
 
   private calculateLipidsReal(signal: number[]): { totalCholesterol: number; triglycerides: number } {
@@ -812,7 +777,6 @@ export class VitalSignsProcessor {
     this.signalHistory = [];
     this.rgbHistory = { r: [], g: [], b: [] };
     this.spo2Processor.reset();
-    this.lastPttMs = null;
     this.isCalibrating = false;
 
     return this.measurements.spo2 > 0 ? currentResults : null;
@@ -856,7 +820,6 @@ export class VitalSignsProcessor {
       lipids: []
     };
     this.spo2Processor.reset();
-    this.lastPttMs = null;
     this.isCalibrating = false;
     this.calibrationSamples = 0;
   }
