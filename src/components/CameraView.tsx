@@ -70,8 +70,11 @@ const CameraView = ({
       console.log(`📹 Iniciando cámara unificada avanzada - ${sessionIdRef.current}`);
       
       if (!navigator.mediaDevices?.getUserMedia) {
+        console.error(`❌ getUserMedia no soportado`);
         throw new Error("getUserMedia no soportado en este navegador");
       }
+      
+      console.log(`📹 getUserMedia disponible, solicitando acceso...`);
 
       // DETECCIÓN UNIFICADA DE PLATAFORMA
       const isAndroid = /android/i.test(navigator.userAgent);
@@ -241,9 +244,12 @@ const CameraView = ({
 
   // CONTROL UNIFICADO DEL CICLO DE VIDA DE LA CÁMARA
   useEffect(() => {
+    console.log(`📹 CAMERA EFFECT: isMonitoring=${isMonitoring}, stream=${!!stream}, cameraInitialized=${cameraInitialized.current}`);
     if (isMonitoring && !stream && !cameraInitialized.current) {
+      console.log(`📹 Iniciando cámara...`);
       startCamera();
     } else if (!isMonitoring && stream) {
+      console.log(`📹 Deteniendo cámara...`);
       stopCamera();
     }
     

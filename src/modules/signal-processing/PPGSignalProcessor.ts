@@ -221,22 +221,44 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 1. Extracción optimizada
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
       const { redValue, textureScore, avgGreen, avgBlue, rawRgb } = extractionResult;
+      
+      // DEBUG: Log de extracción cada 60 frames
+      if (this.frameCount % 60 === 0) {
+        console.log(`🔍 EXTRACCIÓN: redValue=${redValue.toFixed(1)}, textureScore=${textureScore?.toFixed(2)}, avgGreen=${avgGreen?.toFixed(1)}, avgBlue=${avgBlue?.toFixed(1)}`);
+      }
+      
       /** Solo canal R del parche de contacto: la media global captaba flicker/parpadeo como "pulso" (FP) */
       const pulseSample = rawRgb ? rawRgb.r : redValue;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
-      // 2. Dedo humano (biofísico) + histéresis temporal anti-parpadeo
+      // 2. Dedo humano (biofísico) + histérisis temporal anti-parpadeo
       const humanFingerValidation = this.humanFingerDetector.detectHumanFinger(
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, imageData.width, imageData.height
       );
+      
+      // DEBUG: Log de validación de dedo cada 60 frames
+      if (this.frameCount % 60 === 0) {
+        console.log(`🔍 VALIDACIÓN DEDO: isHuman=${humanFingerValidation.isHumanFinger}, confidence=${humanFingerValidation.confidence.toFixed(2)}, skin=${humanFingerValidation.validationDetails.skinColorValid}, perfusion=${humanFingerValidation.validationDetails.perfusionValid}`);
+      }
 
       const pulseOk = this.pulseGate.push(pulseSample);
+      
+      // DEBUG: Log de pulseGate
+      if (this.frameCount % 60 === 0) {
+        console.log(`🔍 PULSE GATE: pulseOk=${pulseOk}, pulseSample=${pulseSample.toFixed(1)}`);
+      }
 
       const rgbR = rawRgb?.r ?? redValue;
       const rgbG = rawRgb?.g ?? (avgGreen ?? 0);
       const rgbB = rawRgb?.b ?? (avgBlue ?? 0);
 
       const strictSkin = isStrictHemoglobinSkinContact(rgbR, rgbG, rgbB, textureScore);
+      
+      // DEBUG: Log de strictSkin
+      if (this.frameCount % 60 === 0) {
+        console.log(`🔍 STRICT SKIN: strictSkin=${strictSkin} para RGB(${rgbR.toFixed(0)}, ${rgbG.toFixed(0)}, ${rgbB.toFixed(0)})`);
+      }
+      
       // RELAJADO: Umbral de confianza reducido para detección más sensible
       const bioConfirmed =
         humanFingerValidation.validationDetails.skinColorValid &&
@@ -245,21 +267,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       const rawFingerCandidate = pulseOk && strictSkin && bioConfirmed;
       
-      // DEBUG: Log de diagnóstico cada 60 frames cuando no se detecta
-      if (this.frameCount % 60 === 0 && !rawFingerCandidate) {
-        console.log("🔍 DIAGNÓSTICO DEDO:", {
-          pulseOk,
-          strictSkin,
-          bioConfirmed,
-          skinColor: humanFingerValidation.validationDetails.skinColorValid,
-          perfusion: humanFingerValidation.validationDetails.perfusionValid,
-          confidence: humanFingerValidation.confidence.toFixed(2),
-          rgbR, rgbG, rgbB,
-          textureScore: textureScore.toFixed(2)
-        });
+      // DEBUG: Log de resultado final de detección
+      if (this.frameCount % 60 === 0) {
+        console.log(`🔍 RESULTADO DETECCIÓN: rawFingerCandidate=${rawFingerCandidate} (pulseOk=${pulseOk} && strictSkin=${strictSkin} && bioConfirmed=${bioConfirmed})`);
       }
 
       const smoothedFinger = this.fingerSmoother.update(rawFingerCandidate);
+      
+      // DEBUG: Log cuando cambia estado de detección
+      if (smoothedFinger !== this.prevSmoothedFinger) {
+        console.log(`🖐️ DEDO ${smoothedFinger ? '✅ DETECTADO' : '❌ PERDIDO'} - smoothedFinger=${smoothedFinger}, rawCandidate=${rawFingerCandidate}`);
+      }
+      
       if (this.prevSmoothedFinger && !smoothedFinger) {
         this.zeroPhaseFilter.reset();
         this.wepdPeakDetector.reset();
@@ -416,6 +435,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         peakConfidence: peakResult?.confidence ?? 0
       };
 
+      // DEBUG: Log cuando se envía señal a la UI
+      if (this.frameCount % 60 === 0 || smoothedFinger) {
+        console.log(`📤 ENVIANDO A UI: fingerDetected=${processedSignal.fingerDetected}, quality=${processedSignal.quality}, confidence=${processedSignal.fingerConfidence}`);
+      }
+      
       this.onSignalReady(processedSignal);
     } catch (error) {
       console.error("❌ PPGSignalProcessor: Error procesando frame", error);

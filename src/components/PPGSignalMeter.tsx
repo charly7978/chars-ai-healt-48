@@ -32,6 +32,13 @@ const PPGSignalMeter = ({
   rawArrhythmiaData,
   preserveResults = false
 }: PPGSignalMeterProps) => {
+  // DEBUG: Log de props recibidas
+  const renderCount = useRef(0);
+  renderCount.current++;
+  if (renderCount.current % 60 === 0 || (isFingerDetected && renderCount.current < 10)) {
+    console.log(`📊 PPGSignalMeter: value=${value.toFixed(1)}, quality=${quality}, fingerDetected=${isFingerDetected}, confidence=${fingerConfidence?.toFixed(2)}`);
+  }
+  
   const guidance = getPpgUserGuidance(quality, isFingerDetected, fingerConfidence);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataBufferRef = useRef<CircularBuffer | null>(null);

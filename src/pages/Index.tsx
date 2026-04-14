@@ -352,7 +352,12 @@ const Index = () => {
 
   // MANEJO ÚNICO DEL STREAM
   const handleStreamReady = (stream: MediaStream) => {
-    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
+    console.log(`📹 HANDLE STREAM: isMonitoring=${isMonitoring}, systemState=${systemState.current}`);
+    
+    if (!isMonitoring || systemState.current !== 'ACTIVE') {
+      console.warn(`⚠️ Stream ignorado: isMonitoring=${isMonitoring}, systemState=${systemState.current}`);
+      return;
+    }
     
     console.log(`📹 Stream ÚNICO listo - ${sessionIdRef.current}`);
 
@@ -378,8 +383,14 @@ const Index = () => {
     const videoElement = document.querySelector('video') as HTMLVideoElement;
     if (!videoElement) return;
     
+    let frameCount = 0;
     const processImage = async () => {
-      if (!isMonitoring || systemState.current !== 'ACTIVE' || !videoElement) return;
+      if (!isMonitoring || systemState.current !== 'ACTIVE' || !videoElement) {
+        if (frameCount % 60 === 0) {
+          console.log(`⏸️ processImage detenido: isMonitoring=${isMonitoring}, systemState=${systemState.current}, videoElement=${!!videoElement}`);
+        }
+        return;
+      }
       
       const now = Date.now();
       const timeSinceLastProcess = now - lastProcessTime;
@@ -387,6 +398,7 @@ const Index = () => {
       if (timeSinceLastProcess >= targetFrameInterval) {
         try {
           if (videoElement.readyState >= 2) {
+            frameCount++;
             const targetWidth = Math.min(320, videoElement.videoWidth || 320);
             const targetHeight = Math.min(240, videoElement.videoHeight || 240);
             
@@ -400,12 +412,22 @@ const Index = () => {
             );
             
             const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
+            
+            // DEBUG: Log cada 60 frames
+            if (frameCount % 60 === 0) {
+              console.log(`🎥 Frame ${frameCount} capturado: ${targetWidth}x${targetHeight}, enviando a processFrame...`);
+            }
+            
             processFrame(imageData);
             
             lastProcessTime = now;
+          } else {
+            if (frameCount % 60 === 0) {
+              console.log(`⏳ Video readyState=${videoElement.readyState}, esperando...`);
+            }
           }
         } catch (error) {
-          console.error("Error procesando frame:", error);
+          console.error("❌ Error procesando frame:", error);
         }
       }
       
@@ -414,6 +436,7 @@ const Index = () => {
       }
     };
 
+    console.log(`🎥 Iniciando loop de procesamiento de video...`);
     processImage();
   };
 
