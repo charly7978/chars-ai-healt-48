@@ -224,12 +224,27 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const rgbB = rawRgb?.b ?? (avgBlue ?? 0);
 
       const strictSkin = isStrictHemoglobinSkinContact(rgbR, rgbG, rgbB, textureScore);
+      // RELAJADO: Umbral de confianza reducido para detección más sensible
       const bioConfirmed =
         humanFingerValidation.validationDetails.skinColorValid &&
         humanFingerValidation.validationDetails.perfusionValid &&
-        humanFingerValidation.confidence >= 0.43;
+        humanFingerValidation.confidence >= 0.25;
 
       const rawFingerCandidate = pulseOk && strictSkin && bioConfirmed;
+      
+      // DEBUG: Log de diagnóstico cada 60 frames cuando no se detecta
+      if (this.frameCount % 60 === 0 && !rawFingerCandidate) {
+        console.log("🔍 DIAGNÓSTICO DEDO:", {
+          pulseOk,
+          strictSkin,
+          bioConfirmed,
+          skinColor: humanFingerValidation.validationDetails.skinColorValid,
+          perfusion: humanFingerValidation.validationDetails.perfusionValid,
+          confidence: humanFingerValidation.confidence.toFixed(2),
+          rgbR, rgbG, rgbB,
+          textureScore: textureScore.toFixed(2)
+        });
+      }
 
       const smoothedFinger = this.fingerSmoother.update(rawFingerCandidate);
       if (this.prevSmoothedFinger && !smoothedFinger) {
@@ -281,13 +296,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       let fusedResult: FusedPPGResult | null = null;
       let peakResult: PeakDetectionResult | null = null;
       
-      if (smoothedFinger && rawRgb) {
+      if (smoothedFinger) {
         // 3.1 Fusión Multi-Canal RGB con pesos adaptativos por SNR
-        fusedResult = this.rgbFusion.processSample({
+        // Fallback: usar redValue/avgGreen/avgBlue si rawRgb no está disponible
+        const rgbInput = rawRgb ? {
           r: rawRgb.r,
           g: rawRgb.g,
           b: rawRgb.b
-        });
+        } : {
+          r: redValue,
+          g: avgGreen ?? redValue * 0.6,
+          b: avgBlue ?? redValue * 0.3
+        };
+        
+        fusedResult = this.rgbFusion.processSample(rgbInput);
         
         // 3.2 Filtro ZeroPhase Butterworth (delay < 30ms)
         const zeroPhaseFiltered = this.zeroPhaseFilter.filter(fusedResult.value);

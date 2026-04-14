@@ -11,27 +11,29 @@ export function isStrictHemoglobinSkinContact(
   textureScore: number
 ): boolean {
   if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return false;
-  if (r < 26 || r > 250) return false;
-  if (textureScore < 0.17 || textureScore > 0.9) return false;
+  // RELAJADO: Permitir rango más amplio de intensidad
+  if (r < 15 || r > 255) return false;
+  // RELAJADO: Permitir más variación de textura
+  if (textureScore < 0.12 || textureScore > 0.95) return false;
 
   const mx = Math.max(r, g, b);
   const mn = Math.min(r, g, b);
   const sat = mx > 0 ? (mx - mn) / mx : 0;
-  if (sat > 0.86) return false;
-  if (sat < 0.055) return false;
+  // RELAJADO: Permitir más saturación (piel real varía)
+  if (sat > 0.95) return false;
+  if (sat < 0.03) return false;
 
-  if (!(r >= g * 0.9 && r >= b * 1.03)) return false;
-  if (g < b * 0.74) return false;
-  if (b > g * 1.06) return false;
-
+  // RELAJADO: R debe ser dominante pero no tanto
+  if (!(r >= g * 0.75 && r >= b * 0.85)) return false;
+  
   const t = r + g + b + 1e-6;
   const rr = r / t;
-  if (rr < 0.31 || rr > 0.6) return false;
+  // RELAJADO: Rango más amplio para tonos de piel diversos
+  if (rr < 0.25 || rr > 0.70) return false;
 
   const rg = r / (g + 1);
-  const gb = g / (b + 1e-6);
-  if (rg < 0.92 || rg > 3.05) return false;
-  if (gb < 0.95 || gb > 2.15) return false;
+  // RELAJADO: Rango más amplio para R/G ratio
+  if (rg < 0.70 || rg > 4.0) return false;
 
   return true;
 }

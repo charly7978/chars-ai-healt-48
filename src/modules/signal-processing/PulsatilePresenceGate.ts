@@ -57,8 +57,8 @@ export class PulsatilePresenceGate {
     if (this.buf.length > this.maxLen) this.buf.shift();
 
     const n = this.buf.length;
-    // ≥2,4 s a 30 fps: varios ciclos cardíacos reales (reduce FP por ruido/flicker)
-    if (n < 72) {
+    // RELAJADO: ≥1.2 s a 30 fps para detección más rápida (36 samples)
+    if (n < 36) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
@@ -68,20 +68,23 @@ export class PulsatilePresenceGate {
     const sd = stdev(this.buf);
     const pi = sd / dc;
 
-    if (pi < 0.0034) {
+    // RELAJADO: Perfusion Index mínimo reducido
+    if (pi < 0.002) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
     const det = this.detrendMovingAverage(this.buf, Math.max(9, Math.round(this.sampleRateHz * 0.32)));
     const noise = stdev(det);
-    if (noise < 0.22) {
+    // RELAJADO: Noise threshold reducido
+    if (noise < 0.15) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
     const peaks = this.findPeaks(det, Math.max(0.38 * noise, 0.18));
-    if (peaks.length < 4) {
+    // RELAJADO: Solo 2 picos necesarios para inicio rápido
+    if (peaks.length < 2) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
@@ -92,13 +95,15 @@ export class PulsatilePresenceGate {
     }
 
     const medI = median(intervals);
-    if (medI < 9 || medI > 52) {
+    // RELAJADO: Rango más amplio para intervalos (30-200 BPM)
+    if (medI < 6 || medI > 60) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
 
     const cv = stdev(intervals) / (medI + 1e-6);
-    if (cv > 0.36) {
+    // RELAJADO: Permitir más variabilidad (arritmias normales)
+    if (cv > 0.45) {
       this.consecutiveMiss++;
       return this.latchedFalse();
     }
@@ -106,7 +111,8 @@ export class PulsatilePresenceGate {
     this.consecutiveHits++;
     this.consecutiveMiss = 0;
 
-    return this.consecutiveHits >= 3;
+    // RELAJADO: Solo 2 hits consecutivos para activar
+    return this.consecutiveHits >= 2;
   }
 
   private latchedFalse(): boolean {

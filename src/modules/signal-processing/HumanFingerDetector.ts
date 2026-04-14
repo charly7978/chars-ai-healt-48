@@ -169,14 +169,14 @@ export class HumanFingerDetector {
     const absorptionPattern = (expectedR + expectedB) / (expectedG + 1);
     const biophysicalScore = Math.min(1.0, Math.max(0, absorptionPattern / 2.5));
     
-    // Coherencia óptica - patrones característicos de tejido vivo
+    // Coherencia óptica - RELAJADO para más tonos de piel
     const redDominance = r / total;
-    const opticalCoherence = (redDominance >= 0.28 && redDominance <= 0.48) ? 1.0 : 
-                            Math.max(0, 1 - Math.abs(redDominance - 0.38) * 3);
+    const opticalCoherence = (redDominance >= 0.20 && redDominance <= 0.65) ? 1.0 : 
+                            Math.max(0, 1 - Math.abs(redDominance - 0.42) * 2);
     
-    // Validación de color de piel humana
-    const skinColorValid = redDominance >= 0.23 && redDominance <= 0.58 && 
-                          biophysicalScore >= 0.24 && opticalCoherence >= 0.34;
+    // Validación de color de piel humana - RELAJADO
+    const skinColorValid = redDominance >= 0.18 && redDominance <= 0.75 && 
+                          biophysicalScore >= 0.15 && opticalCoherence >= 0.25;
     
     return {
       biophysicalScore,
@@ -202,9 +202,9 @@ export class HumanFingerDetector {
     const pulsatility = this.calculatePulsatility();
     const bloodFlowIndicator = Math.min(1.0, pulsatility * perfusionIndex / 2);
     
-    // Validación de perfusión más permisiva para dedos reales
-    const perfusionValid = perfusionIndex >= 0.12 && perfusionIndex <= 22.0 && 
-                          bloodFlowIndicator >= 0.06;
+    // Validación de perfusión RELAJADA para inicio rápido
+    const perfusionValid = perfusionIndex >= 0.05 && perfusionIndex <= 35.0 && 
+                          bloodFlowIndicator >= 0.03;
     
     return {
       perfusionIndex: Math.max(0, perfusionIndex),
@@ -235,9 +235,7 @@ export class HumanFingerDetector {
   private calculatePulsatility(): number {
     if (this.temporalAnalysisBuffer.length < 20) return 0.1;
     
-    const values = this.temporalAnalysisBuffer
-      .slice(-20)
-      .map(item => item.redValue);
+    const values = this.temporalAnalysisBuffer.slice(-20).map(item => item.redValue);
     
     let peakCount = 0;
     for (let i = 2; i < values.length - 2; i++) {
@@ -403,14 +401,15 @@ export class HumanFingerDetector {
    * DECISIÓN FINAL DE DETECCIÓN HUMANA
    */
   private makeHumanFingerDecision(confidence: number): boolean {
-    let threshold = 0.40;
+    // RELAJADO: Umbral base más bajo para detectar más fácilmente
+    let threshold = 0.28;
     
     if (Date.now() - this.lastValidHumanTime < 6000) {
-      threshold = 0.32;
+      threshold = 0.22; // Más permisivo si ya detectamos antes
     }
     
-    if (this.consecutiveNonHumanDetections > 28) {
-      threshold = 0.48;
+    if (this.consecutiveNonHumanDetections > 20) {
+      threshold = 0.38; // Menos estricto después de fallos
     }
     
     return confidence >= threshold;
