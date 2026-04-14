@@ -419,7 +419,16 @@ const Index = () => {
 
   // PROCESAMIENTO ÚNICO DE SEÑALES
   useEffect(() => {
-    if (!lastSignal) return;
+    if (!lastSignal) {
+      // DEBUG: Verificar si lastSignal es null
+      console.log(`⏳ lastSignal es null/undefined - isMonitoring=${isMonitoring}, isProcessing=${isProcessing}`);
+      return;
+    }
+
+    // DEBUG: Log cada señal recibida
+    if (lastSignal.quality > 0 || lastSignal.fingerDetected) {
+      console.log(`✅ SEÑAL RECIBIDA: quality=${lastSignal.quality}, finger=${lastSignal.fingerDetected}, fps=${framesProcessed}`);
+    }
 
     setSignalQuality(lastSignal.quality);
     

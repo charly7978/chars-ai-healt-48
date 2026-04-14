@@ -200,10 +200,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   processFrame(imageData: ImageData): void {
-    if (!this.isProcessing || !this.onSignalReady) return;
+    // DEBUG: Verificar por qué no se procesa
+    if (!this.isProcessing) {
+      if (this.frameCount % 60 === 0) console.log(`⛔ PPG: isProcessing=false`);
+      return;
+    }
+    if (!this.onSignalReady) {
+      if (this.frameCount % 60 === 0) console.log(`⛔ PPG: onSignalReady undefined`);
+      return;
+    }
 
     try {
       this.frameCount = (this.frameCount + 1) % 10000;
+      
+      // DEBUG: Log cada 60 frames cuando se está procesando
+      if (this.frameCount % 60 === 0) {
+        console.log(`✅ PPG processFrame ejecutando - frame ${this.frameCount}`);
+      }
       
       // 1. Extracción optimizada
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
