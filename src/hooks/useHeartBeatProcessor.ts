@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
 import type { HeartBeatProcessInputFull, HeartBeatProcessOutput } from '../modules/heartbeat/types';
 import type { ProcessedSignal } from '../types/signal';
+import type { ArrhythmiaResult } from '../modules/signal-processing/ArrhythmiaDetector';
 
 export interface HeartBeatResult extends HeartBeatProcessOutput {
   arrhythmiaCount: number;
@@ -34,6 +35,7 @@ export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
   const [signalQuality, setSignalQuality] = useState<number>(0);
   const [lastRich, setLastRich] = useState<HeartBeatProcessOutput | null>(null);
+  const [arrhythmiaResult, setArrhythmiaResult] = useState<ArrhythmiaResult | null>(null);
 
   const sessionIdRef = useRef<string>('');
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
@@ -111,6 +113,12 @@ export const useHeartBeatProcessor = () => {
       setLastRich(result);
       setSignalQuality(result.sqi ?? 0);
 
+      // Actualizar resultado de arritmia
+      if (processedSignalsRef.current % 5 === 0) {
+        const arrhythmia = processorRef.current.getArrhythmiaResult();
+        setArrhythmiaResult(arrhythmia);
+      }
+
       if (processedSignalsRef.current % 120 === 0) {
         console.log('[HB]', result.bpm, 'bpmConf', result.bpmConfidence?.toFixed(2), 'beatSQI', result.beatSQI);
       }
@@ -129,6 +137,7 @@ export const useHeartBeatProcessor = () => {
     processorRef.current?.reset();
     setSignalQuality(0);
     setLastRich(null);
+    setArrhythmiaResult(null);
     processedSignalsRef.current = 0;
     processingStateRef.current = 'ACTIVE';
   }, []);
@@ -145,6 +154,7 @@ export const useHeartBeatProcessor = () => {
     reset,
     setArrhythmiaState,
     lastHeartBeatOutput: lastRich,
+    arrhythmiaResult,
     debugInfo: {
       sessionId: sessionIdRef.current,
       processingState: processingStateRef.current,

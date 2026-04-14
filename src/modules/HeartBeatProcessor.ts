@@ -201,8 +201,8 @@ export class HeartBeatProcessor {
     return this.lastProcessResult;
   }
 
-  getTechnicalDebug(filteredValue: number, ctx: HeartBeatProcessContext): HeartBeatDebugSnapshot {
-    return this.engine.peekLastDebug(filteredValue, ctx);
+  getArrhythmiaResult(): ArrhythmiaResult | null {
+    return this.engine.getArrhythmiaResult();
   }
 
   reset(): void {

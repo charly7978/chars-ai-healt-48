@@ -1,4 +1,5 @@
 import { TimeSeriesRing } from './TimeSeriesRing';
+import { ArrhythmiaDetector, ArrhythmiaResult } from '../signal-processing/ArrhythmiaDetector';
 import {
   AcceptedBeat,
   BeatCandidate,
@@ -83,6 +84,9 @@ export class HeartBeatEngine {
   private suspiciousCount = 0;
   private prematureCount = 0;
 
+  private arrhythmiaDetector = new ArrhythmiaDetector();
+  private lastArrhythmiaResult: ArrhythmiaResult | null = null;
+
   private lastPeakOutput = false;
   private lastCandidate: BeatCandidate | null = null;
   private lastRejection: RejectionReason = 'none';
@@ -153,6 +157,8 @@ export class HeartBeatEngine {
     this.lastDedupNorm = NaN;
     this.derivState = { prevNorm: 0, prevTs: 0, maxUpslope: 0, upslopeStartTs: 0, inUpslope: false };
     this.startWallMs = typeof performance !== 'undefined' ? performance.now() : 0;
+    this.arrhythmiaDetector.reset();
+    this.lastArrhythmiaResult = null;
   }
 
   process(
@@ -403,6 +409,9 @@ export class HeartBeatEngine {
       if (ibi > 200 && ibi < 2200) {
         this.pushRr(ibi);
         this.ibiInstant = ibi;
+        
+        // Agregar intervalo RR al detector de arritmias
+        this.arrhythmiaDetector.addRRInterval(ibi);
       }
     }
 
@@ -432,6 +441,11 @@ export class HeartBeatEngine {
 
     if (flags.includes('premature')) this.prematureCount++;
     if (flags.includes('suspicious')) this.suspiciousCount++;
+
+    // Analizar arritmias periódicamente
+    if (this.sessionAccepted % 5 === 0) {
+      this.lastArrhythmiaResult = this.arrhythmiaDetector.analyze();
+    }
 
     this.lastCandidate = cand;
   }
@@ -1037,7 +1051,7 @@ export class HeartBeatEngine {
     return this.rrSlice();
   }
 
-  peekLastDebug(filteredValue: number, ctx: HeartBeatProcessContext): HeartBeatDebugSnapshot {
-    return this.buildOutput(filteredValue, ctx, false).debug;
+  getArrhythmiaResult(): ArrhythmiaResult | null {
+    return this.lastArrhythmiaResult;
   }
 }

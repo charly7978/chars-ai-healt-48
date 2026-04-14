@@ -38,6 +38,7 @@ const Index = () => {
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [showDebug, setShowDebug] = useState(false);
   const [cameraDiag, setCameraDiag] = useState<CameraDiagnostics | null>(null);
+  const [arrhythmiaDetected, setArrhythmiaDetected] = useState(false);
 
   // ═══ REFS ═══
   const measurementTimerRef = useRef<number | null>(null);
@@ -250,6 +251,7 @@ const Index = () => {
     lastArrhythmiaData.current = null;
     setCalibrationProgress(0);
     arrhythmiaDetectedRef.current = false;
+    setArrhythmiaDetected(false);
     systemState.current = 'IDLE';
   };
 
@@ -363,6 +365,21 @@ const Index = () => {
     return () => clearInterval(interval);
   }, [isCalibrating, getCalibrationProgress]);
 
+  // Arrhythmia detection from new ArrhythmiaDetector
+  useEffect(() => {
+    if (!arrhythmiaResult || !lastHeartBeatOutput || lastHeartBeatOutput.bpm <= 0) return;
+    
+    if (arrhythmiaResult.type !== 'NORMAL' && arrhythmiaResult.confidence > 0.5) {
+      setArrhythmiaDetected(true);
+      if (arrhythmiaResult.type === 'AFIB' || arrhythmiaResult.type === 'IRREGULAR') {
+        setArrhythmiaState(true);
+      }
+    } else if (arrhythmiaResult.type === 'NORMAL') {
+      setArrhythmiaDetected(false);
+      setArrhythmiaState(false);
+    }
+  }, [arrhythmiaResult, lastHeartBeatOutput, setArrhythmiaState]);
+
   const handleToggleMonitoring = () => {
     if (isMonitoring) finalizeMeasurement();
     else startMonitoring();
@@ -434,6 +451,16 @@ const Index = () => {
                   <div>ClipH: {(ppgDiagnostics.clipHigh * 100).toFixed(1)}% | ClipL: {(ppgDiagnostics.clipLow * 100).toFixed(1)}% | Pressure: {ppgDiagnostics.pressureScore.toFixed(2)}</div>
                   <div>Guidance: {ppgDiagnostics.guidanceMessage}</div>
                 </>
+              )}
+              {arrhythmiaResult && (
+                <div className="border-t border-red-500/50 pt-1 mt-1 text-red-400/95">
+                  <div className="text-white/90 font-semibold">ARRITMIA DETECTADA</div>
+                  <div>Type: {arrhythmiaResult.type} | Conf: {(arrhythmiaResult.confidence * 100).toFixed(0)}% | AFib Prob: {(arrhythmiaResult.afibProbability * 100).toFixed(0)}%</div>
+                  <div>RMSSD: {arrhythmiaResult.hrvMetrics.rmssd.toFixed(1)}ms | SDNN: {arrhythmiaResult.hrvMetrics.sdnn.toFixed(1)}ms | CV: {arrhythmiaResult.hrvMetrics.cv.toFixed(1)}%</div>
+                  <div>SD1: {arrhythmiaResult.poincaréMetrics.sd1.toFixed(1)}ms | SD2: {arrhythmiaResult.poincaréMetrics.sd2.toFixed(1)}ms | SD1/SD2: {arrhythmiaResult.poincaréMetrics.sd1Sd2Ratio.toFixed(2)}</div>
+                  <div>Entropy: {arrhythmiaResult.hrvMetrics.shannonEntropy.toFixed(2)} | pNN50: {arrhythmiaResult.hrvMetrics.pnn50.toFixed(1)}%</div>
+                  <div>Guidance: {arrhythmiaResult.guidance}</div>
+                </div>
               )}
               {lastHeartBeatOutput && (
                 <div className="border-t border-white/10 pt-1 mt-1 text-amber-300/95">
