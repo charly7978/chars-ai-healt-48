@@ -1,195 +1,154 @@
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
+import type { HeartBeatProcessInputFull, HeartBeatProcessOutput } from '../modules/heartbeat/types';
+import type { ProcessedSignal } from '../types/signal';
 
-interface HeartBeatResult {
-  bpm: number;
-  confidence: number;
-  isPeak: boolean;
+export interface HeartBeatResult extends HeartBeatProcessOutput {
   arrhythmiaCount: number;
   signalQuality: number;
-  rrData?: {
-    intervals: number[];
-    lastPeakTime: number | null;
+}
+
+function buildHbInputFromProcessed(signal: ProcessedSignal): HeartBeatProcessInputFull {
+  return {
+    filteredValue: signal.filteredValue,
+    rawValue: signal.rawValue,
+    timestamp: signal.timestamp,
+    upstreamSqi: signal.quality,
+    contactState: signal.contactState,
+    fingerDetected: signal.fingerDetected,
+    perfusionIndex: signal.perfusionIndex,
+    pressureState: signal.pressureState,
+    clipHighRatio: signal.clipHighRatio,
+    clipLowRatio: signal.clipLowRatio,
+    activeSource: signal.activeSource,
+    motionArtifact: signal.motionArtifact,
+    positionDrifting: signal.positionDrifting,
+    maskStability: signal.maskStability,
   };
 }
 
 /**
- * HOOK COMPLETAMENTE UNIFICADO DE PROCESAMIENTO CARDÍACO - ELIMINADAS TODAS LAS DUPLICIDADES
- * Sistema matemático avanzado con algoritmos de detección de latidos de vanguardia
+ * Procesamiento cardíaco: delega en HeartBeatProcessor (fusión BPM y SQI por latido separados).
  */
 export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
-  const [currentBPM, setCurrentBPM] = useState<number>(0);
-  const [confidence, setConfidence] = useState<number>(0);
   const [signalQuality, setSignalQuality] = useState<number>(0);
-  
-  // CONTROL UNIFICADO DE ESTADO
-  const sessionIdRef = useRef<string>("");
+  const [lastRich, setLastRich] = useState<HeartBeatProcessOutput | null>(null);
+
+  const sessionIdRef = useRef<string>('');
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
-  const lastProcessTimeRef = useRef<number>(0);
   const processedSignalsRef = useRef<number>(0);
 
-  // INICIALIZACIÓN UNIFICADA - UNA SOLA VEZ
   useEffect(() => {
-    // GENERAR SESSION ID sin aleatoriedad
     const t = Date.now().toString(36);
     const p = (performance.now() | 0).toString(36);
     sessionIdRef.current = `heartbeat_${t}_${p}`;
 
-    console.log(`💓 CREANDO PROCESADOR CARDÍACO UNIFICADO - ${sessionIdRef.current}`);
-    
-    processorRef.current = new HeartBeatProcessor();
+    const proc = new HeartBeatProcessor();
+    processorRef.current = proc;
     processingStateRef.current = 'ACTIVE';
-    
+    if (typeof window !== 'undefined') {
+      window.heartBeatProcessor = proc;
+    }
+
     return () => {
-      console.log(`💓 DESTRUYENDO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
-      if (processorRef.current) {
-        processorRef.current = null;
+      if (typeof window !== 'undefined') {
+        delete (window as unknown as { heartBeatProcessor?: HeartBeatProcessor }).heartBeatProcessor;
       }
+      processorRef.current = null;
       processingStateRef.current = 'IDLE';
     };
   }, []);
 
-  // PROCESAMIENTO UNIFICADO DE SEÑAL - ELIMINADAS DUPLICIDADES
-  const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
-    if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
-      const fallbackBPM = Math.round(
-        (processorRef.current && typeof (processorRef.current as any).getSmoothBPM === 'function')
-          ? (processorRef.current as any).getSmoothBPM()
-          : 0
-      );
-      return {
-        bpm: fallbackBPM,
-        confidence: 0,
-        isPeak: false,
-        arrhythmiaCount: 0,
-        signalQuality: 0,
-        rrData: { intervals: [], lastPeakTime: null }
-      };
-    }
-
-    const currentTime = Date.now();
-    
-    // CONTROL DE TASA DE PROCESAMIENTO PARA EVITAR SOBRECARGA
-    if (currentTime - lastProcessTimeRef.current < 16) { // ~60 FPS máximo
-      return {
-        bpm: currentBPM,
-        confidence,
-        isPeak: false,
-        arrhythmiaCount: 0,
-        signalQuality,
-        rrData: { intervals: [], lastPeakTime: null }
-      };
-    }
-    
-    lastProcessTimeRef.current = currentTime;
-    processedSignalsRef.current++;
-
-    // PROCESAMIENTO MATEMÁTICO AVANZADO DIRECTO
-    const result = processorRef.current.processSignal(value, timestamp);
-    const rrData = processorRef.current.getRRIntervals();
-    const currentQuality = result.signalQuality || 0;
-    
-    setSignalQuality(currentQuality);
-
-    // LÓGICA UNIFICADA DE DETECCIÓN CON ALGORITMOS AVANZADOS
-    const effectiveFingerDetected = fingerDetected || (currentQuality > 20 && result.confidence > 0.45);
-    
-    if (!effectiveFingerDetected) {
-      // DEGRADACIÓN SUAVE Y CONTROLADA
-      if (currentBPM > 0) {
-        const newBPM = Math.max(0, currentBPM * 0.96); // Degradación más suave
-        const newConfidence = Math.max(0, confidence * 0.92);
-        
-        setCurrentBPM(newBPM);
-        setConfidence(newConfidence);
+  /**
+   * Forma recomendada: `processSignal(lastSignal)` con `ProcessedSignal` completo.
+   * Compatibilidad: `processSignal(value, fingerDetected, timestamp)`.
+   */
+  const processSignal = useCallback(
+    (
+      signalOrValue: ProcessedSignal | number,
+      fingerDetected: boolean = true,
+      timestamp?: number
+    ): HeartBeatResult => {
+      if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
+        const proc = processorRef.current;
+        const fb = proc?.getSmoothBPM() ?? 0;
+        return {
+          bpm: fb,
+          bpmConfidence: 0,
+          confidence: 0,
+          isPeak: false,
+          filteredValue: typeof signalOrValue === 'number' ? signalOrValue : signalOrValue.filteredValue,
+          sqi: 0,
+          beatSQI: null,
+          arrhythmiaCount: 0,
+          signalQuality: 0,
+          rrData: { intervals: [], lastPeakTime: null, lastIbiMs: null },
+          activeHypothesis: 'medianIbi',
+          detectorAgreement: 0,
+          rejectionReason: 'none',
+          beatFlags: [],
+          lastAcceptedBeat: null,
+          debug: {} as HeartBeatProcessOutput['debug'],
+        };
       }
-      
-      return {
-        bpm: currentBPM,
-        confidence: Math.max(0, confidence * 0.92),
-        isPeak: false,
-        arrhythmiaCount: 0,
-        signalQuality: currentQuality,
-        rrData: { intervals: [], lastPeakTime: null }
-      };
-    }
 
-    // ACTUALIZACIÓN CON CONFIANZA MATEMÁTICAMENTE VALIDADA
-    if (result.confidence >= 0.55 && result.bpm > 0 && result.bpm >= 40 && result.bpm <= 200) {
-      // FILTRADO ADAPTATIVO PARA ESTABILIDAD
-      const smoothingFactor = Math.min(0.3, result.confidence * 0.5);
-      const newBPM = currentBPM > 0 ? 
-        currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
-        result.bpm;
-      
-      setCurrentBPM(Math.round(newBPM * 10) / 10); // Redondeo a 1 decimal
-      setConfidence(result.confidence);
-      
-      // LOG CADA 100 SEÑALES PROCESADAS PARA EVITAR SPAM
-      if (processedSignalsRef.current % 100 === 0) {
-        console.log(`💓 BPM actualizado: ${newBPM.toFixed(1)} (confianza: ${result.confidence.toFixed(2)}) - ${sessionIdRef.current}`);
+      processedSignalsRef.current++;
+
+      let result: HeartBeatResult;
+
+      if (typeof signalOrValue === 'object' && signalOrValue !== null && 'filteredValue' in signalOrValue) {
+        const input = buildHbInputFromProcessed(signalOrValue);
+        result = processorRef.current.processSignal(input) as HeartBeatResult;
+      } else {
+        result = processorRef.current.processSignal(
+          signalOrValue as number,
+          fingerDetected,
+          timestamp
+        ) as HeartBeatResult;
       }
-    }
 
-    return {
-      ...result,
-      bpm: currentBPM,
-      confidence,
-      signalQuality: currentQuality,
-      rrData
-    };
-  }, [currentBPM, confidence, signalQuality]);
+      setLastRich(result);
+      setSignalQuality(result.sqi ?? 0);
 
-  // RESET UNIFICADO COMPLETAMENTE LIMPIO
+      if (processedSignalsRef.current % 120 === 0) {
+        console.log('[HB]', result.bpm, 'bpmConf', result.bpmConfidence?.toFixed(2), 'beatSQI', result.beatSQI);
+      }
+
+      return {
+        ...result,
+        signalQuality: result.sqi ?? 0,
+      };
+    },
+    []
+  );
+
   const reset = useCallback(() => {
     if (processingStateRef.current === 'RESETTING') return;
-    
     processingStateRef.current = 'RESETTING';
-    console.log(`🔄 RESET COMPLETO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
-    
-    if (processorRef.current) {
-      processorRef.current.reset();
-    }
-    
-    // RESET COMPLETO DE TODOS LOS ESTADOS
-    setCurrentBPM(0);
-    setConfidence(0);
+    processorRef.current?.reset();
     setSignalQuality(0);
-    
-    // RESET DE CONTADORES INTERNOS
-    lastProcessTimeRef.current = 0;
+    setLastRich(null);
     processedSignalsRef.current = 0;
-    
     processingStateRef.current = 'ACTIVE';
-    console.log(`✅ Reset cardíaco completado - ${sessionIdRef.current}`);
   }, []);
 
-  // CONFIGURACIÓN UNIFICADA DE ESTADO DE ARRITMIA
   const setArrhythmiaState = useCallback((isArrhythmiaDetected: boolean) => {
-    if (processorRef.current && processingStateRef.current === 'ACTIVE') {
-      processorRef.current.setArrhythmiaDetected(isArrhythmiaDetected);
-      
-      if (isArrhythmiaDetected) {
-        console.log(`⚠️ Arritmia activada en procesador - ${sessionIdRef.current}`);
-      }
-    }
+    processorRef.current?.setArrhythmiaDetected(isArrhythmiaDetected);
   }, []);
 
-  // RETORNO UNIFICADO DEL HOOK
   return {
-    currentBPM,
-    confidence,
+    currentBPM: lastRich?.bpm ?? 0,
+    confidence: lastRich?.bpmConfidence ?? 0,
     signalQuality,
     processSignal,
     reset,
     setArrhythmiaState,
-    // DEBUG INFO
+    lastHeartBeatOutput: lastRich,
     debugInfo: {
       sessionId: sessionIdRef.current,
       processingState: processingStateRef.current,
-      processedSignals: processedSignalsRef.current
-    }
+      processedSignals: processedSignalsRef.current,
+    },
   };
 };

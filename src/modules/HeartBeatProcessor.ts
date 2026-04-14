@@ -1,868 +1,215 @@
-import { KalmanFilter } from './signal-processing/KalmanFilter';
+import { HeartBeatEngine } from './heartbeat/HeartBeatEngine';
+import type {
+  HeartBeatDebugSnapshot,
+  HeartBeatProcessContext,
+  HeartBeatProcessInputFull,
+  HeartBeatProcessOutput,
+} from './heartbeat/types';
 
+export type {
+  AcceptedBeat,
+  BeatCandidate,
+  BeatFlag,
+  BPMFusionState,
+  BPMHypothesis,
+  HeartBeatDebugSnapshot,
+  HeartBeatProcessContext,
+  HeartBeatProcessInputFull,
+  HeartBeatProcessOutput,
+} from './heartbeat/types';
+
+/**
+ * Procesador de latidos PPG: capa de E/S + audio + compatibilidad.
+ * La lógica de picos, fusión BPM y SQI por latido vive en HeartBeatEngine.
+ */
 export class HeartBeatProcessor {
-  // ────────── CONFIGURACIONES MÁS ESTRICTAS PARA REDUCIR FALSOS POSITIVOS ──────────
-  private readonly DEFAULT_SAMPLE_RATE = 60;
-  private readonly DEFAULT_WINDOW_SIZE = 40;
-  private readonly DEFAULT_MIN_BPM = 35; // Aumentado para filtrar ruido
-  private readonly DEFAULT_MAX_BPM = 200; // Reducido para rango más realista
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.045; // Más sensible manteniendo precisión
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.6; // Leve relajación
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.007; // Un poco menos estricto
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
-  private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
+  private readonly engine: HeartBeatEngine;
 
-  // Parámetros de filtrado MÁS CONSERVADORES
-  private readonly MEDIAN_FILTER_WINDOW = 3;
-  private readonly MOVING_AVERAGE_WINDOW = 5; // Aumentado para mejor filtrado de ruido
-  private readonly EMA_ALPHA = 0.4; // Reducido para más suavizado
-  private readonly BASELINE_FACTOR = 0.85; // Aumentado para seguimiento más estable
+  private readonly SIGNAL_BOOST_FACTOR = 1.25;
+  private recentForBoost: Float32Array;
+  private boostIdx = 0;
+  private readonly BOOST_WIN = 16;
 
-  // Parámetros de beep más estrictos
-  private readonly BEEP_DURATION = 450; 
-  private readonly BEEP_VOLUME = 1.0;
-  private readonly MIN_BEEP_INTERVAL_MS = 700; // Aumentado para evitar beeps excesivos
-  private readonly VIBRATION_PATTERN = [40, 20, 60];
-
-  // AUTO-RESET más agresivo para falsos positivos
-  private readonly LOW_SIGNAL_THRESHOLD = 0.02; // Umbral más alto
-  private readonly LOW_SIGNAL_FRAMES = 15; // Reducido para reset más rápido
-  private lowSignalCount = 0;
-
-  // ────────── PARÁMETROS ADAPTATIVOS MÉDICAMENTE VÁLIDOS ──────────
-  private adaptiveSignalThreshold: number;
-  private adaptiveMinConfidence: number;
-  private adaptiveDerivativeThreshold: number;
-
-  // Límites MÁS ESTRICTOS para parámetros adaptativos
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.08; // Permitir detección en señales más débiles
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.35; // Reducido
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.55; // Aumentado para mayor exigencia
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85; // Reducido el máximo
-  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.06; // Más estricto
-  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
-
-  // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
-  private readonly SIGNAL_BOOST_FACTOR = 1.4; // Reducido para evitar amplificar ruido
-  private readonly PEAK_DETECTION_SENSITIVITY = 0.35; // Ligeramente más sensible
-  
-  // Control del auto-ajuste más estricto
-  private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 15; // Aumentado para más estabilidad
-  private readonly ADAPTIVE_TUNING_LEARNING_RATE = 0.15; // Reducido para cambios más graduales
-  
-  // Variables internas
-  private recentPeakAmplitudes: number[] = [];
-  private recentPeakConfidences: number[] = [];
-  private recentPeakDerivatives: number[] = [];
-  private peaksSinceLastTuning = 0;
-  private signalBuffer: number[] = [];
-  private medianBuffer: number[] = [];
-  private movingAverageBuffer: number[] = [];
-  private smoothedValue: number = 0;
   private audioContext: AudioContext | null = null;
-  private heartSoundOscillator: OscillatorNode | null = null;
   private lastBeepTime = 0;
-  private lastPeakTime: number | null = null;
-  private previousPeakTime: number | null = null;
-  private bpmHistory: number[] = [];
-  private baseline: number = 0;
-  private lastValue: number = 0;
-  private values: number[] = [];
-  private startTime: number = 0;
-  private peakConfirmationBuffer: number[] = [];
-  private lastConfirmedPeak: boolean = false;
-  private smoothBPM: number = 0;
-  private readonly BPM_ALPHA = 0.3; // Restaurado para suavizado apropiado
-  private peakCandidateIndex: number | null = null;
-  private peakCandidateValue: number = 0;
-  private isArrhythmiaDetected: boolean = false;
-  
-  // Variables para VALIDACIÓN MÁS ESTRICTA de picos
-  private peakValidationBuffer: number[] = [];
-  private readonly PEAK_VALIDATION_THRESHOLD = 0.5; // AUMENTADO para validación más estricta
-  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.5; // AUMENTADO
-  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.4; // AUMENTADO  
-  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.3; // AUMENTADO para filtrar picos pequeños
-  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.006; // Más estricto
-  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.9; // AUMENTADO para mayor estabilidad
-  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 7; // Aumentado para mejor confirmación
-  private lastSignalStrength: number = 0;
-  private recentSignalStrengths: number[] = [];
-  private readonly SIGNAL_STRENGTH_HISTORY = 30;
-  
-  // Nueva variable para retroalimentación de calidad de señal
-  private currentSignalQuality: number = 0;
+  private readonly MIN_BEEP_INTERVAL_MS = 520;
+  private readonly VIBRATION_PATTERN = [36, 18, 52];
 
-  private kalmanFilterInstance: KalmanFilter; // Instancia del filtro de Kalman
+  private isArrhythmiaDetected = false;
+
+  private lastProcessResult: HeartBeatProcessOutput | null = null;
 
   constructor() {
-    // Inicializar parámetros adaptativos con valores médicamente apropiados
-    this.adaptiveSignalThreshold = this.DEFAULT_SIGNAL_THRESHOLD;
-    this.adaptiveMinConfidence = this.DEFAULT_MIN_CONFIDENCE;
-    this.adaptiveDerivativeThreshold = this.DEFAULT_DERIVATIVE_THRESHOLD;
-
+    this.engine = new HeartBeatEngine(220);
+    this.recentForBoost = new Float32Array(this.BOOST_WIN);
     this.initAudio();
-    this.startTime = Date.now();
-    this.kalmanFilterInstance = new KalmanFilter(); // Inicializar la instancia del filtro de Kalman
   }
 
-  private async initAudio() {
+  private async initAudio(): Promise<void> {
     try {
       this.audioContext = new AudioContext();
       await this.audioContext.resume();
-      console.log("HeartBeatProcessor: Audio Context Initialized and resumed");
-      
-      // Reproducir un sonido de prueba audible para desbloquear el audio
-      await this.playTestSound(0.3); // Volumen incrementado
-    } catch (error) {
-      console.error("HeartBeatProcessor: Error initializing audio", error);
+    } catch {
+      /* noop */
     }
   }
 
-  private async playTestSound(volume: number = 0.2) {
-    if (!this.audioContext) return;
-    
-    try {
-      // console.log("HeartBeatProcessor: Reproduciendo sonido de prueba");
-      const oscillator = this.audioContext.createOscillator();
-      const gain = this.audioContext.createGain();
-      
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(440, this.audioContext.currentTime); // Frecuencia A4 - claramente audible
-      
-      gain.gain.setValueAtTime(0, this.audioContext.currentTime);
-      gain.gain.linearRampToValueAtTime(volume, this.audioContext.currentTime + 0.1);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.5);
-      
-      oscillator.connect(gain);
-      gain.connect(this.audioContext.destination);
-      
-      oscillator.start();
-      oscillator.stop(this.audioContext.currentTime + 0.6);
-      
-      // console.log("HeartBeatProcessor: Sonido de prueba reproducido");
-    } catch (error) {
-      console.error("HeartBeatProcessor: Error playing test sound", error);
+  /**
+   * Procesa una muestra. Acepta forma legacy (valor, dedo, timestamp) u objeto rico del pipeline.
+   */
+  processSignal(
+    input: number | HeartBeatProcessInputFull,
+    fingerDetected: boolean = true,
+    timestamp?: number
+  ): HeartBeatProcessOutput & {
+    arrhythmiaCount: number;
+    signalQuality?: number;
+  } {
+    let filteredValue: number;
+    let ts: number;
+    let ctx: HeartBeatProcessContext;
+
+    if (typeof input === 'object' && input !== null && 'filteredValue' in input) {
+      filteredValue = input.filteredValue;
+      ts = input.timestamp;
+      ctx = { ...input };
+    } else {
+      const v = input as number;
+      filteredValue = v;
+      ts =
+        typeof timestamp === 'number'
+          ? timestamp
+          : typeof performance !== 'undefined'
+            ? performance.now()
+            : Date.now();
+      ctx = {
+        fingerDetected,
+        upstreamSqi: undefined,
+      };
     }
+
+    const boosted = this.boostSignal(filteredValue);
+    const out = this.engine.process(boosted, ts, ctx);
+    this.lastProcessResult = out;
+
+    if (out.isPeak && !this.engine.isWarmup()) {
+      void this.playHeartSound(1.0, this.isArrhythmiaDetected);
+    }
+
+    return {
+      ...out,
+      arrhythmiaCount: 0,
+      signalQuality: out.sqi,
+    };
   }
 
-  private async playHeartSound(volume: number = this.BEEP_VOLUME, playArrhythmiaTone: boolean) {
-    if (!this.audioContext || this.isInWarmup()) {
-      return;
+  private boostSignal(value: number): number {
+    this.recentForBoost[this.boostIdx % this.BOOST_WIN] = value;
+    this.boostIdx++;
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < Math.min(this.boostIdx, this.BOOST_WIN); i++) {
+      sum += this.recentForBoost[i];
+      n++;
     }
+    const avg = n > 0 ? sum / n : value;
+    const centered = value - avg;
+    return avg + centered * this.SIGNAL_BOOST_FACTOR;
+  }
 
-    const now = Date.now();
-    if (now - this.lastBeepTime < this.MIN_BEEP_INTERVAL_MS) {
-      console.log("HeartBeatProcessor: Ignorando beep - demasiado cerca del anterior", now - this.lastBeepTime);
-      return;
-    }
+  private async playHeartSound(volume: number, playArrhythmiaTone: boolean): Promise<void> {
+    if (!this.audioContext || this.engine.isWarmup()) return;
+    const now =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (now - this.lastBeepTime < this.MIN_BEEP_INTERVAL_MS) return;
 
     try {
-      if (navigator.vibrate) {
-        navigator.vibrate(this.VIBRATION_PATTERN);
-      }
+      if (navigator.vibrate) navigator.vibrate(this.VIBRATION_PATTERN);
 
       const currentTime = this.audioContext.currentTime;
+      const o1 = this.audioContext.createOscillator();
+      const g1 = this.audioContext.createGain();
+      o1.type = 'sine';
+      o1.frequency.value = 150;
+      g1.gain.setValueAtTime(0, currentTime);
+      g1.gain.linearRampToValueAtTime(volume * 1.4, currentTime + 0.03);
+      g1.gain.exponentialRampToValueAtTime(0.001, currentTime + 0.14);
+      o1.connect(g1);
+      g1.connect(this.audioContext.destination);
+      o1.start(currentTime);
+      o1.stop(currentTime + 0.18);
 
-      // Sonidos de latido mejorados - más claramente audibles
-      // LUB - primer sonido del latido
-      const oscillator1 = this.audioContext.createOscillator();
-      const gainNode1 = this.audioContext.createGain();
-      oscillator1.type = 'sine';
-      oscillator1.frequency.value = 150;
-      gainNode1.gain.setValueAtTime(0, currentTime);
-      gainNode1.gain.linearRampToValueAtTime(volume * 1.5, currentTime + 0.03);
-      gainNode1.gain.exponentialRampToValueAtTime(0.001, currentTime + 0.15);
-      oscillator1.connect(gainNode1);
-      gainNode1.connect(this.audioContext.destination);
-      oscillator1.start(currentTime);
-      oscillator1.stop(currentTime + 0.2);
+      const dubStart = currentTime + 0.07;
+      const o2 = this.audioContext.createOscillator();
+      const g2 = this.audioContext.createGain();
+      o2.type = 'sine';
+      o2.frequency.value = 118;
+      g2.gain.setValueAtTime(0, dubStart);
+      g2.gain.linearRampToValueAtTime(volume * 1.35, dubStart + 0.03);
+      g2.gain.exponentialRampToValueAtTime(0.001, dubStart + 0.14);
+      o2.connect(g2);
+      g2.connect(this.audioContext.destination);
+      o2.start(dubStart);
+      o2.stop(dubStart + 0.18);
 
-      // DUB - segundo sonido del latido
-      const oscillator2 = this.audioContext.createOscillator();
-      const gainNode2 = this.audioContext.createGain();
-      const dubStartTime = currentTime + 0.08;
-      oscillator2.type = 'sine';
-      oscillator2.frequency.value = 120;
-      gainNode2.gain.setValueAtTime(0, dubStartTime);
-      gainNode2.gain.linearRampToValueAtTime(volume * 1.5, dubStartTime + 0.03);
-      gainNode2.gain.exponentialRampToValueAtTime(0.001, dubStartTime + 0.15);
-      oscillator2.connect(gainNode2);
-      gainNode2.connect(this.audioContext.destination);
-      oscillator2.start(dubStartTime);
-      oscillator2.stop(dubStartTime + 0.20);
-      
       if (playArrhythmiaTone) {
-        const oscillator3 = this.audioContext.createOscillator();
-        const gainNode3 = this.audioContext.createGain();
-        oscillator3.type = 'sine';
-        oscillator3.frequency.value = 440;
-
-        // El sonido de arritmia ahora suena inmediatamente después de los latidos principales
-        const arrhythmiaSoundStartTime = dubStartTime + 0.05;
-        const arrhythmiaAttackDuration = 0.02;
-        const arrhythmiaSustainDuration = 0.10;
-        const arrhythmiaReleaseDuration = 0.05;
-        const arrhythmiaAttackEndTime = arrhythmiaSoundStartTime + arrhythmiaAttackDuration;
-        const arrhythmiaSustainEndTime = arrhythmiaAttackEndTime + arrhythmiaSustainDuration;
-        const arrhythmiaReleaseEndTime = arrhythmiaSustainEndTime + arrhythmiaReleaseDuration;
-
-        gainNode3.gain.setValueAtTime(0, arrhythmiaSoundStartTime);
-        gainNode3.gain.linearRampToValueAtTime(volume * 0.65, arrhythmiaAttackEndTime);
-        gainNode3.gain.setValueAtTime(volume * 0.65, arrhythmiaSustainEndTime);
-        gainNode3.gain.exponentialRampToValueAtTime(0.001, arrhythmiaReleaseEndTime);
-        oscillator3.connect(gainNode3);
-        gainNode3.connect(this.audioContext.destination);
-        oscillator3.start(arrhythmiaSoundStartTime);
-        oscillator3.stop(arrhythmiaReleaseEndTime + 0.01);
-        
-        // Reseteamos la bandera después de reproducir el sonido de arritmia
+        const o3 = this.audioContext.createOscillator();
+        const g3 = this.audioContext.createGain();
+        o3.type = 'sine';
+        o3.frequency.value = 430;
+        const t0 = dubStart + 0.04;
+        g3.gain.setValueAtTime(0, t0);
+        g3.gain.linearRampToValueAtTime(volume * 0.55, t0 + 0.02);
+        g3.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
+        o3.connect(g3);
+        g3.connect(this.audioContext.destination);
+        o3.start(t0);
+        o3.stop(t0 + 0.14);
         this.isArrhythmiaDetected = false;
       }
-      const interval = now - this.lastBeepTime;
       this.lastBeepTime = now;
-      console.log(`HeartBeatProcessor: Latido reproducido. Intervalo: ${interval} ms, BPM estimado: ${Math.round(this.getSmoothBPM())}`);
-    } catch (error) {
-      console.error("HeartBeatProcessor: Error playing heart sound", error);
+    } catch {
+      /* noop */
     }
   }
 
-  private lastProcessedTimestamp = 0;
-  private lastProcessedValue: number | null = null;
-
-  public processSignal(value: number, timestamp?: number): {
-    bpm: number;
-    confidence: number;
-    isPeak: boolean;
-    filteredValue: number;
-    arrhythmiaCount: number;
-    signalQuality?: number;  // Añadido campo para retroalimentación
-  } {
-    // LIMPIEZA AUTOMÁTICA: Cada 50 frames, limpiar buffers para prevenir degradación
-    if (this.values.length % 50 === 0) {
-      this.cleanupBuffers();
-    }
-    // Deduplicación por timestamp y valor para evitar procesamiento múltiple
-    const currentTimestamp = timestamp || Date.now();
-    if (this.lastProcessedTimestamp === currentTimestamp && this.lastProcessedValue === value) {
-      // Señal duplicada, devolver último resultado sin procesar
-      return {
-        bpm: Math.round(this.getSmoothBPM()),
-        confidence: 0.6,
-        isPeak: false,
-        filteredValue: value,
-        arrhythmiaCount: 0,
-        signalQuality: this.currentSignalQuality
-      };
-    }
-    
-    this.lastProcessedTimestamp = currentTimestamp;
-    this.lastProcessedValue = value;
-    // Aplicar amplificación razonable
-    value = this.boostSignal(value);
-    
-    const medVal = this.medianFilter(value);
-    const movAvgVal = this.calculateMovingAverage(medVal);
-    const smoothed = this.calculateEMA(movAvgVal);
-    
-    // Variable filteredValue definida explícitamente
-    const filteredValue = smoothed;
-
-    this.signalBuffer.push(smoothed);
-    if (this.signalBuffer.length > this.DEFAULT_WINDOW_SIZE) { 
-      this.signalBuffer.shift();
-    }
-
-    if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
-      return {
-        bpm: Math.round(this.getSmoothBPM()),
-        confidence: 0,
-        isPeak: false,
-        filteredValue: filteredValue,
-        arrhythmiaCount: 0,
-        signalQuality: 0
-      };
-    }
-
-    // Baseline tracking
-    this.baseline = this.baseline * this.BASELINE_FACTOR + smoothed * (1 - this.BASELINE_FACTOR);
-    const normalizedValue = smoothed - this.baseline;
-    
-    // Seguimiento de fuerza de señal
-    this.trackSignalStrength(Math.abs(normalizedValue));
-    
-    // Auto-reset con umbral adaptativo para señales débiles
-    this.autoResetIfSignalIsLow(Math.abs(normalizedValue));
-
-    this.values.push(smoothed);
-    if (this.values.length > 3) {
-      this.values.shift();
-    }
-
-    let smoothDerivative = smoothed - this.lastValue;
-    if (this.values.length === 3) {
-      smoothDerivative = (this.values[2] - this.values[0]) / 2;
-    }
-    this.lastValue = smoothed;
-    
-    // Detección de picos médicamente válida
-    const peakDetectionResult = this.enhancedPeakDetection(normalizedValue, smoothDerivative);
-    let isPeak = peakDetectionResult.isPeak;
-    const confidence = peakDetectionResult.confidence;
-    const rawDerivative = peakDetectionResult.rawDerivative;
-    
-    const isConfirmedPeak = this.confirmPeak(isPeak, normalizedValue, confidence);
-
-    // Calcular calidad de señal actual basada en varios factores (0-100)
-    this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
-
-    if (isConfirmedPeak && !this.isInWarmup()) {
-      const now = Date.now();
-      const timeSinceLastPeak = this.lastPeakTime
-        ? now - this.lastPeakTime
-        : Number.MAX_VALUE;
-
-      // Validación médicamente apropiada
-      if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
-        // Validación estricta según criterios médicos
-        if (this.validatePeak(normalizedValue, confidence)) {
-          this.previousPeakTime = this.lastPeakTime;
-          this.lastPeakTime = now;
-          
-          // Reproducir sonido y actualizar estado
-          this.playHeartSound(1.0, this.isArrhythmiaDetected);
-
-          this.updateBPM();
-
-          // Actualizar historial para sintonización adaptativa
-          this.recentPeakAmplitudes.push(normalizedValue);
-          this.recentPeakConfidences.push(confidence);
-          if (rawDerivative !== undefined) this.recentPeakDerivatives.push(rawDerivative);
-
-          if (this.recentPeakAmplitudes.length > this.ADAPTIVE_TUNING_PEAK_WINDOW) {
-            this.recentPeakAmplitudes.shift();
-          }
-          if (this.recentPeakConfidences.length > this.ADAPTIVE_TUNING_PEAK_WINDOW) {
-            this.recentPeakConfidences.shift();
-          }
-          if (this.recentPeakDerivatives.length > this.ADAPTIVE_TUNING_PEAK_WINDOW) {
-            this.recentPeakDerivatives.shift();
-          }
-          
-          this.peaksSinceLastTuning++;
-          if (this.peaksSinceLastTuning >= Math.floor(this.ADAPTIVE_TUNING_PEAK_WINDOW / 2)) {
-            this.performAdaptiveTuning();
-            this.peaksSinceLastTuning = 0;
-          }
-        } else {
-          console.log(`HeartBeatProcessor: Pico rechazado - confianza insuficiente: ${confidence}`);
-          isPeak = false;
-        }
-      }
-    }
-    
-    // Retornar resultado con nuevos parámetros
-    return {
-      bpm: Math.round(this.getSmoothBPM()),
-      confidence: isPeak ? 0.95 : this.adjustConfidenceForSignalStrength(0.6),
-      isPeak: isPeak,
-      filteredValue: filteredValue, // Usando la variable correctamente definida
-      arrhythmiaCount: 0,
-      signalQuality: this.currentSignalQuality // Retroalimentación de calidad
-    };
-  }
-  
-  /**
-   * Amplificación adaptativa de señal - limitada a niveles médicamente válidos
-   */
-  private boostSignal(value: number): number {
-    if (this.signalBuffer.length < 10) return value * this.SIGNAL_BOOST_FACTOR;
-    
-    // Calcular estadísticas de señal reciente
-    const recentSignals = this.signalBuffer.slice(-10);
-    const avgSignal = recentSignals.reduce((sum, val) => sum + val, 0) / recentSignals.length;
-    const maxSignal = Math.max(...recentSignals);
-    const minSignal = Math.min(...recentSignals);
-    const range = maxSignal - minSignal;
-    
-    // Calcular factor de amplificación proporcional a la fuerza de la señal
-    let boostFactor = this.SIGNAL_BOOST_FACTOR;
-    
-    if (range < 1.0) {
-      // Señal débil - amplificar moderadamente
-      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.8; // Más amplificación para señales débiles
-    } else if (range < 3.0) {
-      // Señal moderada - amplificar ligeramente
-      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.4;
-    } else if (range > 10.0) {
-      // Señal fuerte - no amplificar
-      boostFactor = 1.0;
-    }
-    
-    // Aplicar amplificación lineal centrada en el promedio
-    const centered = value - avgSignal;
-    const boosted = avgSignal + (centered * boostFactor);
-    
-    return boosted;
-  }
-
-  /**
-   * Seguimiento de fuerza de señal para ajuste de confianza
-   */
-  private trackSignalStrength(amplitude: number): void {
-    this.lastSignalStrength = amplitude;
-    this.recentSignalStrengths.push(amplitude);
-    
-    if (this.recentSignalStrengths.length > this.SIGNAL_STRENGTH_HISTORY) {
-      this.recentSignalStrengths.shift();
-    }
-  }
-
-  /**
-   * Ajuste de confianza basado en fuerza histórica de señal
-   */
-  private adjustConfidenceForSignalStrength(confidence: number): number {
-    if (this.recentSignalStrengths.length < 5) return confidence;
-    
-    // Calcular promedio de fuerza de señal
-    const avgStrength = this.recentSignalStrengths.reduce((sum, val) => sum + val, 0) / 
-                        this.recentSignalStrengths.length;
-    
-    // Señales muy débiles reducen la confianza
-    if (avgStrength < 0.1) {
-      return Math.min(1.0, confidence * 0.8);
-    }
-    
-    return Math.min(1.0, confidence);
-  }
-
-  private isInWarmup(): boolean {
-    return Date.now() - this.startTime < this.WARMUP_TIME_MS;
-  }
-
-  private medianFilter(value: number): number {
-    this.medianBuffer.push(value);
-    if (this.medianBuffer.length > this.MEDIAN_FILTER_WINDOW) {
-      this.medianBuffer.shift();
-    }
-    const sorted = [...this.medianBuffer].sort((a, b) => a - b);
-    return sorted[Math.floor(sorted.length / 2)];
-  }
-
-  private calculateMovingAverage(value: number): number {
-    this.movingAverageBuffer.push(value);
-    if (this.movingAverageBuffer.length > this.MOVING_AVERAGE_WINDOW) {
-      this.movingAverageBuffer.shift();
-    }
-    const sum = this.movingAverageBuffer.reduce((a, b) => a + b, 0);
-    return sum / this.movingAverageBuffer.length;
-  }
-
-  private calculateEMA(value: number): number {
-    this.smoothedValue =
-      this.EMA_ALPHA * value + (1 - this.EMA_ALPHA) * this.smoothedValue;
-    return this.smoothedValue;
-  }
-
-  public setArrhythmiaDetected(isDetected: boolean): void {
+  setArrhythmiaDetected(isDetected: boolean): void {
     this.isArrhythmiaDetected = isDetected;
-    console.log(`HeartBeatProcessor: Estado de arritmia establecido a ${isDetected}`);
   }
 
-  private autoResetIfSignalIsLow(amplitude: number) {
-    if (amplitude < this.LOW_SIGNAL_THRESHOLD) {
-      this.lowSignalCount++;
-      if (this.lowSignalCount >= this.LOW_SIGNAL_FRAMES) {
-        this.resetDetectionStates();
-        // También reseteamos los parámetros adaptativos a sus valores por defecto
-        this.adaptiveSignalThreshold = this.DEFAULT_SIGNAL_THRESHOLD;
-        this.adaptiveMinConfidence = this.DEFAULT_MIN_CONFIDENCE;
-        this.adaptiveDerivativeThreshold = this.DEFAULT_DERIVATIVE_THRESHOLD;
-        this.isArrhythmiaDetected = false;
-        console.log("HeartBeatProcessor: auto-reset adaptative parameters and arrhythmia flag (low signal).");
-      }
-    } else {
-      this.lowSignalCount = Math.max(0, this.lowSignalCount - 1); // Reducción gradual
-    }
+  getSmoothBPM(): number {
+    const v = this.engine.getFusedBpm();
+    return v > 0 ? Math.round(v) : this.lastProcessResult?.bpm ?? 0;
   }
 
-  private resetDetectionStates() {
-    // No resetear lastPeakTime para mantener continuidad de detecciones
-    this.lastConfirmedPeak = false;
-    this.peakConfirmationBuffer = [];
-    console.log("HeartBeatProcessor: auto-reset detection states (low signal).");
+  getFinalBPM(): number {
+    return this.getSmoothBPM();
   }
 
-  /**
-   * Detección de picos mejorada para señales con validación médica
-   */
-  private enhancedPeakDetection(normalizedValue: number, derivative: number): {
-    isPeak: boolean;
-    confidence: number;
-    rawDerivative?: number;
-  } {
-    const now = Date.now();
-    const timeSinceLastPeak = this.lastPeakTime
-      ? now - this.lastPeakTime
-      : Number.MAX_VALUE;
-
-    if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
-      return { isPeak: false, confidence: 0 };
-    }
-
-    // Pico fisiológico: cruce de derivada de positivo a negativo
-    const isSlopeChangeToNegative = derivative < this.DERIVATIVE_STEEPNESS_THRESHOLD;
-
-    // Umbral de amplitud relativa respecto a baseline
-    const amplitude = Math.abs(normalizedValue);
-    const amplitudeOk = amplitude > this.adaptiveSignalThreshold;
-
-    const isPeak = isSlopeChangeToNegative && amplitudeOk;
-
-    // Confianza basada en amplitud y pendiente
-    const slopeScore = Math.min(1, Math.abs(derivative) / Math.abs(this.DERIVATIVE_STEEPNESS_THRESHOLD * 4));
-    const ampScore = Math.min(1, amplitude / (this.adaptiveSignalThreshold * 3));
-    const confidence = Math.max(0, Math.min(1, 0.55 * ampScore + 0.45 * slopeScore));
-
-    return { isPeak, confidence, rawDerivative: derivative };
+  getSignalQuality(): number {
+    return this.lastProcessResult?.sqi ?? 0;
   }
 
-  private confirmPeak(
-    isPeak: boolean,
-    normalizedValue: number,
-    confidence: number
-  ): boolean {
-    this.peakConfirmationBuffer.push(normalizedValue);
-    if (this.peakConfirmationBuffer.length > this.PEAK_CONFIRMATION_BUFFER_SIZE) {
-      this.peakConfirmationBuffer.shift();
-    }
-    // Confirmación simplificada: cada pico marcado es confirmado
-    if (isPeak && !this.lastConfirmedPeak) {
-      this.lastConfirmedPeak = true;
-      return true;
-    } else if (!isPeak) {
-      this.lastConfirmedPeak = false;
-    }
-    return false;
-  }
-
-  /**
-   * Validación de picos basada estrictamente en criterios médicos
-   */
-  private validatePeak(peakValue: number, confidence: number): boolean {
-    // Un pico es válido si tiene suficiente confianza y la calidad de la señal es alta.
-    // Esto asegura que solo los picos robustos y fisiológicamente plausibles sean considerados.
-    const isHighConfidence = confidence >= this.MIN_PEAK_CONFIRMATION_CONFIDENCE;
-    const isGoodSignalQuality = this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY;
-
-    return isHighConfidence && isGoodSignalQuality;
-  }
-
-  private updateBPM() {
-    if (!this.lastPeakTime || !this.previousPeakTime) return;
-    const interval = this.lastPeakTime - this.previousPeakTime;
-    if (interval <= 0) return;
-
-    const instantBPM = 60000 / interval;
-    if (instantBPM >= this.DEFAULT_MIN_BPM && instantBPM <= this.DEFAULT_MAX_BPM) { 
-      this.bpmHistory.push(instantBPM);
-      if (this.bpmHistory.length > 12) { 
-        this.bpmHistory.shift();
-      }
-    }
-  }
-
-  public getSmoothBPM(): number {
-    if (this.bpmHistory.length < 3) return 0;
-    
-    // Filtrado adaptativo basado en confianza
-    const validReadings = this.bpmHistory.filter((_, i) => 
-      this.recentPeakConfidences[i] > 0.7
-    );
-    
-    // Ponderar por confianza y aplicar mediana móvil
-    const weightedBPM = validReadings.reduce(
-      (sum, bpm, i) => sum + (bpm * this.recentPeakConfidences[i]), 
-      0
-    ) / validReadings.reduce((sum, _, i) => sum + this.recentPeakConfidences[i], 0);
-    
-    // Suavizado final con filtro de Kalman simple
-    this.smoothBPM = this.kalmanFilter(weightedBPM);
-    return Math.round(this.smoothBPM);
-  }
-
-  private kalmanFilter(value: number): number {
-    // Usar la instancia del filtro de Kalman importada
-    return this.kalmanFilterInstance.filter(value);
-  }
-
-  public getFinalBPM(): number { 
-    if (this.bpmHistory.length < 5) {
-      return Math.round(this.getSmoothBPM()); 
-    }
-    const sorted = [...this.bpmHistory].sort((a, b) => a - b);
-    const cut = Math.floor(sorted.length * 0.2);
-    const finalSet = sorted.slice(cut, sorted.length - cut);
-    
-    if (!finalSet.length) {
-        return Math.round(this.getSmoothBPM());
-    }
-    const sum = finalSet.reduce((acc, val) => acc + val, 0);
-    return Math.round(sum / finalSet.length);
-  }
-
-  /**
-   * LIMPIEZA AUTOMÁTICA de buffers para prevenir degradación gradual
-   */
-  private cleanupBuffers(): void {
-    // Limpiar buffers que pueden acumular datos innecesarios
-    if (this.bpmHistory.length > 20) {
-      this.bpmHistory = this.bpmHistory.slice(-20);
-    }
-    
-    if (this.recentPeakAmplitudes.length > 10) {
-      this.recentPeakAmplitudes = this.recentPeakAmplitudes.slice(-10);
-    }
-    
-    if (this.recentPeakConfidences.length > 10) {
-      this.recentPeakConfidences = this.recentPeakConfidences.slice(-10);
-    }
-    
-    if (this.recentPeakDerivatives.length > 10) {
-      this.recentPeakDerivatives = this.recentPeakDerivatives.slice(-10);
-    }
-    
-    if (this.recentSignalStrengths.length > this.SIGNAL_STRENGTH_HISTORY) {
-      this.recentSignalStrengths = this.recentSignalStrengths.slice(-this.SIGNAL_STRENGTH_HISTORY);
-    }
-    
-    // Log de limpieza para debugging
-    console.log('🧹 HeartBeatProcessor: Limpieza automática de buffers', {
-      bpmHistoryLength: this.bpmHistory.length,
-      recentPeakAmplitudesLength: this.recentPeakAmplitudes.length,
-      recentPeakConfidencesLength: this.recentPeakConfidences.length,
-      recentPeakDerivativesLength: this.recentPeakDerivatives.length,
-      recentSignalStrengthsLength: this.recentSignalStrengths.length,
-      timestamp: new Date().toISOString()
-    });
-  }
-
-  public reset() {
-    this.signalBuffer = [];
-    this.medianBuffer = [];
-    this.movingAverageBuffer = [];
-    this.peakConfirmationBuffer = [];
-    this.bpmHistory = [];
-    this.values = [];
-    this.smoothBPM = 0;
-    this.lastPeakTime = null;
-    this.previousPeakTime = null;
-    this.lastConfirmedPeak = false;
-    this.lastBeepTime = 0;
-    this.baseline = 0;
-    this.lastValue = 0;
-    this.smoothedValue = 0;
-    this.startTime = Date.now();
-    this.lowSignalCount = 0;
-
-    this.adaptiveSignalThreshold = this.DEFAULT_SIGNAL_THRESHOLD;
-    this.adaptiveMinConfidence = this.DEFAULT_MIN_CONFIDENCE;
-    this.adaptiveDerivativeThreshold = this.DEFAULT_DERIVATIVE_THRESHOLD;
-    this.recentPeakAmplitudes = [];
-    this.recentPeakConfidences = [];
-    this.recentPeakDerivatives = [];
-    this.peaksSinceLastTuning = 0;
-    
-    this.isArrhythmiaDetected = false;
-    this.peakValidationBuffer = [];
-    console.log("HeartBeatProcessor: Full reset including adaptive parameters and arrhythmia flag.");
-  }
-
-  public getRRIntervals(): { intervals: number[]; lastPeakTime: number | null } {
-    // Mejorar cálculo de intervalos RR usando tiempos reales de picos
-    let rrIntervals: number[] = [];
-    
-    if (this.bpmHistory.length >= 2) {
-      // Usar historial de BPM para calcular intervalos RR más precisos
-      for (let i = 0; i < this.bpmHistory.length; i++) {
-        const bpm = this.bpmHistory[i];
-        if (bpm > 30 && bpm < 200) { // Validar BPM fisiológico
-          const rrInterval = 60000 / bpm;
-          // Aplicar variabilidad realista basada en calidad de señal
-          const variability = this.currentSignalQuality > 70 ? 0.02 : 0.05;
-          // Eliminar cualquier aleatoriedad: respetar rrInterval tal cual
-          const adjustedRR = rrInterval;
-          rrIntervals.push(Math.max(300, Math.min(2000, adjustedRR)));
-        }
-      }
-    }
-    
+  getRRIntervals(): { intervals: number[]; lastPeakTime: number | null } {
     return {
-      intervals: rrIntervals, 
-      lastPeakTime: this.lastPeakTime,
+      intervals: this.engine.getIntervalMsList(),
+      lastPeakTime: this.engine.getLastAcceptedTimestamp(),
     };
   }
-  
-  /**
-   * Sintonización adaptativa médicamente apropiada
-   */
-  private performAdaptiveTuning(): void {
-    if (this.isInWarmup() || this.recentPeakAmplitudes.length < 4) { // Reducido para adaptación más rápida
-      return;
-    }
 
-    if (this.recentPeakAmplitudes.length > 0) {
-      // Calcular estadísticas sobre picos recientes
-      const avgAmplitude = this.recentPeakAmplitudes.reduce((s, v) => s + v, 0) / this.recentPeakAmplitudes.length;
-      
-      // Umbral adaptativo basado en amplitud promedio - más sensible
-      let targetSignalThreshold = avgAmplitude * 0.45; // Reducido para mayor sensibilidad
-
-      // Tasa de aprendizaje aumentada
-      const learningRate = this.ADAPTIVE_TUNING_LEARNING_RATE;
-      
-      // Actualización gradual
-      this.adaptiveSignalThreshold = 
-          this.adaptiveSignalThreshold * (1 - learningRate) +
-          targetSignalThreshold * learningRate;
-      
-      // Asegurar límites seguros
-      this.adaptiveSignalThreshold = Math.max(this.MIN_ADAPTIVE_SIGNAL_THRESHOLD, 
-                                    Math.min(this.MAX_ADAPTIVE_SIGNAL_THRESHOLD, this.adaptiveSignalThreshold));
-    }
-
-    if (this.recentPeakConfidences.length > 0) {
-      const avgConfidence = this.recentPeakConfidences.reduce((s, v) => s + v, 0) / this.recentPeakConfidences.length;
-      let targetMinConfidence = this.adaptiveMinConfidence; 
-
-      // Reducción más agresiva para señales débiles
-      if (avgConfidence < 0.5) { // Señal débil
-        targetMinConfidence = this.adaptiveMinConfidence - 0.08; // Reducción más agresiva
-      }
-      // Sólo incrementar el umbral si la confianza es consistentemente alta
-      else if (avgConfidence > 0.80 && this.recentSignalStrengths.length > 5) {
-        const avgStrength = this.recentSignalStrengths.reduce((s, v) => s + v, 0) / this.recentSignalStrengths.length;
-        if (avgStrength > 0.25) { // Más permisivo para señales
-          targetMinConfidence = this.adaptiveMinConfidence + 0.01;
-        }
-      }
-      
-      this.adaptiveMinConfidence =
-          this.adaptiveMinConfidence * (1 - this.ADAPTIVE_TUNING_LEARNING_RATE) +
-          targetMinConfidence * this.ADAPTIVE_TUNING_LEARNING_RATE;
-          
-      this.adaptiveMinConfidence = Math.max(this.MIN_ADAPTIVE_MIN_CONFIDENCE, 
-                                 Math.min(this.MAX_ADAPTIVE_MIN_CONFIDENCE, this.adaptiveMinConfidence));
-    }
-    
-    if (this.recentPeakDerivatives.length > 0) {
-        const avgDerivative = this.recentPeakDerivatives.reduce((s,v) => s+v, 0) / this.recentPeakDerivatives.length;
-        
-        // Umbral de derivada ultra-sensible
-        let targetDerivativeThreshold = avgDerivative * 0.25; // Más sensible (antes 0.3)
-
-        this.adaptiveDerivativeThreshold = 
-            this.adaptiveDerivativeThreshold * (1 - this.ADAPTIVE_TUNING_LEARNING_RATE) +
-            targetDerivativeThreshold * this.ADAPTIVE_TUNING_LEARNING_RATE;
-
-        this.adaptiveDerivativeThreshold = Math.max(this.MIN_ADAPTIVE_DERIVATIVE_THRESHOLD, 
-                                        Math.min(this.MAX_ADAPTIVE_DERIVATIVE_THRESHOLD, this.adaptiveDerivativeThreshold));
-    }
-    
-    console.log("HeartBeatProcessor: Adaptive tuning updated", {
-      signalThreshold: this.adaptiveSignalThreshold.toFixed(3),
-      minConfidence: this.adaptiveMinConfidence.toFixed(3),
-      derivativeThreshold: this.adaptiveDerivativeThreshold.toFixed(3),
-      avgSignalStrength: this.recentSignalStrengths.length > 0 ? 
-                        (this.recentSignalStrengths.reduce((s,v) => s+v, 0) / 
-                         this.recentSignalStrengths.length).toFixed(3) : "N/A",
-      currentSignalQuality: this.currentSignalQuality
-    });
-  }
-  
-  // Método público para obtener la calidad de señal actual
-  public getSignalQuality(): number {
-    return this.currentSignalQuality;
+  getLastProcessOutput(): HeartBeatProcessOutput | null {
+    return this.lastProcessResult;
   }
 
-  /**
-   * Calcula la calidad de la señal actual basado en múltiples factores
-   * @param normalizedValue Valor normalizado de la señal actual
-   * @param confidence Confianza de la detección actual
-   * @returns Valor de calidad entre 0-100
-   */
-  private calculateSignalQuality(normalizedValue: number, confidence: number): number {
-    // Si no hay suficientes datos para una evaluación precisa
-    if (this.signalBuffer.length < 10) {
-      return Math.min(this.currentSignalQuality + 5, 30); // Incremento gradual hasta 30 durante calibración
-    }
-    
-    // Calcular estadísticas de señal reciente
-    const recentSignals = this.signalBuffer.slice(-20);
-    const avgSignal = recentSignals.reduce((sum, val) => sum + val, 0) / recentSignals.length;
-    const maxSignal = Math.max(...recentSignals);
-    const minSignal = Math.min(...recentSignals);
-    const range = maxSignal - minSignal;
-    
-    // Componentes de calidad
-    let amplitudeQuality = 0;
-    let stabilityQuality = 0;
-    let rhythmQuality = 0;
-    
-    // 1. Calidad basada en amplitud (0-40)
-    // Penalizar fuertemente las amplitudes muy bajas (señal plana o casi plana)
-    if (range < 0.001) { // Umbral para señal prácticamente plana
-        amplitudeQuality = 0; // Calidad nula si la señal es plana
-    } else {
-        amplitudeQuality = Math.min(Math.abs(normalizedValue) * 100, 40); // Mayor factor de amplificación
-    }
-    
-    // 2. Calidad basada en estabilidad de señal (0-30)
-    if (range > 0.01) {
-      const variability = range / (Math.abs(avgSignal) || 0.001); // Evitar división por cero
-      if (variability < 0.5) { // Variabilidad óptima para PPG (más estricto)
-        stabilityQuality = 30;
-      } else if (variability < 1.0) { // Moderadamente inestable
-        stabilityQuality = 20;
-      } else if (variability < 2.0) { // Inestable
-        stabilityQuality = 10;
-      } else {
-        stabilityQuality = 0; // Muy inestable, calidad muy baja
-      }
-    }
-    
-    // 3. Calidad basada en ritmo (0-30)
-    if (this.bpmHistory.length >= 5) { // Más muestras para evaluar el ritmo
-      const recentBPMs = this.bpmHistory.slice(-5);
-      const bpmVariance = Math.max(...recentBPMs) - Math.min(...recentBPMs);
-      
-      if (bpmVariance < 5) { // Ritmo muy estable (más estricto)
-        rhythmQuality = 30; 
-      } else if (bpmVariance < 10) { // Ritmo estable
-        rhythmQuality = 20;
-      } else if (bpmVariance < 15) { // Ritmo variable pero aceptable
-        rhythmQuality = 10;
-      } else {
-        rhythmQuality = 5;  // Ritmo inestable
-      }
-    }
-    
-    // Calidad total (0-100)
-    let totalQuality = amplitudeQuality + stabilityQuality + rhythmQuality;
-    
-    // Penalización por baja confianza y umbral de calidad global
-    if (confidence < 0.5) { // Umbral de confianza más alto para penalizar
-      totalQuality *= confidence / 0.5;
-    }
+  getTechnicalDebug(filteredValue: number, ctx: HeartBeatProcessContext): HeartBeatDebugSnapshot {
+    return this.engine.peekLastDebug(filteredValue, ctx);
+  }
 
-    // Penalización adicional si la señal es demasiado débil después de todas las comprobaciones
-    if (totalQuality < 10 && range < 0.01) { // Si la calidad es baja y el rango es muy pequeño
-        totalQuality = 0; // Forzar a cero si es prácticamente ruido
-    }
-    
-    // Suavizado para evitar cambios bruscos
-    totalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3;
-    
-    return Math.min(Math.max(Math.round(totalQuality), 0), 100);
+  reset(): void {
+    this.engine.reset();
+    this.boostIdx = 0;
+    this.recentForBoost.fill(0);
+    this.lastBeepTime = 0;
+    this.lastProcessResult = null;
   }
 }

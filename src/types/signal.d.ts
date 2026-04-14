@@ -1,4 +1,6 @@
-import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
+import type { ContactState } from '../modules/signal-processing/PPGSignalProcessor';
+import type { SourceType } from '../modules/signal-processing/SignalSourceRanker';
+import type { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
 
 export interface ProcessedSignal {
   timestamp: number;
@@ -15,6 +17,17 @@ export interface ProcessedSignal {
   perfusionIndex?: number;
   /** Muestras RGB ROI sin preprocesado asimétrico (SpO2 multicanal) */
   rgbRaw?: { r: number; g: number; b: number };
+  /** Contexto opcional para HeartBeatProcessor (PPG V2) */
+  contactState?: ContactState;
+  pressureState?: string;
+  activeSource?: SourceType;
+  clipHighRatio?: number;
+  clipLowRatio?: number;
+  maskStability?: number;
+  /** 0–100 derivado de inestabilidad ROI / movimiento relativo */
+  motionArtifact?: number;
+  positionDrifting?: boolean;
+  sqiGlobal?: number;
 }
 
 export interface ProcessingError {

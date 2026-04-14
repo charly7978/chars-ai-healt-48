@@ -222,6 +222,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
 
     // ──── 13. EMIT PROCESSED SIGNAL ────
+    const motionArtifact = Math.max(0, Math.min(100, (1 - roi.maskStability) * 85 + (1 - uniformity) * 15));
+
     const processedSignal: ProcessedSignal = {
       timestamp: now,
       rawValue: roi.avgR,
@@ -235,7 +237,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         height: roi.roiBounds.h
       },
       perfusionIndex: Math.max(0, perfusionIndex),
-      rgbRaw: { r: roi.rawR, g: roi.rawG, b: roi.rawB }
+      rgbRaw: { r: roi.rawR, g: roi.rawG, b: roi.rawB },
+      contactState: this.contactState,
+      pressureState: pressure.state,
+      activeSource: ranked.activeSource,
+      clipHighRatio: roi.clipHighRatio,
+      clipLowRatio: roi.clipLowRatio,
+      maskStability: roi.maskStability,
+      motionArtifact,
+      positionDrifting: roi.maskStability < 0.55 && this.frameCount > 30,
+      sqiGlobal: sqi.sqiGlobal
     };
 
     this.onSignalReady(processedSignal);

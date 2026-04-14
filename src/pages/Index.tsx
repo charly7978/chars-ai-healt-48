@@ -66,7 +66,8 @@ const Index = () => {
   
   const { 
     processSignal: processHeartBeat, setArrhythmiaState,
-    reset: resetHeartBeat, debugInfo: heartDebugInfo
+    reset: resetHeartBeat, debugInfo: heartDebugInfo,
+    lastHeartBeatOutput
   } = useHeartBeatProcessor();
   
   const { 
@@ -331,7 +332,11 @@ const Index = () => {
     const MIN_SQ = 15;
     if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SQ) {
       if (lastSignal.quality >= 10) {
-        const r = processHeartBeat(lastSignal.filteredValue * 0.5, false, lastSignal.timestamp);
+        const r = processHeartBeat({
+          ...lastSignal,
+          filteredValue: lastSignal.filteredValue * 0.5,
+          fingerDetected: false,
+        });
         setHeartRate(r.bpm * 0.8);
         setHeartbeatSignal(lastSignal.filteredValue * 0.7);
         setBeatMarker(r.isPeak ? 0.5 : 0);
@@ -342,7 +347,7 @@ const Index = () => {
       return;
     }
 
-    const hb = processHeartBeat(lastSignal.filteredValue, lastSignal.fingerDetected, lastSignal.timestamp);
+    const hb = processHeartBeat(lastSignal);
     setHeartRate(hb.bpm);
     setHeartbeatSignal(lastSignal.filteredValue);
     setBeatMarker(hb.isPeak ? 1 : 0);
@@ -457,7 +462,7 @@ const Index = () => {
 
           {/* DEBUG OVERLAY */}
           {showDebug && (
-            <div className="px-3 py-2 bg-black/80 text-green-400 text-xs font-mono space-y-0.5 max-h-40 overflow-y-auto">
+            <div className="px-3 py-2 bg-black/80 text-green-400 text-xs font-mono space-y-0.5 max-h-[min(52vh,420px)] overflow-y-auto">
               <div>FPS: {Math.round(frameTimingRef.current.realFps)} | Frames: {framesProcessed} | Drops: {frameTimingRef.current.droppedFrames}</div>
               <div>Processing: {isProcessing ? 'ON' : 'OFF'} | Calibrating: {isCalibrating ? 'YES' : 'NO'}</div>
               {cameraDiag && (
@@ -467,7 +472,24 @@ const Index = () => {
                 <>
                   <div>Raw R: {lastSignal.rawValue.toFixed(1)} | Filtered: {lastSignal.filteredValue.toFixed(3)} | Quality: {lastSignal.quality}</div>
                   <div>Perfusion: {(lastSignal.perfusionIndex || 0).toFixed(2)} | RGB: {lastSignal.rgbRaw?.r.toFixed(0)},{lastSignal.rgbRaw?.g.toFixed(0)},{lastSignal.rgbRaw?.b.toFixed(0)}</div>
+                  {lastSignal.contactState && (
+                    <div>Contact: {lastSignal.contactState} | Press: {lastSignal.pressureState ?? '—'} | Src: {lastSignal.activeSource ?? '—'}</div>
+                  )}
                 </>
+              )}
+              {lastHeartBeatOutput && (
+                <div className="border-t border-white/10 pt-1 mt-1 text-amber-300/95">
+                  <div className="text-white/90 font-semibold">PPG heartbeat / fusión</div>
+                  <div>BPM: {lastHeartBeatOutput.bpm} | bpmConf: {(lastHeartBeatOutput.bpmConfidence * 100).toFixed(0)}% | instant: {lastHeartBeatOutput.lastAcceptedBeat?.instantBpm?.toFixed(0) ?? '—'}</div>
+                  <div>beatSQI: {lastHeartBeatOutput.beatSQI ?? '—'} | agr det: {(lastHeartBeatOutput.detectorAgreement * 100).toFixed(0)}%</div>
+                  <div>Hyp: {lastHeartBeatOutput.activeHypothesis} | reject: {lastHeartBeatOutput.rejectionReason}</div>
+                  <div>RR esp: {lastHeartBeatOutput.debug?.expectedRrMs?.toFixed(0) ?? '—'} ms | hardRef: {lastHeartBeatOutput.debug?.hardRefractoryMs?.toFixed(0) ?? '—'} | soft: {lastHeartBeatOutput.debug?.softRefractoryMs?.toFixed(0) ?? '—'}</div>
+                  <div>Autocorr BPM: {lastHeartBeatOutput.debug?.fusion?.hypotheses?.find(h => h.id === 'autocorr')?.bpm?.toFixed(0) ?? '—'} | Median IBI BPM: {lastHeartBeatOutput.debug?.fusion?.hypotheses?.find(h => h.id === 'medianIbi')?.bpm?.toFixed(0) ?? '—'}</div>
+                  <div>Spectral BPM: {lastHeartBeatOutput.debug?.fusion?.hypotheses?.find(h => h.id === 'spectral')?.bpm?.toFixed(0) ?? '—'} | spread: {lastHeartBeatOutput.debug?.fusion?.spread?.toFixed(1) ?? '—'}</div>
+                  <div>Accepted/Rejected: {lastHeartBeatOutput.debug?.beatsAcceptedSession ?? '—'}/{lastHeartBeatOutput.debug?.beatsRejectedSession ?? '—'} | dbl/miss/susp: {lastHeartBeatOutput.debug?.doublePeakCount ?? '—'}/{lastHeartBeatOutput.debug?.missedBeatCount ?? '—'}/{lastHeartBeatOutput.debug?.suspiciousCount ?? '—'}</div>
+                  <div>Template ρ: {lastHeartBeatOutput.debug?.templateCorrelationLast?.toFixed(2) ?? '—'} | morph: {lastHeartBeatOutput.debug?.morphologyScoreLast?.toFixed(2) ?? '—'} | periodicity: {lastHeartBeatOutput.debug?.periodicityScore?.toFixed(2) ?? '—'}</div>
+                  <div>Fs est: {lastHeartBeatOutput.debug?.sampleRateHz?.toFixed(1) ?? '—'} Hz | flags: {lastHeartBeatOutput.beatFlags.join(',') || '—'}</div>
+                </div>
               )}
             </div>
           )}
