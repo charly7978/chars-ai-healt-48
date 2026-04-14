@@ -70,7 +70,7 @@ const Index = () => {
   const { 
     processSignal: processHeartBeat, setArrhythmiaState,
     reset: resetHeartBeat, debugInfo: heartDebugInfo,
-    lastHeartBeatOutput
+    lastHeartBeatOutput, arrhythmiaResult
   } = useHeartBeatProcessor();
   
   const { 
