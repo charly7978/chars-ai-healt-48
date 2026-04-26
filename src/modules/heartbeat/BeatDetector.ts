@@ -117,11 +117,15 @@ export class BeatDetector {
     // 4) Filtrar candidatos demasiado cercanos manteniendo el de mejor score combinado
     const deduped = this.suppressDoublePeaks(enriched);
 
-    // 5) Adjudicación con reglas explícitas
+    // 5) Adjudicación con reglas explícitas (cachea refractory para introspección)
+    this.lastRefractory = this.computeRefractory(this.expectedRR());
     const validated = this.adjudicate(deduped);
 
     // 6) Confirmación: tomar el mejor "accepted/pending" y promoverlo a ConfirmedBeat
     const confirmed = this.confirmBeat(validated, signal);
+
+    // Cache para introspección debug
+    this.lastFrameCandidates = validated;
 
     return { candidates: validated, confirmed };
   }
