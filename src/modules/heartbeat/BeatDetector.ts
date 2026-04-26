@@ -561,6 +561,20 @@ export class BeatDetector {
   getLastConfirmedBeat(): ConfirmedBeat | null { return this.lastConfirmedBeat; }
   getLastRejectionReason(): string { return this.lastRejectionReason; }
   hasTemplate(): boolean { return this.template !== null; }
+
+  /** Refractory windows actuales (derivadas de expectedRR del último frame procesado) */
+  getRefractoryWindows(): { hardMs: number; softMs: number; recoveryMs: number; expectedRrMs: number } {
+    return {
+      hardMs: this.lastRefractory.hardMs,
+      softMs: this.lastRefractory.softMs,
+      recoveryMs: this.lastRefractory.recoveryMs,
+      expectedRrMs: this.expectedRR(),
+    };
+  }
+
+  /** Candidatos del último frame con su breakdown completo (para debug) */
+  getLastFrameCandidates(): BeatCandidate[] { return this.lastFrameCandidates; }
+
   getSessionStats(): { accepted: number; rejected: number; acceptanceRate: number } {
     const total = this.sessionAccepted + this.sessionRejected;
     return {
@@ -580,6 +594,8 @@ export class BeatDetector {
     this.template = null;
     this.templateBuffer = [];
     this.recentAccepted = [];
+    this.lastFrameCandidates = [];
+    this.lastRefractory = { hardMs: 200, softMs: 280, recoveryMs: 450 };
   }
 }
 
