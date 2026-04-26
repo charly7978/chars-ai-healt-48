@@ -63,6 +63,12 @@ export class BeatDetector {
   private recentAccepted: ConfirmedBeat[] = [];
   private recentAcceptedMax = 12;
 
+  // Cache para debug / introspección
+  private lastFrameCandidates: BeatCandidate[] = [];
+  private lastRefractory: { hardMs: number; softMs: number; recoveryMs: number } = {
+    hardMs: 200, softMs: 280, recoveryMs: 450,
+  };
+
   constructor(config?: Partial<DetectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
