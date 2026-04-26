@@ -212,6 +212,9 @@ export class HeartBeatProcessor {
     // Estimar BPM espectral
     const spectralBpm = this.bpmEstimator.estimateSpectral(longWindow);
 
+    // Estimar BPM por autocorrelación (hipótesis adicional independiente)
+    const autocorr = this.bpmEstimator.estimateAutocorrelation(longWindow);
+
     // Calcular SQI temporal
     const temporalSQI = this.sqiEstimator.calculateTemporalSQI(
       rrData,
@@ -221,14 +224,15 @@ export class HeartBeatProcessor {
     // Calcular SQI espectral
     const spectralSQI = this.sqiEstimator.calculateSpectralSQI(longWindow);
 
-    // Fusionar BPM
+    // Fusionar BPM (multi-hipótesis con hysteresis y outlier-handling)
     const fusionResult = this.fusion.fuse(
       temporalBpm,
       spectralBpm,
       temporalSQI,
       spectralSQI,
       normalized.quality,
-      normalized.fingerDetected
+      normalized.fingerDetected,
+      autocorr
     );
 
     // Calcular SQI global
@@ -384,42 +388,86 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Convierte output nuevo a formato legacy para compatibilidad
+   * Convierte output nuevo a formato legacy + enriquecido con beatSQI/bpmConfidence separados.
    */
   private convertToLegacy(newOutput: HeartProcessOutput, input: HeartBeatInput): HeartBeatProcessOutput {
     const diagnostics = newOutput.diagnostics;
-    const lastRR = newOutput.rrData.filtered.length > 0 
-      ? newOutput.rrData.filtered[newOutput.rrData.filtered.length - 1] 
+    const lastRR = newOutput.rrData.filtered.length > 0
+      ? newOutput.rrData.filtered[newOutput.rrData.filtered.length - 1]
       : null;
+
+    const lb = newOutput.lastBeat;
+
+    // beatSQI separado del bpmConfidence: usa el beatSQI del detector y aplica penalidades upstream
+    const beatSqiBase = lb?.beatSQI ?? null;
+    const upstreamPenalty =
+      (input.motionArtifact ? Math.min(0.4, input.motionArtifact / 100) : 0) +
+      (input.clipHighRatio ? Math.min(0.3, input.clipHighRatio) : 0) +
+      (input.clipLowRatio ? Math.min(0.2, input.clipLowRatio) : 0) +
+      (input.pressureState === 'HIGH' ? 0.2 : 0) +
+      (input.positionDrifting ? 0.15 : 0) +
+      (input.contactState && input.contactState !== 'STABLE' ? 0.15 : 0);
+    const beatSqiAdj = beatSqiBase !== null
+      ? Math.max(0, Math.min(1, beatSqiBase * (1 - Math.min(0.85, upstreamPenalty))))
+      : null;
+    const beatSQI100 = beatSqiAdj !== null ? Math.round(beatSqiAdj * 100) : null;
+
+    // bpmConfidence: combina fusion confidence + estabilidad RR + nº beats aceptados
+    const acceptedBeats = diagnostics.acceptedBeats;
+    const beatVolumeFactor = Math.min(1, acceptedBeats / 8);
+    const stabilityFactor = 1 - Math.min(1, diagnostics.rrOutlierRatio * 1.4);
+    const bpmConfidence = Math.max(
+      0,
+      Math.min(
+        1,
+        diagnostics.confidence * 0.55 +
+        beatVolumeFactor * 0.25 +
+        stabilityFactor * 0.2
+      )
+    );
+
+    const flags = lb?.flags ?? [];
+    const lastRejection = (this.beatDetector as { getLastRejectionReason?: () => string })
+      .getLastRejectionReason?.() ?? 'none';
+
+    // Hipótesis reales desde fusion
+    const fusionHyps = (this.fusion as { getHypotheses?: () => Array<{ id: string; bpm: number; confidence: number; effWeight: number }> })
+      .getHypotheses?.() ?? [];
+    const hypothesesDebug = fusionHyps.map((h) => ({
+      id: h.id.toLowerCase(),
+      bpm: h.bpm,
+      confidence: h.confidence,
+      weight: h.effWeight,
+    }));
 
     return {
       bpm: Math.round(newOutput.bpm),
-      bpmConfidence: diagnostics.confidence,
-      confidence: diagnostics.confidence,
+      bpmConfidence,
+      confidence: bpmConfidence,
       isPeak: newOutput.beatDetected,
       filteredValue: input.value,
       sqi: newOutput.signalQuality,
-      beatSQI: newOutput.lastBeat ? newOutput.lastBeat.confidence * 100 : null,
+      beatSQI: beatSQI100,
       rrData: {
         intervals: newOutput.rrData.filtered.slice(-12),
-        lastPeakTime: newOutput.lastBeat?.timestamp ?? null,
+        lastPeakTime: lb?.timestamp ?? null,
         lastIbiMs: lastRR,
       },
       activeHypothesis: diagnostics.activeBpmSource,
-      detectorAgreement: newOutput.lastBeat ? newOutput.lastBeat.confidence : 0,
-      rejectionReason: 'none',
-      beatFlags: [],
-      lastAcceptedBeat: newOutput.lastBeat ? {
-        timestamp: newOutput.lastBeat.timestamp,
-        ibiMs: newOutput.lastBeat.rrMs ?? 0,
-        instantBpm: newOutput.lastBeat.rrMs ? 60000 / newOutput.lastBeat.rrMs : 0,
-        beatSQI: newOutput.lastBeat.confidence * 100,
-        morphologyScore: newOutput.lastBeat.confidence,
-        rhythmScore: diagnostics.confidence * 100,
-        detectorAgreementScore: newOutput.lastBeat.confidence * 100,
-        templateScore: 0.5,
-        sourceConsistencyScore: diagnostics.confidence * 100,
-        flags: [],
+      detectorAgreement: lb?.detectorAgreement ?? 0,
+      rejectionReason: lastRejection,
+      beatFlags: flags as string[],
+      lastAcceptedBeat: lb ? {
+        timestamp: lb.timestamp,
+        ibiMs: lb.rrMs ?? 0,
+        instantBpm: lb.rrMs ? 60000 / lb.rrMs : 0,
+        beatSQI: (beatSqiAdj ?? lb.confidence) * 100,
+        morphologyScore: lb.morphologyScore ?? 0,
+        rhythmScore: (lb.rhythmScore ?? 0) * 100,
+        detectorAgreementScore: (lb.detectorAgreement ?? 0) * 100,
+        templateScore: lb.templateScore ?? 0,
+        sourceConsistencyScore: bpmConfidence * 100,
+        flags: flags as string[],
       } : null,
       debug: {
         expectedRrMs: diagnostics.rrMean,
@@ -428,16 +476,16 @@ export class HeartBeatProcessor {
         sampleRateHz: 60,
         beatsAcceptedSession: diagnostics.acceptedBeats,
         beatsRejectedSession: diagnostics.rejectedBeats,
-        doublePeakCount: 0,
+        doublePeakCount: flags.filter((f) => f === 'double_peak').length,
         missedBeatCount: 0,
-        suspiciousCount: 0,
-        prematureCount: 0,
-        templateCorrelationLast: 0.5,
-        morphologyScoreLast: newOutput.lastBeat?.confidence ?? 0,
+        suspiciousCount: flags.filter((f) => f === 'suspicious').length,
+        prematureCount: flags.filter((f) => f === 'premature').length,
+        templateCorrelationLast: lb?.templateScore ?? 0,
+        morphologyScoreLast: lb?.morphologyScore ?? 0,
         periodicityScore: diagnostics.temporalSQI,
         fusion: {
-          hypotheses: [
-            { id: 'temporal', bpm: diagnostics.temporalBpm, confidence: diagnostics.confidence, weight: 0.6 },
+          hypotheses: hypothesesDebug.length > 0 ? hypothesesDebug : [
+            { id: 'median', bpm: diagnostics.temporalBpm, confidence: diagnostics.confidence, weight: 0.6 },
             { id: 'spectral', bpm: diagnostics.spectralBpm, confidence: diagnostics.confidence, weight: 0.4 },
           ],
           activeHypothesis: diagnostics.activeBpmSource,

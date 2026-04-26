@@ -38,33 +38,20 @@ export class BpmEstimator {
     const { filtered, mean, median, std, outlierRatio } = rrData;
 
     if (filtered.length < this.config.minRRCount) {
-      return {
-        instantBpm: 0,
-        medianBpm: 0,
-        trimmedMeanBpm: 0,
-        confidence: 0,
-        stability: 0,
-      };
+      return { instantBpm: 0, medianBpm: 0, trimmedMeanBpm: 0, confidence: 0, stability: 0 };
     }
 
-    // BPM instantáneo desde último RR
     const instantBpm = filtered.length > 0 ? 60000 / filtered[filtered.length - 1] : 0;
-
-    // BPM desde mediana
     const medianBpm = median > 0 ? 60000 / median : 0;
-
-    // BPM desde trimmed mean (excluyendo 10% extremos)
     const trimmedMean = this.calculateTrimmedMean(filtered, 0.1);
     const trimmedMeanBpm = trimmedMean > 0 ? 60000 / trimmedMean : 0;
 
-    // Suavizar BPM
     if (this.smoothedBpm === 0) {
       this.smoothedBpm = medianBpm;
     } else {
       this.smoothedBpm = this.smoothedBpm * (1 - this.config.smoothingAlpha) + medianBpm * this.config.smoothingAlpha;
     }
 
-    // Calcular confianza basada en estabilidad
     const cv = mean > 0 ? (std / mean) * 100 : 0;
     const stability = Math.max(0, 1 - cv / 15);
     const qualityPenalty = outlierRatio * 0.5;
@@ -77,6 +64,48 @@ export class BpmEstimator {
       confidence,
       stability,
     };
+  }
+
+  /**
+   * BPM por autocorrelación de la señal re-muestreada (no depende de picos).
+   */
+  estimateAutocorrelation(signal: ResampledSignal): { bpm: number; confidence: number } {
+    const sr = signal.sampleRate;
+    if (signal.length < sr * 3) return { bpm: 0, confidence: 0 };
+
+    const maxLag = Math.floor(sr * 60 / this.config.minBpm);
+    const minLag = Math.floor(sr * 60 / this.config.maxBpm);
+    if (maxLag <= minLag + 2) return { bpm: 0, confidence: 0 };
+
+    const v = signal.values;
+    const N = signal.length;
+
+    let mean = 0;
+    for (let i = 0; i < N; i++) mean += v[i];
+    mean /= N;
+
+    let r0 = 0;
+    for (let i = 0; i < N; i++) { const x = v[i] - mean; r0 += x * x; }
+    if (r0 <= 1e-9) return { bpm: 0, confidence: 0 };
+
+    let bestLag = -1;
+    let bestVal = -Infinity;
+    let secondBest = -Infinity;
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let s = 0;
+      const lim = N - lag;
+      for (let i = 0; i < lim; i++) s += (v[i] - mean) * (v[i + lag] - mean);
+      const norm = s / r0;
+      if (norm > bestVal) { secondBest = bestVal; bestVal = norm; bestLag = lag; }
+      else if (norm > secondBest) { secondBest = norm; }
+    }
+    if (bestLag <= 0 || bestVal <= 0) return { bpm: 0, confidence: 0 };
+
+    const periodMs = (bestLag / sr) * 1000;
+    const bpm = this.clampBpm(60000 / periodMs);
+    const dominance = bestVal - Math.max(0, secondBest);
+    const confidence = Math.max(0, Math.min(1, bestVal * 0.55 + dominance * 0.6));
+    return { bpm, confidence };
   }
 
   /**
