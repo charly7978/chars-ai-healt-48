@@ -37,6 +37,7 @@ export const useHeartBeatProcessor = () => {
   const [signalQuality, setSignalQuality] = useState<number>(0);
   const [lastRich, setLastRich] = useState<HeartBeatProcessOutput | null>(null);
   const [arrhythmiaResult, setArrhythmiaResult] = useState<ArrhythmiaResult | null>(null);
+  const [heartDiagnostics, setHeartDiagnostics] = useState<HeartDiagnostics | null>(null);
 
   const sessionIdRef = useRef<string>('');
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
