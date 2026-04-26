@@ -479,12 +479,45 @@ const Index = () => {
                   <div>BPM: {lastHeartBeatOutput.bpm} | bpmConf: {(lastHeartBeatOutput.bpmConfidence * 100).toFixed(0)}% | instant: {lastHeartBeatOutput.lastAcceptedBeat?.instantBpm?.toFixed(0) ?? '—'}</div>
                   <div>beatSQI: {lastHeartBeatOutput.beatSQI ?? '—'} | agr det: {(lastHeartBeatOutput.detectorAgreement * 100).toFixed(0)}%</div>
                   <div>Hyp: {lastHeartBeatOutput.activeHypothesis} | reject: {lastHeartBeatOutput.rejectionReason}</div>
-                  <div>RR esp: {lastHeartBeatOutput.debug?.expectedRrMs?.toFixed(0) ?? '—'} ms | hardRef: {lastHeartBeatOutput.debug?.hardRefractoryMs?.toFixed(0) ?? '—'} | soft: {lastHeartBeatOutput.debug?.softRefractoryMs?.toFixed(0) ?? '—'}</div>
-                  <div>Autocorr BPM: {lastHeartBeatOutput.debug?.fusion?.hypotheses?.find(h => h.id === 'autocorr')?.bpm?.toFixed(0) ?? '—'} | Median IBI BPM: {lastHeartBeatOutput.debug?.fusion?.hypotheses?.find(h => h.id === 'medianIbi')?.bpm?.toFixed(0) ?? '—'}</div>
+                  <div>RR esp: {lastHeartBeatOutput.debug?.expectedRrMs?.toFixed(0) ?? '—'} ms | hardRef: {lastHeartBeatOutput.debug?.hardRefractoryMs?.toFixed(0) ?? '—'} | soft: {lastHeartBeatOutput.debug?.softRefractoryMs?.toFixed(0) ?? '—'} | recovery: {lastHeartBeatOutput.debug?.recoveryMs?.toFixed(0) ?? '—'} ms</div>
+                  <div>Autocorr BPM: {lastHeartBeatOutput.debug?.fusion?.hypotheses?.find(h => h.id === 'autocorr')?.bpm?.toFixed(0) ?? '—'} | Median IBI BPM: {lastHeartBeatOutput.debug?.fusion?.hypotheses?.find(h => h.id === 'medianIbi' || h.id === 'median')?.bpm?.toFixed(0) ?? '—'}</div>
                   <div>Spectral BPM: {lastHeartBeatOutput.debug?.fusion?.hypotheses?.find(h => h.id === 'spectral')?.bpm?.toFixed(0) ?? '—'} | spread: {lastHeartBeatOutput.debug?.fusion?.spread?.toFixed(1) ?? '—'}</div>
                   <div>Accepted/Rejected: {lastHeartBeatOutput.debug?.beatsAcceptedSession ?? '—'}/{lastHeartBeatOutput.debug?.beatsRejectedSession ?? '—'} | dbl/miss/susp: {lastHeartBeatOutput.debug?.doublePeakCount ?? '—'}/{lastHeartBeatOutput.debug?.missedBeatCount ?? '—'}/{lastHeartBeatOutput.debug?.suspiciousCount ?? '—'}</div>
                   <div>Template ρ: {lastHeartBeatOutput.debug?.templateCorrelationLast?.toFixed(2) ?? '—'} | morph: {lastHeartBeatOutput.debug?.morphologyScoreLast?.toFixed(2) ?? '—'} | periodicity: {lastHeartBeatOutput.debug?.periodicityScore?.toFixed(2) ?? '—'}</div>
                   <div>Fs est: {lastHeartBeatOutput.debug?.sampleRateHz?.toFixed(1) ?? '—'} Hz | flags: {lastHeartBeatOutput.beatFlags.join(',') || '—'}</div>
+
+                  {/* Detector hits del último beat aceptado */}
+                  {lastHeartBeatOutput.lastAcceptedBeat?.detectorHits && (
+                    <div className="text-emerald-300/95">
+                      lastBeat hits → systolic:{lastHeartBeatOutput.lastAcceptedBeat.detectorHits.systolicPeak ? '✓' : '✗'} | upslope:{lastHeartBeatOutput.lastAcceptedBeat.detectorHits.derivativeUpslope ? '✓' : '✗'} | env:{lastHeartBeatOutput.lastAcceptedBeat.detectorHits.envelopeSupport ? '✓' : '✗'} | agr:{(lastHeartBeatOutput.lastAcceptedBeat.detectorAgreementScore).toFixed(0)}%
+                    </div>
+                  )}
+
+                  {/* Missed-beat inference */}
+                  {lastHeartBeatOutput.debug?.missedBeatInference && (
+                    <div className={lastHeartBeatOutput.debug.missedBeatInference.triggered ? 'text-orange-300' : 'text-white/50'}>
+                      missedBeat: {lastHeartBeatOutput.debug.missedBeatInference.triggered ? 'TRIGGERED' : 'no'} | lastIBI:{lastHeartBeatOutput.debug.missedBeatInference.lastIbiMs.toFixed(0)} / exp:{lastHeartBeatOutput.debug.missedBeatInference.expectedRrMs.toFixed(0)} (×{lastHeartBeatOutput.debug.missedBeatInference.ratio.toFixed(2)}) → hyp:{lastHeartBeatOutput.debug.missedBeatInference.hypothesisUsed} → {lastHeartBeatOutput.debug.missedBeatInference.correctedBpm.toFixed(0)} BPM
+                    </div>
+                  )}
+
+                  {/* beatSQI consistency triple */}
+                  {lastHeartBeatOutput.debug?.beatSqiConsistency && (
+                    <div className={lastHeartBeatOutput.debug.beatSqiConsistency.consistent ? 'text-green-300' : 'text-red-300 font-semibold'}>
+                      beatSQI check: base={lastHeartBeatOutput.debug.beatSqiConsistency.beatSqiBase?.toFixed(3) ?? '—'} | adj={lastHeartBeatOutput.debug.beatSqiConsistency.beatSqiAdjusted?.toFixed(3) ?? '—'} | sqi100={lastHeartBeatOutput.debug.beatSqiConsistency.beatSqi100 ?? '—'} | lastBeat={lastHeartBeatOutput.debug.beatSqiConsistency.lastAcceptedBeatSqi?.toFixed(1) ?? '—'} → {lastHeartBeatOutput.debug.beatSqiConsistency.consistent ? 'OK' : `MISMATCH: ${lastHeartBeatOutput.debug.beatSqiConsistency.mismatchReason}`}
+                    </div>
+                  )}
+
+                  {/* Candidatos del último frame con breakdown */}
+                  {lastHeartBeatOutput.debug?.lastFrameCandidates && lastHeartBeatOutput.debug.lastFrameCandidates.length > 0 && (
+                    <div className="text-white/70 mt-1">
+                      <div className="text-white/85">Candidates ({lastHeartBeatOutput.debug.lastFrameCandidates.length}):</div>
+                      {lastHeartBeatOutput.debug.lastFrameCandidates.slice(-5).map((c, idx) => (
+                        <div key={idx} className={c.adjudication === 'accepted' ? 'text-emerald-300' : c.adjudication === 'rejected' ? 'text-red-300/80' : 'text-yellow-300/90'}>
+                          [{c.adjudication.slice(0,3)}] t:{(c.timestamp % 100000).toFixed(0)} hits:s{c.detectorHits.systolicPeak?'1':'0'}/u{c.detectorHits.derivativeUpslope?'1':'0'}/e{c.detectorHits.envelopeSupport?'1':'0'} agr:{(c.detectorAgreement*100).toFixed(0)}% conf:{(c.confidence*100).toFixed(0)}% morph:{(c.morphologyScore*100).toFixed(0)}% tpl:{(c.templateScore*100).toFixed(0)}% rhy:{(c.rhythmScore*100).toFixed(0)}% {c.rejectionReason ? `· ${c.rejectionReason}` : ''} {c.flags.length ? `[${c.flags.join(',')}]` : ''}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
