@@ -22,6 +22,20 @@ export interface ResampledSignal {
   length: number;
 }
 
+export type BeatFlag =
+  | 'normal'
+  | 'weak'
+  | 'double_peak'
+  | 'missed_beat_inferred'
+  | 'premature'
+  | 'suspicious';
+
+export interface DetectorHits {
+  systolicPeak: boolean;
+  derivativeUpslope: boolean;
+  envelopeSupport: boolean;
+}
+
 export interface BeatCandidate {
   timestamp: number;
   value: number;
@@ -32,6 +46,13 @@ export interface BeatCandidate {
   score: number;
   adjudication: 'pending' | 'accepted' | 'rejected';
   rejectionReason?: string;
+  // --- nuevos campos de scoring multi-detector ---
+  detectorHits?: DetectorHits;
+  detectorAgreement?: number;     // 0..1
+  templateScore?: number;         // 0..1
+  morphologyScore?: number;       // 0..1
+  rhythmScore?: number;           // 0..1 (compatibilidad con expectedRR)
+  flags?: BeatFlag[];
 }
 
 export interface ConfirmedBeat {
@@ -39,6 +60,13 @@ export interface ConfirmedBeat {
   value: number;
   confidence: number;
   rrMs?: number;
+  // --- nuevos campos de calidad por latido ---
+  beatSQI?: number;               // 0..1 (escalado a 0..100 en UI)
+  morphologyScore?: number;
+  templateScore?: number;
+  detectorAgreement?: number;
+  rhythmScore?: number;
+  flags?: BeatFlag[];
 }
 
 export interface RRData {
