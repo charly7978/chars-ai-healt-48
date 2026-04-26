@@ -61,11 +61,15 @@ export interface HeartBeatProcessOutput {
     templateScore: number;
     sourceConsistencyScore: number;
     flags: string[];
+    /** Hits del último beat aceptado por detector */
+    detectorHits?: { systolicPeak: boolean; derivativeUpslope: boolean; envelopeSupport: boolean };
   } | null;
   debug: {
     expectedRrMs?: number;
     hardRefractoryMs?: number;
     softRefractoryMs?: number;
+    /** Recovery window dinámica (ms) derivada de expectedRR */
+    recoveryMs?: number;
     sampleRateHz?: number;
     beatsAcceptedSession?: number;
     beatsRejectedSession?: number;
@@ -76,6 +80,37 @@ export interface HeartBeatProcessOutput {
     templateCorrelationLast?: number;
     morphologyScoreLast?: number;
     periodicityScore?: number;
+    /** Inferencia de missed-beat: dispara cuando lastIBI > expectedRR * factor */
+    missedBeatInference?: {
+      triggered: boolean;
+      lastIbiMs: number;
+      expectedRrMs: number;
+      ratio: number;
+      hypothesisUsed: string;
+      correctedBpm: number;
+    };
+    /** Consistencia entre las tres fuentes de beatSQI */
+    beatSqiConsistency?: {
+      beatSqiBase: number | null;
+      beatSqiAdjusted: number | null;
+      beatSqi100: number | null;
+      lastAcceptedBeatSqi: number | null;
+      consistent: boolean;
+      mismatchReason: string;
+    };
+    /** Candidatos detectados en el último frame con su breakdown */
+    lastFrameCandidates?: Array<{
+      timestamp: number;
+      adjudication: 'pending' | 'accepted' | 'rejected';
+      rejectionReason?: string;
+      confidence: number;
+      detectorAgreement: number;
+      detectorHits: { systolicPeak: boolean; derivativeUpslope: boolean; envelopeSupport: boolean };
+      morphologyScore: number;
+      templateScore: number;
+      rhythmScore: number;
+      flags: string[];
+    }>;
     fusion?: {
       hypotheses: Array<{ id: string; bpm: number; confidence: number; weight: number }>;
       activeHypothesis: string;
@@ -440,6 +475,80 @@ export class HeartBeatProcessor {
       weight: h.effWeight,
     }));
 
+    // Refractory windows reales (hard / soft / recovery + expectedRR)
+    const refr = (this.beatDetector as {
+      getRefractoryWindows?: () => { hardMs: number; softMs: number; recoveryMs: number; expectedRrMs: number };
+    }).getRefractoryWindows?.() ?? { hardMs: 200, softMs: 280, recoveryMs: 450, expectedRrMs: diagnostics.rrMean };
+
+    // Missed-beat inference: dispara cuando lastIBI > expectedRR * 1.65
+    const expectedRrMs = refr.expectedRrMs > 0 ? refr.expectedRrMs : diagnostics.rrMean;
+    const lastIbiMs = lastRR ?? 0;
+    const ratioMissed = expectedRrMs > 0 && lastIbiMs > 0 ? lastIbiMs / expectedRrMs : 0;
+    const missedTriggered = ratioMissed >= 1.65;
+    let hypothesisUsed = 'none';
+    let correctedBpm = 0;
+    if (missedTriggered) {
+      // Elegir hipótesis de mayor peso efectivo distinta de INSTANT
+      const candidates = fusionHyps
+        .filter((h) => h.id !== 'INSTANT')
+        .sort((a, b) => b.effWeight - a.effWeight);
+      const chosen = candidates[0] ?? fusionHyps[0];
+      hypothesisUsed = chosen ? chosen.id : 'MEDIAN';
+      correctedBpm = chosen ? chosen.bpm : diagnostics.finalBpm;
+    }
+
+    // Candidatos del último frame con breakdown
+    const lastCandsRaw = (this.beatDetector as {
+      getLastFrameCandidates?: () => Array<{
+        timestamp: number;
+        adjudication: 'pending' | 'accepted' | 'rejected';
+        rejectionReason?: string;
+        confidence: number;
+        detectorAgreement?: number;
+        detectorHits?: { systolicPeak: boolean; derivativeUpslope: boolean; envelopeSupport: boolean };
+        morphologyScore?: number;
+        templateScore?: number;
+        rhythmScore?: number;
+        flags?: string[];
+      }>;
+    }).getLastFrameCandidates?.() ?? [];
+    const lastFrameCandidates = lastCandsRaw.map((c) => ({
+      timestamp: c.timestamp,
+      adjudication: c.adjudication,
+      rejectionReason: c.rejectionReason,
+      confidence: c.confidence,
+      detectorAgreement: c.detectorAgreement ?? 0,
+      detectorHits: c.detectorHits ?? { systolicPeak: false, derivativeUpslope: false, envelopeSupport: false },
+      morphologyScore: c.morphologyScore ?? 0,
+      templateScore: c.templateScore ?? 0,
+      rhythmScore: c.rhythmScore ?? 0,
+      flags: (c.flags ?? []) as string[],
+    }));
+
+    // beatSQI consistency check: las 3 fuentes deben coincidir tras el ajuste upstream
+    const lastAcceptedBeatSqi = lb ? (beatSqiAdj ?? lb.confidence) * 100 : null;
+    let consistent = true;
+    let mismatchReason = 'ok';
+    if (lb !== null) {
+      // beatSQI100 debe == round(beatSqiAdj * 100)
+      const expected100 = beatSqiAdj !== null ? Math.round(beatSqiAdj * 100) : null;
+      if (beatSQI100 !== expected100) {
+        consistent = false;
+        mismatchReason = `beatSQI100 (${beatSQI100}) != round(adj*100) (${expected100})`;
+      }
+      // lastAcceptedBeat.beatSQI debe == (beatSqiAdj ?? lb.confidence)*100 ± 0.5
+      else if (lastAcceptedBeatSqi !== null && beatSqiAdj !== null &&
+               Math.abs(lastAcceptedBeatSqi - beatSqiAdj * 100) > 0.5) {
+        consistent = false;
+        mismatchReason = `lastAcceptedBeat.beatSQI (${lastAcceptedBeatSqi.toFixed(1)}) != adj*100 (${(beatSqiAdj * 100).toFixed(1)})`;
+      }
+      // base debe existir si hubo beat
+      else if (beatSqiBase === null) {
+        consistent = false;
+        mismatchReason = 'lb.beatSQI missing despite confirmed beat';
+      }
+    }
+
     return {
       bpm: Math.round(newOutput.bpm),
       bpmConfidence,
@@ -461,28 +570,48 @@ export class HeartBeatProcessor {
         timestamp: lb.timestamp,
         ibiMs: lb.rrMs ?? 0,
         instantBpm: lb.rrMs ? 60000 / lb.rrMs : 0,
-        beatSQI: (beatSqiAdj ?? lb.confidence) * 100,
+        beatSQI: lastAcceptedBeatSqi as number,
         morphologyScore: lb.morphologyScore ?? 0,
         rhythmScore: (lb.rhythmScore ?? 0) * 100,
         detectorAgreementScore: (lb.detectorAgreement ?? 0) * 100,
         templateScore: lb.templateScore ?? 0,
         sourceConsistencyScore: bpmConfidence * 100,
         flags: flags as string[],
+        detectorHits: (lb as { detectorHits?: { systolicPeak: boolean; derivativeUpslope: boolean; envelopeSupport: boolean } }).detectorHits
+          ?? lastFrameCandidates.find((c) => Math.abs(c.timestamp - lb.timestamp) < 1)?.detectorHits,
       } : null,
       debug: {
-        expectedRrMs: diagnostics.rrMean,
-        hardRefractoryMs: 200,
-        softRefractoryMs: 280,
+        expectedRrMs,
+        hardRefractoryMs: refr.hardMs,
+        softRefractoryMs: refr.softMs,
+        recoveryMs: refr.recoveryMs,
         sampleRateHz: 60,
         beatsAcceptedSession: diagnostics.acceptedBeats,
         beatsRejectedSession: diagnostics.rejectedBeats,
         doublePeakCount: flags.filter((f) => f === 'double_peak').length,
-        missedBeatCount: 0,
+        missedBeatCount: missedTriggered ? 1 : 0,
         suspiciousCount: flags.filter((f) => f === 'suspicious').length,
         prematureCount: flags.filter((f) => f === 'premature').length,
         templateCorrelationLast: lb?.templateScore ?? 0,
         morphologyScoreLast: lb?.morphologyScore ?? 0,
         periodicityScore: diagnostics.temporalSQI,
+        missedBeatInference: {
+          triggered: missedTriggered,
+          lastIbiMs,
+          expectedRrMs,
+          ratio: ratioMissed,
+          hypothesisUsed,
+          correctedBpm,
+        },
+        beatSqiConsistency: {
+          beatSqiBase,
+          beatSqiAdjusted: beatSqiAdj,
+          beatSqi100: beatSQI100,
+          lastAcceptedBeatSqi,
+          consistent,
+          mismatchReason,
+        },
+        lastFrameCandidates,
         fusion: {
           hypotheses: hypothesesDebug.length > 0 ? hypothesesDebug : [
             { id: 'median', bpm: diagnostics.temporalBpm, confidence: diagnostics.confidence, weight: 0.6 },

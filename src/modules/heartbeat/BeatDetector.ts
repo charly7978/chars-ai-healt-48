@@ -63,6 +63,12 @@ export class BeatDetector {
   private recentAccepted: ConfirmedBeat[] = [];
   private recentAcceptedMax = 12;
 
+  // Cache para debug / introspección
+  private lastFrameCandidates: BeatCandidate[] = [];
+  private lastRefractory: { hardMs: number; softMs: number; recoveryMs: number } = {
+    hardMs: 200, softMs: 280, recoveryMs: 450,
+  };
+
   constructor(config?: Partial<DetectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
@@ -111,11 +117,15 @@ export class BeatDetector {
     // 4) Filtrar candidatos demasiado cercanos manteniendo el de mejor score combinado
     const deduped = this.suppressDoublePeaks(enriched);
 
-    // 5) Adjudicación con reglas explícitas
+    // 5) Adjudicación con reglas explícitas (cachea refractory para introspección)
+    this.lastRefractory = this.computeRefractory(this.expectedRR());
     const validated = this.adjudicate(deduped);
 
     // 6) Confirmación: tomar el mejor "accepted/pending" y promoverlo a ConfirmedBeat
     const confirmed = this.confirmBeat(validated, signal);
+
+    // Cache para introspección debug
+    this.lastFrameCandidates = validated;
 
     return { candidates: validated, confirmed };
   }
@@ -551,6 +561,20 @@ export class BeatDetector {
   getLastConfirmedBeat(): ConfirmedBeat | null { return this.lastConfirmedBeat; }
   getLastRejectionReason(): string { return this.lastRejectionReason; }
   hasTemplate(): boolean { return this.template !== null; }
+
+  /** Refractory windows actuales (derivadas de expectedRR del último frame procesado) */
+  getRefractoryWindows(): { hardMs: number; softMs: number; recoveryMs: number; expectedRrMs: number } {
+    return {
+      hardMs: this.lastRefractory.hardMs,
+      softMs: this.lastRefractory.softMs,
+      recoveryMs: this.lastRefractory.recoveryMs,
+      expectedRrMs: this.expectedRR(),
+    };
+  }
+
+  /** Candidatos del último frame con su breakdown completo (para debug) */
+  getLastFrameCandidates(): BeatCandidate[] { return this.lastFrameCandidates; }
+
   getSessionStats(): { accepted: number; rejected: number; acceptanceRate: number } {
     const total = this.sessionAccepted + this.sessionRejected;
     return {
@@ -570,6 +594,8 @@ export class BeatDetector {
     this.template = null;
     this.templateBuffer = [];
     this.recentAccepted = [];
+    this.lastFrameCandidates = [];
+    this.lastRefractory = { hardMs: 200, softMs: 280, recoveryMs: 450 };
   }
 }
 
