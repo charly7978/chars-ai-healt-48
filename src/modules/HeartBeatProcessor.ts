@@ -212,6 +212,9 @@ export class HeartBeatProcessor {
     // Estimar BPM espectral
     const spectralBpm = this.bpmEstimator.estimateSpectral(longWindow);
 
+    // Estimar BPM por autocorrelación (hipótesis adicional independiente)
+    const autocorr = this.bpmEstimator.estimateAutocorrelation(longWindow);
+
     // Calcular SQI temporal
     const temporalSQI = this.sqiEstimator.calculateTemporalSQI(
       rrData,
@@ -221,14 +224,15 @@ export class HeartBeatProcessor {
     // Calcular SQI espectral
     const spectralSQI = this.sqiEstimator.calculateSpectralSQI(longWindow);
 
-    // Fusionar BPM
+    // Fusionar BPM (multi-hipótesis con hysteresis y outlier-handling)
     const fusionResult = this.fusion.fuse(
       temporalBpm,
       spectralBpm,
       temporalSQI,
       spectralSQI,
       normalized.quality,
-      normalized.fingerDetected
+      normalized.fingerDetected,
+      autocorr
     );
 
     // Calcular SQI global
