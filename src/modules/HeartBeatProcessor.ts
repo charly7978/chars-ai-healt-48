@@ -61,11 +61,15 @@ export interface HeartBeatProcessOutput {
     templateScore: number;
     sourceConsistencyScore: number;
     flags: string[];
+    /** Hits del último beat aceptado por detector */
+    detectorHits?: { systolicPeak: boolean; derivativeUpslope: boolean; envelopeSupport: boolean };
   } | null;
   debug: {
     expectedRrMs?: number;
     hardRefractoryMs?: number;
     softRefractoryMs?: number;
+    /** Recovery window dinámica (ms) derivada de expectedRR */
+    recoveryMs?: number;
     sampleRateHz?: number;
     beatsAcceptedSession?: number;
     beatsRejectedSession?: number;
@@ -76,6 +80,37 @@ export interface HeartBeatProcessOutput {
     templateCorrelationLast?: number;
     morphologyScoreLast?: number;
     periodicityScore?: number;
+    /** Inferencia de missed-beat: dispara cuando lastIBI > expectedRR * factor */
+    missedBeatInference?: {
+      triggered: boolean;
+      lastIbiMs: number;
+      expectedRrMs: number;
+      ratio: number;
+      hypothesisUsed: string;
+      correctedBpm: number;
+    };
+    /** Consistencia entre las tres fuentes de beatSQI */
+    beatSqiConsistency?: {
+      beatSqiBase: number | null;
+      beatSqiAdjusted: number | null;
+      beatSqi100: number | null;
+      lastAcceptedBeatSqi: number | null;
+      consistent: boolean;
+      mismatchReason: string;
+    };
+    /** Candidatos detectados en el último frame con su breakdown */
+    lastFrameCandidates?: Array<{
+      timestamp: number;
+      adjudication: 'pending' | 'accepted' | 'rejected';
+      rejectionReason?: string;
+      confidence: number;
+      detectorAgreement: number;
+      detectorHits: { systolicPeak: boolean; derivativeUpslope: boolean; envelopeSupport: boolean };
+      morphologyScore: number;
+      templateScore: number;
+      rhythmScore: number;
+      flags: string[];
+    }>;
     fusion?: {
       hypotheses: Array<{ id: string; bpm: number; confidence: number; weight: number }>;
       activeHypothesis: string;
