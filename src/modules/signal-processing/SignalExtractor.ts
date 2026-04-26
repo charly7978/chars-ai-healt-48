@@ -1,7 +1,9 @@
 /**
- * SignalExtractor - Multi-source PPG signal extraction with quality metrics
- * Generates multiple signal candidates, ranks them by quality, applies DSP
- * Uses tile-based spatial weighting and temporal resampling
+ * SignalExtractor - multi-source PPG extraction from the detected ROI.
+ *
+ * The extractor uses only real camera pixels inside the contact mask, rejects
+ * clipped samples at pixel level, builds several optical signal candidates and
+ * ranks them by spectral concentration, perfusion amplitude and stability.
  */
 
 import { RingBuffer } from './RingBuffer';
@@ -13,6 +15,7 @@ export type SignalSource =
   | 'BLUE_AVG'
   | 'RED_ABSORBANCE'
   | 'GREEN_ABSORBANCE'
+  | 'BLUE_ABSORBANCE'
   | 'RG_RATIO'
   | 'RGB_WEIGHTED'
   | 'TEMPORAL_DIFF';
@@ -50,206 +53,172 @@ export interface SignalExtractorConfig {
   detrendAlpha: number;
 }
 
+export interface RoiBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 const DEFAULT_CONFIG: SignalExtractorConfig = {
-  bufferSize: 180, // ~6 seconds at 30fps
-  bandPassLow: 0.8, // Hz (~48 BPM)
-  bandPassHigh: 3.0, // Hz (~180 BPM)
+  bufferSize: 210,
+  bandPassLow: 0.72,
+  bandPassHigh: 3.4,
   sampleRate: 30,
-  detrendAlpha: 0.05
+  detrendAlpha: 0.025
 };
+
+const PIXEL_CLIP_HIGH = 252;
+const PIXEL_CLIP_LOW = 8;
 
 export class SignalExtractor {
   private config: SignalExtractorConfig;
-  
-  // Buffers for each signal source
   private buffers: Map<SignalSource, RingBuffer> = new Map();
   private dcBuffers: Map<SignalSource, RingBuffer> = new Map();
-  
-  // Current active source
-  private activeSource: SignalSource = 'RED_AVG';
-  private sourceStableFrames = 0;
-  private framesSinceSwitch = 0;
-  private readonly MIN_SWITCH_FRAMES = 20;
-  private readonly SQI_ADVANTAGE = 0.15;
+  private detrendStates: Map<SignalSource, number> = new Map();
+  private lowPassStates: Map<SignalSource, number> = new Map();
 
-  // Filter state
-  private lastFilteredValue = 0;
-  private detrendState = 0;
+  private activeSource: SignalSource = 'RGB_WEIGHTED';
+  private framesSinceSwitch = 0;
+  private readonly MIN_SWITCH_FRAMES = 24;
+  private readonly SQI_ADVANTAGE = 0.12;
 
   constructor(config?: Partial<SignalExtractorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.initializeBuffers();
   }
 
-  /**
-   * Initialize ring buffers for all sources
-   */
   private initializeBuffers(): void {
-    const sources: SignalSource[] = [
-      'RED_AVG', 'GREEN_AVG', 'BLUE_AVG',
-      'RED_ABSORBANCE', 'GREEN_ABSORBANCE',
-      'RG_RATIO', 'RGB_WEIGHTED', 'TEMPORAL_DIFF'
-    ];
-
+    const sources = this.sources();
     for (const source of sources) {
       this.buffers.set(source, new RingBuffer(this.config.bufferSize));
       this.dcBuffers.set(source, new RingBuffer(this.config.bufferSize));
     }
   }
 
-  /**
-   * Extract signal from frame data
-   */
   extract(
     imageData: ImageData,
     mask: Uint8Array,
     tileStats: TileStats[],
+    roiBounds: RoiBounds,
     prevFrameRgb?: { r: number; g: number; b: number }
   ): ExtractedSignal {
     const { data, width, height } = imageData;
-
-    // Calculate tile weights based on quality
-    const tileWeights = this.calculateTileWeights(tileStats, mask, width, height);
-
-    // Extract spatially weighted RGB averages
-    const rgb = this.extractWeightedRGB(data, mask, tileWeights, width, height);
-
-    // Generate all signal candidates
+    const tileWeights = this.calculateTileWeights(tileStats);
+    const rgb = this.extractWeightedRGB(data, mask, tileWeights, width, height, roiBounds);
     const candidates = this.generateCandidates(rgb, prevFrameRgb);
-
-    // Score and rank candidates
     const scoredCandidates = this.scoreCandidates(candidates);
 
-    // Select best source with hysteresis
     this.selectActiveSource(scoredCandidates);
 
-    // Get active candidate
     const active = scoredCandidates.find(c => c.source === this.activeSource) || scoredCandidates[0];
-
-    // Apply filtering
-    const filtered = this.applyFiltering(active);
+    const filtered = active ? this.applyFiltering(active) : 0;
 
     return {
-      rawValue: active.rawValue,
+      rawValue: active?.rawValue ?? 0,
       filteredValue: filtered,
-      quality: active.quality,
-      activeSource: this.activeSource,
-      perfusionIndex: active.perfusionIndex,
-      snr: active.snr,
+      quality: active?.quality ?? 0,
+      activeSource: active?.source ?? this.activeSource,
+      perfusionIndex: active?.perfusionIndex ?? 0,
+      snr: active?.snr ?? 0,
       rgbRaw: rgb,
       tileWeights,
       candidates: scoredCandidates
     };
   }
 
-  /**
-   * Calculate tile weights based on quality metrics
-   */
-  private calculateTileWeights(
-    tileStats: TileStats[],
-    mask: Uint8Array,
-    imageWidth: number,
-    imageHeight: number
-  ): number[] {
+  private calculateTileWeights(tileStats: TileStats[]): number[] {
     const weights: number[] = [];
-    const gridCols = Math.ceil(Math.sqrt(tileStats.length));
-    const gridRows = Math.ceil(tileStats.length / gridCols);
+    const gridCols = Math.max(1, Math.round(Math.sqrt(tileStats.length)));
+    const gridRows = Math.max(1, Math.ceil(tileStats.length / gridCols));
 
     for (let i = 0; i < tileStats.length; i++) {
       const tile = tileStats[i];
-      
-      if (!tile.isValid || tile.quality === 0) {
+      if (!tile?.isValid || tile.quality <= 0) {
         weights.push(0);
         continue;
       }
 
-      // Base weight from tile quality
-      let weight = tile.quality;
-
-      // Penalize saturated tiles
-      if (tile.isSaturated) weight *= 0.3;
-
-      // Penalize dark tiles
-      if (tile.isTooDark) weight *= 0.2;
-
-      // Centrality bonus (tiles near center get higher weight)
       const row = Math.floor(i / gridCols);
       const col = i % gridCols;
-      const cx = gridCols / 2;
-      const cy = gridRows / 2;
+      const cx = (gridCols - 1) / 2;
+      const cy = (gridRows - 1) / 2;
+      const maxDist = Math.sqrt(cx * cx + cy * cy) + 1e-6;
       const dist = Math.sqrt((col - cx) ** 2 + (row - cy) ** 2);
-      const maxDist = Math.sqrt(cx * cx + cy * cy);
-      const centrality = 1 - (dist / maxDist);
-      weight *= (0.7 + centrality * 0.3);
+      const centrality = 1 - dist / maxDist;
+      const clipFactor = Math.max(0, 1 - tile.saturatedRatio * 2.1 - tile.darkRatio * 1.8);
+      const textureFactor = this.trapezoid(tile.intensityStd, 0.3, 1.5, 42, 72);
+
+      const weight = tile.quality *
+        (0.72 + 0.28 * centrality) *
+        (0.82 + 0.18 * textureFactor) *
+        clipFactor;
 
       weights.push(Math.max(0, weight));
     }
 
-    // Normalize weights
     const sum = weights.reduce((a, b) => a + b, 0);
     if (sum > 0) {
-      for (let i = 0; i < weights.length; i++) {
-        weights[i] /= sum;
-      }
+      for (let i = 0; i < weights.length; i++) weights[i] /= sum;
     }
 
     return weights;
   }
 
-  /**
-   * Extract spatially weighted RGB averages
-   */
   private extractWeightedRGB(
     data: Uint8ClampedArray,
     mask: Uint8Array,
     tileWeights: number[],
     imageWidth: number,
-    imageHeight: number
+    imageHeight: number,
+    roiBounds: RoiBounds
   ): { r: number; g: number; b: number } {
-    const roiW = Math.sqrt(mask.length);
-    const roiH = roiW;
-    const gridCols = Math.ceil(Math.sqrt(tileWeights.length));
-    const gridRows = Math.ceil(tileWeights.length / gridCols);
-    const tileW = roiW / gridCols;
-    const tileH = roiH / gridRows;
-
-    let sumR = 0, sumG = 0, sumB = 0, totalWeight = 0;
-
-    for (let i = 0; i < tileWeights.length; i++) {
-      const weight = tileWeights[i];
-      if (weight === 0) continue;
-
-      const tile = tileStatsToTileStats(tileWeights, i); // Placeholder
-      const row = Math.floor(i / gridCols);
-      const col = i % gridCols;
-      const tx0 = Math.floor(col * tileW);
-      const ty0 = Math.floor(row * tileH);
-      const tx1 = Math.min(Math.floor((col + 1) * tileW), roiW);
-      const ty1 = Math.min(Math.floor((row + 1) * tileH), roiH);
-
-      // Sample pixels in this tile
-      let tileSumR = 0, tileSumG = 0, tileSumB = 0, tileCount = 0;
-      for (let y = ty0; y < ty1; y += 2) {
-        for (let x = tx0; x < tx1; x += 2) {
-          const pi = (y * imageWidth + x) * 4;
-          tileSumR += data[pi];
-          tileSumG += data[pi + 1];
-          tileSumB += data[pi + 2];
-          tileCount++;
-        }
-      }
-
-      if (tileCount > 0) {
-        sumR += (tileSumR / tileCount) * weight;
-        sumG += (tileSumG / tileCount) * weight;
-        sumB += (tileSumB / tileCount) * weight;
-        totalWeight += weight;
-      }
-    }
-
-    if (totalWeight === 0) {
+    const roiW = Math.max(0, Math.floor(roiBounds.width));
+    const roiH = Math.max(0, Math.floor(roiBounds.height));
+    if (roiW <= 0 || roiH <= 0 || mask.length !== roiW * roiH) {
       return { r: 0, g: 0, b: 0 };
     }
+
+    const gridCols = Math.max(1, Math.round(Math.sqrt(tileWeights.length)));
+    const gridRows = Math.max(1, Math.ceil(tileWeights.length / gridCols));
+
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    let totalWeight = 0;
+
+    for (let y = 0; y < roiH; y++) {
+      const gy = roiBounds.y + y;
+      if (gy < 0 || gy >= imageHeight) continue;
+
+      for (let x = 0; x < roiW; x++) {
+        const mi = y * roiW + x;
+        if (mask[mi] === 0) continue;
+
+        const gx = roiBounds.x + x;
+        if (gx < 0 || gx >= imageWidth) continue;
+
+        const col = Math.min(gridCols - 1, Math.floor((x / roiW) * gridCols));
+        const row = Math.min(gridRows - 1, Math.floor((y / roiH) * gridRows));
+        const tileWeight = tileWeights[row * gridCols + col] || 0;
+        if (tileWeight <= 0) continue;
+
+        const pi = (gy * imageWidth + gx) * 4;
+        const r = data[pi];
+        const g = data[pi + 1];
+        const b = data[pi + 2];
+
+        if (r >= PIXEL_CLIP_HIGH || g >= PIXEL_CLIP_HIGH || b >= PIXEL_CLIP_HIGH) continue;
+        if ((r <= PIXEL_CLIP_LOW && g <= PIXEL_CLIP_LOW && b <= PIXEL_CLIP_LOW) || r + g + b < 36) continue;
+
+        sumR += r * tileWeight;
+        sumG += g * tileWeight;
+        sumB += b * tileWeight;
+        totalWeight += tileWeight;
+      }
+    }
+
+    if (totalWeight <= 0) return { r: 0, g: 0, b: 0 };
 
     return {
       r: sumR / totalWeight,
@@ -258,279 +227,205 @@ export class SignalExtractor {
     };
   }
 
-  /**
-   * Generate all signal candidates from RGB
-   */
   private generateCandidates(
     rgb: { r: number; g: number; b: number },
     prevFrameRgb?: { r: number; g: number; b: number }
   ): SignalCandidate[] {
     const eps = 1e-6;
-    const total = rgb.r + rgb.g + rgb.b + eps;
-
-    // Get DC baselines (slow EMA)
     const dcR = this.updateDC('RED_AVG', rgb.r);
     const dcG = this.updateDC('GREEN_AVG', rgb.g);
     const dcB = this.updateDC('BLUE_AVG', rgb.b);
 
+    const redNorm = rgb.r / (dcR + eps);
+    const greenNorm = rgb.g / (dcG + eps);
+    const blueNorm = rgb.b / (dcB + eps);
+    const redAbs = -Math.log(this.clamp(redNorm, eps, 4));
+    const greenAbs = -Math.log(this.clamp(greenNorm, eps, 4));
+    const blueAbs = -Math.log(this.clamp(blueNorm, eps, 4));
+    const rgChrom = Math.log(this.clamp(redNorm / (greenNorm + eps), 0.1, 10));
+    const fusedAbsorbance = 0.50 * redAbs + 0.35 * greenAbs + 0.15 * blueAbs;
+    const fusedRaw = 0.50 * rgb.r + 0.35 * rgb.g + 0.15 * rgb.b;
+    const fusedDc = 0.50 * dcR + 0.35 * dcG + 0.15 * dcB;
+
     const candidates: SignalCandidate[] = [
-      {
-        source: 'RED_AVG',
-        rawValue: rgb.r,
-        normalizedValue: rgb.r / (dcR + eps),
-        acComponent: 0,
-        dcComponent: dcR,
-        perfusionIndex: 0,
-        snr: 0,
-        periodicity: 0,
-        stability: 0,
-        quality: 0
-      },
-      {
-        source: 'GREEN_AVG',
-        rawValue: rgb.g,
-        normalizedValue: rgb.g / (dcG + eps),
-        acComponent: 0,
-        dcComponent: dcG,
-        perfusionIndex: 0,
-        snr: 0,
-        periodicity: 0,
-        stability: 0,
-        quality: 0
-      },
-      {
-        source: 'BLUE_AVG',
-        rawValue: rgb.b,
-        normalizedValue: rgb.b / (dcB + eps),
-        acComponent: 0,
-        dcComponent: dcB,
-        perfusionIndex: 0,
-        snr: 0,
-        periodicity: 0,
-        stability: 0,
-        quality: 0
-      },
-      {
-        source: 'RED_ABSORBANCE',
-        rawValue: rgb.r,
-        normalizedValue: -Math.log((rgb.r + eps) / (dcR + eps)),
-        acComponent: 0,
-        dcComponent: dcR,
-        perfusionIndex: 0,
-        snr: 0,
-        periodicity: 0,
-        stability: 0,
-        quality: 0
-      },
-      {
-        source: 'GREEN_ABSORBANCE',
-        rawValue: rgb.g,
-        normalizedValue: -Math.log((rgb.g + eps) / (dcG + eps)),
-        acComponent: 0,
-        dcComponent: dcG,
-        perfusionIndex: 0,
-        snr: 0,
-        periodicity: 0,
-        stability: 0,
-        quality: 0
-      },
-      {
-        source: 'RG_RATIO',
-        rawValue: rgb.r / (rgb.g + eps),
-        normalizedValue: (rgb.r / (rgb.g + eps)) / ((dcR / (dcG + eps)) + eps),
-        acComponent: 0,
-        dcComponent: dcR / (dcG + eps),
-        perfusionIndex: 0,
-        snr: 0,
-        periodicity: 0,
-        stability: 0,
-        quality: 0
-      },
-      {
-        source: 'RGB_WEIGHTED',
-        rawValue: 0.6 * rgb.r + 0.3 * rgb.g + 0.1 * rgb.b,
-        normalizedValue: (0.6 * rgb.r + 0.3 * rgb.g + 0.1 * rgb.b) / (0.6 * dcR + 0.3 * dcG + 0.1 * dcB + eps),
-        acComponent: 0,
-        dcComponent: 0.6 * dcR + 0.3 * dcG + 0.1 * dcB,
-        perfusionIndex: 0,
-        snr: 0,
-        periodicity: 0,
-        stability: 0,
-        quality: 0
-      }
+      this.emptyCandidate('RED_AVG', rgb.r, redNorm, dcR),
+      this.emptyCandidate('GREEN_AVG', rgb.g, greenNorm, dcG),
+      this.emptyCandidate('BLUE_AVG', rgb.b, blueNorm, dcB),
+      this.emptyCandidate('RED_ABSORBANCE', rgb.r, redAbs, dcR),
+      this.emptyCandidate('GREEN_ABSORBANCE', rgb.g, greenAbs, dcG),
+      this.emptyCandidate('BLUE_ABSORBANCE', rgb.b, blueAbs, dcB),
+      this.emptyCandidate('RG_RATIO', rgb.r / (rgb.g + eps), rgChrom, dcR / (dcG + eps)),
+      this.emptyCandidate('RGB_WEIGHTED', fusedRaw, fusedAbsorbance, fusedDc)
     ];
 
-    // Temporal diff if previous frame available
     if (prevFrameRgb) {
-      candidates.push({
-        source: 'TEMPORAL_DIFF',
-        rawValue: rgb.r - prevFrameRgb.r + 0.5 * (rgb.g - prevFrameRgb.g),
-        normalizedValue: (rgb.r - prevFrameRgb.r + 0.5 * (rgb.g - prevFrameRgb.g)),
-        acComponent: 0,
-        dcComponent: 0,
-        perfusionIndex: 0,
-        snr: 0,
-        periodicity: 0,
-        stability: 0,
-        quality: 0
-      });
+      const diff = (rgb.r - prevFrameRgb.r) / (dcR + eps) +
+        0.55 * (rgb.g - prevFrameRgb.g) / (dcG + eps) +
+        0.20 * (rgb.b - prevFrameRgb.b) / (dcB + eps);
+
+      candidates.push(this.emptyCandidate('TEMPORAL_DIFF', diff, diff, 1));
     }
 
     return candidates;
   }
 
-  /**
-   * Update DC baseline with EMA
-   */
+  private emptyCandidate(
+    source: SignalSource,
+    rawValue: number,
+    normalizedValue: number,
+    dcComponent: number
+  ): SignalCandidate {
+    return {
+      source,
+      rawValue,
+      normalizedValue: Number.isFinite(normalizedValue) ? normalizedValue : 0,
+      acComponent: 0,
+      dcComponent,
+      perfusionIndex: 0,
+      snr: 0,
+      periodicity: 0,
+      stability: 0,
+      quality: 0
+    };
+  }
+
   private updateDC(source: SignalSource, value: number): number {
     const dcBuf = this.dcBuffers.get(source)!;
     const prev = dcBuf.length > 0 ? dcBuf.last() : value;
-    const smoothed = prev * (1 - this.config.detrendAlpha) + value * this.config.detrendAlpha;
+    if (prev <= 1 && value > 1) {
+      dcBuf.push(value);
+      return value;
+    }
+    const alpha = value <= 0 ? 0.005 : this.config.detrendAlpha;
+    const smoothed = prev * (1 - alpha) + value * alpha;
     dcBuf.push(smoothed);
     return smoothed;
   }
 
-  /**
-   * Score all candidates based on quality metrics
-   */
   private scoreCandidates(candidates: SignalCandidate[]): SignalCandidate[] {
     const scored: SignalCandidate[] = [];
 
     for (const candidate of candidates) {
-      // Push to buffer
       const buf = this.buffers.get(candidate.source)!;
       buf.push(candidate.normalizedValue);
 
-      // Calculate AC/DC
-      const stats = buf.stats();
-      const ac = stats.max - stats.min;
-      const dc = Math.abs(stats.mean) + 1e-6;
-      const acDc = ac / dc;
-      const perfusionIndex = acDc * 100;
-
-      // Calculate SNR (signal power vs noise power)
-      const signalPower = stats.variance;
-      const noisePower = this.estimateNoise(buf);
-      const snr = signalPower / (noisePower + 1e-6);
-
-      // Periodicity via zero-crossing rate
-      const periodicity = this.calculatePeriodicity(buf);
-
-      // Stability via drift
-      const stability = this.calculateStability(buf);
-
-      // Composite quality score
-      const quality = this.calculateQuality(acDc, snr, periodicity, stability, buf.length);
+      const ac = this.robustRange(buf);
+      const spectral = this.calculateSpectralMetrics(buf);
+      const stability = this.calculateStability(buf, ac);
+      const quality = this.calculateQuality(ac, spectral.snr, spectral.periodicity, stability, buf.length);
 
       scored.push({
         ...candidate,
         acComponent: ac,
-        dcComponent: dc,
-        perfusionIndex,
-        snr,
-        periodicity,
+        perfusionIndex: ac * 100,
+        snr: spectral.snr,
+        periodicity: spectral.periodicity,
         stability,
         quality
       });
     }
 
+    scored.sort((a, b) => b.quality - a.quality);
     return scored;
   }
 
-  /**
-   * Estimate noise from buffer
-   */
-  private estimateNoise(buf: RingBuffer): number {
-    if (buf.length < 10) return 1;
+  private robustRange(buf: RingBuffer): number {
+    if (buf.length < 6) return 0;
 
-    const arr = buf.toArray();
-    const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
-    
-    // High-frequency noise estimation (difference between consecutive samples)
-    let noiseSum = 0;
-    for (let i = 1; i < arr.length; i++) {
-      noiseSum += (arr[i] - arr[i - 1]) ** 2;
+    const arr = buf.toArray(Math.min(buf.length, 120)).filter(Number.isFinite);
+    if (arr.length < 6) return 0;
+
+    arr.sort((a, b) => a - b);
+    const lo = arr[Math.floor((arr.length - 1) * 0.05)];
+    const hi = arr[Math.floor((arr.length - 1) * 0.95)];
+    return Math.max(0, hi - lo);
+  }
+
+  private calculateSpectralMetrics(buf: RingBuffer): { snr: number; periodicity: number } {
+    const n = Math.min(buf.length, 150);
+    if (n < 48) return { snr: 0, periodicity: 0 };
+
+    const arr = buf.toArray(n);
+    const mean = arr.reduce((a, b) => a + b, 0) / n;
+    const fs = this.config.sampleRate;
+    const minK = Math.max(1, Math.floor(0.45 * n / fs));
+    const maxK = Math.min(Math.floor(4.5 * n / fs), Math.floor(n / 2));
+
+    let totalPower = 0;
+    let cardiacPower = 0;
+    let peakPower = 0;
+    let bins = 0;
+
+    for (let k = minK; k <= maxK; k++) {
+      const hz = k * fs / n;
+      let re = 0;
+      let im = 0;
+
+      for (let i = 0; i < n; i++) {
+        const window = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / Math.max(1, n - 1));
+        const v = (arr[i] - mean) * window;
+        const phase = 2 * Math.PI * k * i / n;
+        re += v * Math.cos(phase);
+        im -= v * Math.sin(phase);
+      }
+
+      const power = re * re + im * im;
+      totalPower += power;
+      bins++;
+
+      if (hz >= this.config.bandPassLow && hz <= this.config.bandPassHigh) {
+        cardiacPower += power;
+        if (power > peakPower) peakPower = power;
+      }
     }
-    
-    return noiseSum / (arr.length - 1);
+
+    const residualPower = Math.max(1e-12, totalPower - peakPower);
+    const snr = peakPower / (residualPower / Math.max(1, bins - 1));
+    const bandRatio = cardiacPower / Math.max(1e-12, totalPower);
+    const concentration = peakPower / Math.max(1e-12, cardiacPower);
+    const periodicity = this.clamp(0.65 * bandRatio + 0.35 * Math.min(1, concentration * 3), 0, 1);
+
+    return { snr, periodicity };
   }
 
-  /**
-   * Calculate periodicity score
-   */
-  private calculatePeriodicity(buf: RingBuffer): number {
-    if (buf.length < 30) return 0;
+  private calculateStability(buf: RingBuffer, ac: number): number {
+    if (buf.length < 36) return 0.55;
 
-    const arr = buf.toArray(30);
-    const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
-    
-    // Zero-crossing rate
-    let crossings = 0;
-    for (let i = 1; i < arr.length; i++) {
-      if ((arr[i] - mean) * (arr[i - 1] - mean) < 0) crossings++;
-    }
+    const arr = buf.toArray(Math.min(buf.length, 72));
+    const split = Math.floor(arr.length / 2);
+    const first = arr.slice(0, split).reduce((a, b) => a + b, 0) / Math.max(1, split);
+    const second = arr.slice(split).reduce((a, b) => a + b, 0) / Math.max(1, arr.length - split);
+    const drift = Math.abs(second - first);
 
-    // Cardiac band at 30fps: 0.8-3 Hz => 0.8-3 crossings per second
-    // For 30 samples (~1 sec): expect 0.8-3 crossings
-    const crossRate = crossings;
-    
-    return (crossRate >= 0.8 && crossRate <= 4) ? Math.min(1, crossRate / 2) : 0.3;
+    return this.clamp(1 - drift / Math.max(1e-5, ac * 3.2), 0, 1);
   }
 
-  /**
-   * Calculate stability score
-   */
-  private calculateStability(buf: RingBuffer): number {
-    if (buf.length < 30) return 0.5;
-
-    const arr = buf.toArray(30);
-    const firstHalf = arr.slice(0, 15).reduce((a, b) => a + b, 0) / 15;
-    const secondHalf = arr.slice(15).reduce((a, b) => a + b, 0) / 15;
-    
-    const drift = Math.abs(secondHalf - firstHalf);
-    const mean = Math.abs(firstHalf + secondHalf) / 2 + 1e-6;
-    
-    return Math.max(0, 1 - (drift / mean) * 5);
-  }
-
-  /**
-   * Calculate composite quality score
-   */
   private calculateQuality(
-    acDc: number,
+    ac: number,
     snr: number,
     periodicity: number,
     stability: number,
     bufferFill: number
   ): number {
-    const weights = {
-      acDc: 0.3,
-      snr: 0.25,
-      periodicity: 0.25,
-      stability: 0.15,
-      fill: 0.05
-    };
+    const perfusionScore = this.trapezoid(ac, 0.0008, 0.004, 0.075, 0.16);
+    const snrScore = this.clamp(Math.log10(snr + 1) / 1.35, 0, 1);
+    const fillScore = Math.min(1, bufferFill / 90);
 
-    const acDcScore = Math.min(1, acDc * 30);
-    const snrScore = Math.min(1, Math.log10(snr + 1) / 2);
-    const fillScore = bufferFill / this.config.bufferSize;
+    let quality =
+      0.34 * snrScore +
+      0.26 * periodicity +
+      0.24 * perfusionScore +
+      0.11 * stability +
+      0.05 * fillScore;
 
-    return (
-      acDcScore * weights.acDc +
-      snrScore * weights.snr +
-      periodicity * weights.periodicity +
-      stability * weights.stability +
-      fillScore * weights.fill
-    );
+    if (ac > 0.20) quality *= 0.45;
+    return this.clamp(quality, 0, 1);
   }
 
-  /**
-   * Select active source with hysteresis
-   */
   private selectActiveSource(scoredCandidates: SignalCandidate[]): void {
     this.framesSinceSwitch++;
+    if (scoredCandidates.length === 0) return;
 
-    scoredCandidates.sort((a, b) => b.quality - a.quality);
     const best = scoredCandidates[0];
     const current = scoredCandidates.find(c => c.source === this.activeSource) || best;
 
@@ -541,47 +436,59 @@ export class SignalExtractor {
     ) {
       this.activeSource = best.source;
       this.framesSinceSwitch = 0;
-      this.lastFilteredValue = 0; // Reset filter state on switch
     }
   }
 
-  /**
-   * Apply filtering to active signal
-   */
   private applyFiltering(candidate: SignalCandidate): number {
-    // Detrending (baseline removal)
-    const detrended = candidate.normalizedValue - this.detrendState;
-    this.detrendState = this.detrendState * (1 - this.config.detrendAlpha) + candidate.normalizedValue * this.config.detrendAlpha;
+    const source = candidate.source;
+    const value = candidate.normalizedValue;
+    const previousTrend = this.detrendStates.get(source) ?? value;
+    const trend = previousTrend * (1 - this.config.detrendAlpha) + value * this.config.detrendAlpha;
+    this.detrendStates.set(source, trend);
 
-    // Simple exponential smoothing (light filter)
-    const alpha = 0.3;
-    this.lastFilteredValue = this.lastFilteredValue * (1 - alpha) + detrended * alpha;
+    const detrended = value - trend;
+    const previousLowPass = this.lowPassStates.get(source) ?? detrended;
+    const lowPass = previousLowPass * 0.66 + detrended * 0.34;
+    this.lowPassStates.set(source, lowPass);
 
-    return this.lastFilteredValue;
+    return lowPass;
   }
 
-  /**
-   * Get active source
-   */
   getActiveSource(): SignalSource {
     return this.activeSource;
   }
 
-  /**
-   * Reset extractor state
-   */
   reset(): void {
     this.buffers.forEach(b => b.clear());
     this.dcBuffers.forEach(b => b.clear());
-    this.activeSource = 'RED_AVG';
-    this.sourceStableFrames = 0;
+    this.detrendStates.clear();
+    this.lowPassStates.clear();
+    this.activeSource = 'RGB_WEIGHTED';
     this.framesSinceSwitch = 0;
-    this.lastFilteredValue = 0;
-    this.detrendState = 0;
   }
-}
 
-// Helper function placeholder
-function tileStatsToTileStats(weights: number[], index: number): any {
-  return { isValid: true, quality: weights[index] || 0 };
+  private sources(): SignalSource[] {
+    return [
+      'RED_AVG',
+      'GREEN_AVG',
+      'BLUE_AVG',
+      'RED_ABSORBANCE',
+      'GREEN_ABSORBANCE',
+      'BLUE_ABSORBANCE',
+      'RG_RATIO',
+      'RGB_WEIGHTED',
+      'TEMPORAL_DIFF'
+    ];
+  }
+
+  private trapezoid(value: number, low0: number, low1: number, high1: number, high0: number): number {
+    if (!Number.isFinite(value) || value <= low0 || value >= high0) return 0;
+    if (value >= low1 && value <= high1) return 1;
+    if (value < low1) return (value - low0) / Math.max(1e-6, low1 - low0);
+    return (high0 - value) / Math.max(1e-6, high0 - high1);
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+  }
 }

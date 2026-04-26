@@ -61,9 +61,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private readonly sourceTypeMap: Record<SignalSource, any> = {
     'RED_AVG': 'RED_NORM',
     'GREEN_AVG': 'GREEN_NORM',
-    'BLUE_AVG': 'GREEN_NORM',
+    'BLUE_AVG': 'BLUE_NORM',
     'RED_ABSORBANCE': 'RED_ABSORBANCE',
     'GREEN_ABSORBANCE': 'GREEN_ABSORBANCE',
+    'BLUE_ABSORBANCE': 'BLUE_ABSORBANCE',
     'RG_RATIO': 'RG_WEIGHTED',
     'RGB_WEIGHTED': 'COMBINED',
     'TEMPORAL_DIFF': 'TEMPORAL_DIFF'
@@ -116,6 +117,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       imageData,
       contactAnalysis.mask,
       contactAnalysis.tileStats,
+      contactAnalysis.roiBounds,
       this.prevFrameRgb || undefined
     );
 
@@ -128,7 +130,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       contactAnalysis.coverage,
       contactAnalysis.clipHighRatio,
       contactAnalysis.uniformity,
-      extracted.perfusionIndex / 100,
+      (extracted.perfusionIndex / 100) * Math.max(1, extracted.rgbRaw.r),
       extracted.rgbRaw.r
     );
 
@@ -183,7 +185,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       pressureScore: contactAnalysis.pressureScore,
       snr: extracted.snr,
       guidanceMessage: contactAnalysis.guidanceMessage,
-      droppedFrames: 0 // Will be updated from capture engine timing
+      droppedFrames: this.droppedFrames
     };
 
     // Log every 60 frames
@@ -213,10 +215,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       quality: sqi.sqiGlobal,
       fingerDetected: isStable,
       roi: {
-        x: 0,
-        y: 0,
-        width: imageData.width,
-        height: imageData.height
+        x: contactAnalysis.roiBounds.x,
+        y: contactAnalysis.roiBounds.y,
+        width: contactAnalysis.roiBounds.width,
+        height: contactAnalysis.roiBounds.height
       },
       perfusionIndex: Math.max(0, extracted.perfusionIndex),
       rgbRaw: extracted.rgbRaw,

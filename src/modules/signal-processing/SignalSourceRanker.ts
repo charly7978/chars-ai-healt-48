@@ -8,9 +8,11 @@ import { RingBuffer } from './RingBuffer';
 export type SourceType =
   | 'RED_NORM'
   | 'GREEN_NORM'
+  | 'BLUE_NORM'
   | 'RG_WEIGHTED'
   | 'RED_ABSORBANCE'
   | 'GREEN_ABSORBANCE'
+  | 'BLUE_ABSORBANCE'
   | 'TEMPORAL_DIFF'
   | 'COMBINED';
 

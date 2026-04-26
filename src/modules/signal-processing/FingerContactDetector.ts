@@ -1,7 +1,8 @@
 /**
- * FingerContactDetector - Real finger contact detection with tile-based segmentation
- * Uses color analysis, spatial connectivity, and temporal hysteresis
- * Replaces simple ROI with actual finger tissue detection
+ * FingerContactDetector - contact PPG finger detection from real camera frames.
+ * Uses a centered coarse ROI, tile connectivity, clipping rejection and temporal
+ * hysteresis. It returns ROI-relative mask pixels plus absolute ROI bounds so
+ * downstream extraction samples the correct part of the frame.
  */
 
 export type ContactState =
@@ -20,6 +21,12 @@ export interface TileStats {
   intensity: number;
   redRatio: number;
   rgRatio: number;
+  rbRatio: number;
+  chromaSpread: number;
+  intensityStd: number;
+  saturatedRatio: number;
+  darkRatio: number;
+  sampleCount: number;
   isSaturated: boolean;
   isTooDark: boolean;
   isValid: boolean;
@@ -42,6 +49,7 @@ export interface ContactAnalysis {
   guidanceMessage: string;
   tileStats: TileStats[];
   mask: Uint8Array;
+  roiBounds: { x: number; y: number; width: number; height: number };
 }
 
 export interface FingerContactDetectorConfig {
@@ -54,19 +62,24 @@ export interface FingerContactDetectorConfig {
   unstableExitFrames: number;
   motionThreshold: number;
   pressureThreshold: number;
+  roiScale: number;
 }
 
 const DEFAULT_CONFIG: FingerContactDetectorConfig = {
   tileSize: 16,
-  gridRows: 8,
-  gridCols: 8,
-  minCoverage: 0.15,
-  minRedForFinger: 40,
+  gridRows: 10,
+  gridCols: 10,
+  minCoverage: 0.18,
+  minRedForFinger: 42,
   stableEntryFrames: 8,
   unstableExitFrames: 12,
-  motionThreshold: 0.3,
-  pressureThreshold: 0.7
+  motionThreshold: 0.34,
+  pressureThreshold: 0.72,
+  roiScale: 0.78
 };
+
+const CLIP_HIGH = 252;
+const CLIP_LOW = 8;
 
 export class FingerContactDetector {
   private config: FingerContactDetectorConfig;
@@ -77,76 +90,57 @@ export class FingerContactDetector {
   private prevTileStats: TileStats[] = [];
   private frameCount = 0;
 
-  // Adaptive thresholds
   private adaptiveMinCoverage = DEFAULT_CONFIG.minCoverage;
   private adaptiveMinRed = DEFAULT_CONFIG.minRedForFinger;
 
   constructor(config?: Partial<FingerContactDetectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.adaptiveMinCoverage = this.config.minCoverage;
+    this.adaptiveMinRed = this.config.minRedForFinger;
   }
 
-  /**
-   * Analyze frame for finger contact
-   */
   analyze(imageData: ImageData): ContactAnalysis {
     this.frameCount++;
 
     const { width, height, data } = imageData;
     const cx = width >> 1;
     const cy = height >> 1;
-
-    // Define analysis region (center crop)
-    const cropSize = Math.min(width, height) * 0.75;
+    const cropSize = Math.floor(Math.min(width, height) * this.config.roiScale);
     const x0 = Math.max(0, Math.floor(cx - cropSize / 2));
     const y0 = Math.max(0, Math.floor(cy - cropSize / 2));
-    const x1 = Math.min(width, Math.floor(cx + cropSize / 2));
-    const y1 = Math.min(height, Math.floor(cy + cropSize / 2));
+    const x1 = Math.min(width, x0 + cropSize);
+    const y1 = Math.min(height, y0 + cropSize);
     const roiW = x1 - x0;
     const roiH = y1 - y0;
 
-    // Tile analysis
     const tileStats = this.analyzeTiles(data, width, x0, y0, roiW, roiH);
-    
-    // Build binary mask
+    this.keepLargestConnectedComponent(tileStats);
+
     const mask = this.buildContactMask(tileStats, roiW, roiH);
-    
-    // Calculate metrics
     const validPixels = mask.reduce((sum, v) => sum + v, 0);
-    const totalPixels = roiW * roiH;
+    const totalPixels = Math.max(1, roiW * roiH);
     const coverage = validPixels / totalPixels;
-
-    // Centrality - how close valid region is to center
     const centrality = this.calculateCentrality(mask, roiW, roiH);
-
-    // Clipping ratios
     const { clipHigh, clipLow } = this.calculateClipping(tileStats);
-
-    // Uniformity - spatial variance
     const uniformity = this.calculateUniformity(tileStats);
-
-    // Mask stability vs previous frame
     const maskStability = this.calculateMaskStability(mask, totalPixels);
-
-    // Motion score - tile-level changes
     const motionScore = this.calculateMotionScore(tileStats);
-
-    // Pressure score - based on saturation and uniformity
     const pressureScore = this.calculatePressureScore(tileStats, uniformity, clipHigh);
 
-    // Determine if finger is present
-    const fingerPresent = this.isFingerPresent(tileStats, coverage, clipHigh, clipLow, maskStability);
+    const fingerPresent = this.isFingerPresent(
+      tileStats,
+      coverage,
+      centrality,
+      clipHigh,
+      clipLow,
+      maskStability
+    );
 
-    // Update state machine with hysteresis
     this.updateContactState(fingerPresent, pressureScore, motionScore, clipHigh, coverage);
-
-    // Adaptive threshold adjustment
     this.adaptThresholds(tileStats, coverage);
 
-    const guidanceMessage = this.getGuidanceMessage();
-
-    // Store for next frame
     this.prevMask = mask;
-    this.prevTileStats = tileStats;
+    this.prevTileStats = tileStats.map(t => ({ ...t }));
 
     return {
       state: this.contactState,
@@ -160,16 +154,14 @@ export class FingerContactDetector {
       pressureScore,
       validPixels,
       totalPixels,
-      confidence: this.calculateConfidence(fingerPresent, coverage, maskStability),
-      guidanceMessage,
+      confidence: this.calculateConfidence(fingerPresent, coverage, centrality, maskStability),
+      guidanceMessage: this.getGuidanceMessage(),
       tileStats,
-      mask
+      mask,
+      roiBounds: { x: x0, y: y0, width: roiW, height: roiH }
     };
   }
 
-  /**
-   * Analyze image in tiles
-   */
   private analyzeTiles(
     data: Uint8ClampedArray,
     imageWidth: number,
@@ -189,36 +181,37 @@ export class FingerContactDetector {
         const tw = Math.min(tileW, x0 + roiW - tx);
         const th = Math.min(tileH, y0 + roiH - ty);
 
-        let sumR = 0, sumG = 0, sumB = 0;
-        let count = 0;
+        let sumR = 0;
+        let sumG = 0;
+        let sumB = 0;
+        let sumLum = 0;
+        let sumLumSq = 0;
         let saturatedCount = 0;
         let darkCount = 0;
+        let count = 0;
 
-        // Sample pixels (every 2nd for performance)
         for (let y = ty; y < ty + th; y += 2) {
           for (let x = tx; x < tx + tw; x += 2) {
             const pi = (y * imageWidth + x) * 4;
             const r = data[pi];
             const g = data[pi + 1];
             const b = data[pi + 2];
+            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
 
             sumR += r;
             sumG += g;
             sumB += b;
+            sumLum += lum;
+            sumLumSq += lum * lum;
             count++;
 
-            if (r >= 250 || g >= 250 || b >= 250) saturatedCount++;
-            if (r <= 10 && g <= 10 && b <= 10) darkCount++;
+            if (r >= CLIP_HIGH || g >= CLIP_HIGH || b >= CLIP_HIGH) saturatedCount++;
+            if ((r <= CLIP_LOW && g <= CLIP_LOW && b <= CLIP_LOW) || r + g + b < 36) darkCount++;
           }
         }
 
         if (count === 0) {
-          stats.push({
-            avgR: 0, avgG: 0, avgB: 0,
-            intensity: 0, redRatio: 0, rgRatio: 0,
-            isSaturated: false, isTooDark: true,
-            isValid: false, quality: 0
-          });
+          stats.push(this.emptyTile());
           continue;
         }
 
@@ -229,31 +222,51 @@ export class FingerContactDetector {
         const total = intensity + 1e-6;
         const redRatio = avgR / total;
         const rgRatio = avgR / (avgG + 1);
+        const rbRatio = avgR / (avgB + 1);
+        const meanLum = sumLum / count;
+        const intensityStd = Math.sqrt(Math.max(0, sumLumSq / count - meanLum * meanLum));
+        const saturatedRatio = saturatedCount / count;
+        const darkRatio = darkCount / count;
+        const chromaSpread = (Math.max(avgR, avgG, avgB) - Math.min(avgR, avgG, avgB)) / 255;
 
-        const isSaturated = saturatedCount / count > 0.5;
-        const isTooDark = darkCount / count > 0.5 || intensity < 30;
+        const brightnessScore = this.trapezoid(avgR, 34, 58, 225, 248);
+        const redRatioScore = this.trapezoid(redRatio, 0.30, 0.34, 0.58, 0.66);
+        const rgScore = this.trapezoid(rgRatio, 0.82, 1.02, 3.2, 4.8);
+        const rbScore = this.trapezoid(rbRatio, 1.05, 1.22, 6.0, 9.0);
+        const clipScore = Math.max(0, 1 - saturatedRatio * 2.3 - darkRatio * 2.0);
+        const textureScore = this.trapezoid(intensityStd, 0.4, 1.8, 38, 70);
+        const chromaScore = this.trapezoid(chromaSpread, 0.02, 0.06, 0.55, 0.80);
 
-        // Quality score based on finger-like properties
-        let quality = 0;
-        if (!isSaturated && !isTooDark) {
-          // Red dominance (finger transmits red via hemoglobin)
-          const redDominance = redRatio >= 0.25 && redRatio <= 0.55 ? 1 : 0;
-          // R/G ratio for skin
-          const rgValid = rgRatio >= 0.6 && rgRatio <= 4.0 ? 1 : 0;
-          // Intensity in reasonable range
-          const intensityValid = intensity >= 50 && intensity <= 600 ? 1 : 0;
-          
-          quality = (redDominance * 0.4 + rgValid * 0.35 + intensityValid * 0.25);
-        }
+        const quality = Math.max(0, Math.min(1,
+          0.28 * brightnessScore +
+          0.20 * redRatioScore +
+          0.18 * rgScore +
+          0.12 * rbScore +
+          0.12 * clipScore +
+          0.06 * textureScore +
+          0.04 * chromaScore
+        ));
+
+        const isSaturated = saturatedRatio > 0.42;
+        const isTooDark = darkRatio > 0.45 || intensity < 42;
+        const isValid = quality >= 0.46 && saturatedRatio < 0.58 && darkRatio < 0.50;
 
         stats.push({
-          avgR, avgG, avgB,
+          avgR,
+          avgG,
+          avgB,
           intensity,
           redRatio,
           rgRatio,
+          rbRatio,
+          chromaSpread,
+          intensityStd,
+          saturatedRatio,
+          darkRatio,
+          sampleCount: count,
           isSaturated,
           isTooDark,
-          isValid: quality > 0.4,
+          isValid,
           quality
         });
       }
@@ -262,9 +275,74 @@ export class FingerContactDetector {
     return stats;
   }
 
-  /**
-   * Build binary contact mask from tile stats
-   */
+  private emptyTile(): TileStats {
+    return {
+      avgR: 0,
+      avgG: 0,
+      avgB: 0,
+      intensity: 0,
+      redRatio: 0,
+      rgRatio: 0,
+      rbRatio: 0,
+      chromaSpread: 0,
+      intensityStd: 0,
+      saturatedRatio: 0,
+      darkRatio: 1,
+      sampleCount: 0,
+      isSaturated: false,
+      isTooDark: true,
+      isValid: false,
+      quality: 0
+    };
+  }
+
+  private keepLargestConnectedComponent(tileStats: TileStats[]): void {
+    const rows = this.config.gridRows;
+    const cols = this.config.gridCols;
+    const visited = new Uint8Array(tileStats.length);
+    let bestComponent: number[] = [];
+
+    for (let i = 0; i < tileStats.length; i++) {
+      if (visited[i] || !tileStats[i].isValid) continue;
+
+      const stack = [i];
+      const component: number[] = [];
+      visited[i] = 1;
+
+      while (stack.length) {
+        const idx = stack.pop()!;
+        component.push(idx);
+        const row = Math.floor(idx / cols);
+        const col = idx % cols;
+        const neighbors = [
+          row > 0 ? idx - cols : -1,
+          row < rows - 1 ? idx + cols : -1,
+          col > 0 ? idx - 1 : -1,
+          col < cols - 1 ? idx + 1 : -1
+        ];
+
+        for (const n of neighbors) {
+          if (n >= 0 && !visited[n] && tileStats[n].isValid) {
+            visited[n] = 1;
+            stack.push(n);
+          }
+        }
+      }
+
+      if (component.length > bestComponent.length) {
+        bestComponent = component;
+      }
+    }
+
+    const keep = new Set(bestComponent);
+    for (let i = 0; i < tileStats.length; i++) {
+      if (!keep.has(i)) {
+        tileStats[i].isValid = false;
+        tileStats[i].quality *= 0.35;
+      }
+    }
+  }
+
   private buildContactMask(tileStats: TileStats[], roiW: number, roiH: number): Uint8Array {
     const tileW = Math.ceil(roiW / this.config.gridCols);
     const tileH = Math.ceil(roiH / this.config.gridRows);
@@ -274,18 +352,17 @@ export class FingerContactDetector {
       for (let col = 0; col < this.config.gridCols; col++) {
         const idx = row * this.config.gridCols + col;
         const tile = tileStats[idx];
+        if (!tile?.isValid) continue;
 
-        if (tile.isValid) {
-          // Fill tile region in mask
-          const tx0 = col * tileW;
-          const ty0 = row * tileH;
-          const tw = Math.min(tileW, roiW - tx0);
-          const th = Math.min(tileH, roiH - ty0);
+        const tx0 = col * tileW;
+        const ty0 = row * tileH;
+        const tw = Math.min(tileW, roiW - tx0);
+        const th = Math.min(tileH, roiH - ty0);
 
-          for (let y = ty0; y < ty0 + th; y++) {
-            for (let x = tx0; x < tx0 + tw; x++) {
-              mask[y * roiW + x] = 1;
-            }
+        for (let y = ty0; y < ty0 + th; y++) {
+          const offset = y * roiW;
+          for (let x = tx0; x < tx0 + tw; x++) {
+            mask[offset + x] = 1;
           }
         }
       }
@@ -294,19 +371,18 @@ export class FingerContactDetector {
     return mask;
   }
 
-  /**
-   * Calculate centrality of valid region
-   */
   private calculateCentrality(mask: Uint8Array, width: number, height: number): number {
-    let sumX = 0, sumY = 0, count = 0;
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
     const cx = width / 2;
     const cy = height / 2;
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         if (mask[y * width + x]) {
-          sumX += Math.abs(x - cx);
-          sumY += Math.abs(y - cy);
+          sumX += x;
+          sumY += y;
           count++;
         }
       }
@@ -314,51 +390,43 @@ export class FingerContactDetector {
 
     if (count === 0) return 0;
 
-    const avgDistX = sumX / count;
-    const avgDistY = sumY / count;
+    const meanX = sumX / count;
+    const meanY = sumY / count;
+    const dist = Math.sqrt((meanX - cx) ** 2 + (meanY - cy) ** 2);
     const maxDist = Math.sqrt(cx * cx + cy * cy);
-    const avgDist = Math.sqrt(avgDistX * avgDistX + avgDistY * avgDistY);
-
-    return Math.max(0, 1 - avgDist / maxDist);
+    return Math.max(0, 1 - dist / (maxDist + 1e-6));
   }
 
-  /**
-   * Calculate clipping ratios
-   */
   private calculateClipping(tileStats: TileStats[]): { clipHigh: number; clipLow: number } {
-    let saturated = 0, dark = 0, total = tileStats.length;
+    let high = 0;
+    let low = 0;
+    let count = 0;
 
     for (const tile of tileStats) {
-      if (tile.isSaturated) saturated++;
-      if (tile.isTooDark) dark++;
+      if (tile.sampleCount <= 0) continue;
+      high += tile.saturatedRatio * tile.sampleCount;
+      low += tile.darkRatio * tile.sampleCount;
+      count += tile.sampleCount;
     }
 
     return {
-      clipHigh: saturated / total,
-      clipLow: dark / total
+      clipHigh: high / Math.max(1, count),
+      clipLow: low / Math.max(1, count)
     };
   }
 
-  /**
-   * Calculate spatial uniformity
-   */
   private calculateUniformity(tileStats: TileStats[]): number {
     const validTiles = tileStats.filter(t => t.isValid);
     if (validTiles.length < 4) return 0;
 
-    const intensities = validTiles.map(t => t.intensity);
+    const intensities = validTiles.map(t => t.intensity / 3);
     const mean = intensities.reduce((a, b) => a + b, 0) / intensities.length;
     const variance = intensities.reduce((sum, v) => sum + (v - mean) ** 2, 0) / intensities.length;
     const cv = Math.sqrt(variance) / (mean + 1e-6);
 
-    // cv near 0 = very uniform (could be excessive pressure)
-    // cv > 0.3 = varied (good for pulsatility)
-    return Math.max(0, Math.min(1, 1 - cv * 2));
+    return Math.max(0, Math.min(1, 1 - cv * 2.2));
   }
 
-  /**
-   * Calculate mask stability vs previous frame
-   */
   private calculateMaskStability(mask: Uint8Array, totalPixels: number): number {
     if (!this.prevMask || this.prevMask.length !== mask.length) return 1.0;
 
@@ -370,80 +438,64 @@ export class FingerContactDetector {
     return same / totalPixels;
   }
 
-  /**
-   * Calculate motion score from tile changes
-   */
   private calculateMotionScore(tileStats: TileStats[]): number {
-    if (this.prevTileStats.length === 0 || this.prevTileStats.length !== tileStats.length) {
-      return 0;
-    }
+    if (this.prevTileStats.length !== tileStats.length) return 0;
 
-    let totalDiff = 0;
+    let diff = 0;
+    let weighted = 0;
     for (let i = 0; i < tileStats.length; i++) {
-      const diff = Math.abs(tileStats[i].intensity - this.prevTileStats[i].intensity);
-      totalDiff += diff;
+      const weight = Math.max(tileStats[i].quality, this.prevTileStats[i].quality);
+      if (weight <= 0) continue;
+      const denom = Math.max(32, (tileStats[i].intensity + this.prevTileStats[i].intensity) / 2);
+      diff += Math.abs(tileStats[i].intensity - this.prevTileStats[i].intensity) / denom * weight;
+      weighted += weight;
     }
 
-    const avgDiff = totalDiff / tileStats.length;
-    return Math.min(1, avgDiff / 50); // Normalize
+    return Math.max(0, Math.min(1, weighted > 0 ? diff / weighted : 0));
   }
 
-  /**
-   * Calculate pressure score
-   */
   private calculatePressureScore(tileStats: TileStats[], uniformity: number, clipHigh: number): number {
+    const validTiles = tileStats.filter(t => t.isValid || t.quality > 0.3);
+    const avgChannel = validTiles.length
+      ? validTiles.reduce((sum, t) => sum + t.intensity / 3, 0) / validTiles.length
+      : 0;
+
     let score = 0;
-
-    // High uniformity suggests blood squeezed out
-    score += uniformity > 0.85 ? 0.3 : uniformity > 0.7 ? 0.15 : 0;
-
-    // High saturation
-    score += clipHigh > 0.3 ? 0.4 : clipHigh > 0.1 ? 0.2 : 0;
-
-    // High intensity average
-    const avgIntensity = tileStats.reduce((sum, t) => sum + t.intensity, 0) / tileStats.length;
-    score += avgIntensity > 200 ? 0.3 : avgIntensity > 150 ? 0.15 : 0;
+    score += uniformity > 0.88 ? 0.28 : uniformity > 0.74 ? 0.14 : 0;
+    score += clipHigh > 0.28 ? 0.38 : clipHigh > 0.12 ? 0.18 : 0;
+    score += avgChannel > 232 ? 0.28 : avgChannel > 210 ? 0.14 : 0;
 
     return Math.min(1, score);
   }
 
-  /**
-   * Determine if finger is present
-   */
   private isFingerPresent(
     tileStats: TileStats[],
     coverage: number,
+    centrality: number,
     clipHigh: number,
     clipLow: number,
     maskStability: number
   ): boolean {
-    // Coverage check
     if (coverage < this.adaptiveMinCoverage) return false;
+    if (centrality < 0.42 && coverage < 0.45) return false;
 
-    // Valid tiles check
     const validTiles = tileStats.filter(t => t.isValid);
-    if (validTiles.length < tileStats.length * 0.3) return false;
+    if (validTiles.length < Math.max(6, tileStats.length * 0.12)) return false;
 
-    // Average red intensity
-    const avgRed = validTiles.reduce((sum, t) => sum + t.avgR, 0) / validTiles.length;
+    const avgRed = validTiles.reduce((sum, t) => sum + t.avgR * t.quality, 0) /
+      Math.max(1e-6, validTiles.reduce((sum, t) => sum + t.quality, 0));
     if (avgRed < this.adaptiveMinRed) return false;
 
-    // Red dominance
     const avgRedRatio = validTiles.reduce((sum, t) => sum + t.redRatio, 0) / validTiles.length;
-    if (avgRedRatio < 0.25) return false;
+    const avgRg = validTiles.reduce((sum, t) => sum + t.rgRatio, 0) / validTiles.length;
+    if (avgRedRatio < 0.30 || avgRg < 0.82) return false;
 
-    // Clipping rejection
-    if (clipHigh > 0.6 || clipLow > 0.5) return false;
-
-    // Mask stability after initial frames
-    if (this.frameCount > 10 && maskStability < 0.3) return false;
+    if (clipHigh > 0.62 || clipLow > 0.42) return false;
+    if (this.frameCount > 12 && maskStability < 0.28) return false;
 
     return true;
   }
 
-  /**
-   * Update contact state machine with hysteresis
-   */
   private updateContactState(
     fingerPresent: boolean,
     pressureScore: number,
@@ -459,36 +511,31 @@ export class FingerContactDetector {
       this.consecutiveGoodFrames = 0;
     }
 
-    // Check for motion corruption
     if (motionScore > this.config.motionThreshold && this.contactState === 'STABLE_CONTACT') {
       this.contactState = 'MOTION_CORRUPTED';
       this.consecutiveGoodFrames = 0;
       return;
     }
 
-    // Check for excessive pressure
     if (pressureScore > this.config.pressureThreshold) {
       this.contactState = 'EXCESSIVE_PRESSURE';
       return;
     }
 
-    // Check for saturation
-    if (clipHigh > 0.35) {
+    if (clipHigh > 0.38) {
       this.contactState = 'SATURATED_CONTACT';
       return;
     }
 
-    // Main state transitions
     if (!fingerPresent) {
       if (this.consecutiveBadFrames >= this.config.unstableExitFrames) {
         this.contactState = 'NO_CONTACT';
       } else if (this.contactState !== 'NO_CONTACT') {
-        this.contactState = coverage > 0.1 ? 'PARTIAL_CONTACT' : 'ACQUIRING_CONTACT';
+        this.contactState = coverage > 0.10 ? 'PARTIAL_CONTACT' : 'ACQUIRING_CONTACT';
       }
       return;
     }
 
-    // Finger present
     if (this.consecutiveGoodFrames >= this.config.stableEntryFrames) {
       this.contactState = 'STABLE_CONTACT';
     } else if (this.consecutiveGoodFrames >= 3) {
@@ -498,69 +545,71 @@ export class FingerContactDetector {
     }
   }
 
-  /**
-   * Adapt thresholds based on recent history
-   */
   private adaptThresholds(tileStats: TileStats[], coverage: number): void {
-    if (this.frameCount < 30) return;
+    if (this.frameCount < 30 || this.contactState !== 'STABLE_CONTACT') return;
 
     const validTiles = tileStats.filter(t => t.isValid);
     if (validTiles.length === 0) return;
 
-    const avgRed = validTiles.reduce((sum, t) => sum + t.avgR, 0) / validTiles.length;
+    const weightSum = validTiles.reduce((sum, t) => sum + t.quality, 0);
+    const avgRed = validTiles.reduce((sum, t) => sum + t.avgR * t.quality, 0) / Math.max(1e-6, weightSum);
 
-    // Slowly adapt red threshold
-    this.adaptiveMinRed = this.adaptiveMinRed * 0.95 + avgRed * 0.05 * 0.8;
-
-    // Adapt coverage threshold based on recent success
-    if (this.contactState === 'STABLE_CONTACT') {
-      this.adaptiveMinCoverage = this.adaptiveMinCoverage * 0.98 + coverage * 0.02 * 0.9;
-    }
+    this.adaptiveMinRed = this.clamp(this.adaptiveMinRed * 0.98 + avgRed * 0.02 * 0.72, 34, 95);
+    this.adaptiveMinCoverage = this.clamp(
+      this.adaptiveMinCoverage * 0.985 + coverage * 0.015 * 0.72,
+      0.14,
+      0.34
+    );
   }
 
-  /**
-   * Calculate overall confidence
-   */
-  private calculateConfidence(fingerPresent: boolean, coverage: number, maskStability: number): number {
+  private calculateConfidence(
+    fingerPresent: boolean,
+    coverage: number,
+    centrality: number,
+    maskStability: number
+  ): number {
     if (!fingerPresent) return 0;
 
-    let confidence = coverage * 0.4 + maskStability * 0.6;
+    let confidence = 0.45 * Math.min(1, coverage / 0.62) +
+      0.25 * centrality +
+      0.30 * maskStability;
 
-    // Boost for stable state
-    if (this.contactState === 'STABLE_CONTACT') {
-      confidence = Math.min(1, confidence + 0.2);
-    }
-
-    return Math.max(0, Math.min(1, confidence));
+    if (this.contactState === 'STABLE_CONTACT') confidence += 0.12;
+    return this.clamp(confidence, 0, 1);
   }
 
-  /**
-   * Get guidance message for user
-   */
   private getGuidanceMessage(): string {
     switch (this.contactState) {
       case 'NO_CONTACT':
-        return 'Coloque el dedo sobre la cámara';
+        return 'Coloque el dedo sobre la camara';
       case 'PARTIAL_CONTACT':
-        return 'Presione más el dedo';
+        return 'Cubra completamente camara y flash';
       case 'ACQUIRING_CONTACT':
-        return 'Detectando dedo...';
+        return 'Adquiriendo contacto';
       case 'STABLE_CONTACT':
-        return 'Señal estable';
+        return 'Senal estable';
       case 'SATURATED_CONTACT':
-        return 'Demasiada luz - aleje el dedo';
+        return 'Saturacion: reduzca presion o cambie posicion';
       case 'EXCESSIVE_PRESSURE':
-        return 'Reduzca la presión';
+        return 'Reduzca presion';
       case 'MOTION_CORRUPTED':
         return 'Mantenga el dedo quieto';
       default:
-        return '...';
+        return 'Procesando';
     }
   }
 
-  /**
-   * Reset detector state
-   */
+  private trapezoid(value: number, low0: number, low1: number, high1: number, high0: number): number {
+    if (!Number.isFinite(value) || value <= low0 || value >= high0) return 0;
+    if (value >= low1 && value <= high1) return 1;
+    if (value < low1) return (value - low0) / Math.max(1e-6, low1 - low0);
+    return (high0 - value) / Math.max(1e-6, high0 - high1);
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+  }
+
   reset(): void {
     this.contactState = 'NO_CONTACT';
     this.consecutiveGoodFrames = 0;
@@ -572,9 +621,6 @@ export class FingerContactDetector {
     this.adaptiveMinRed = this.config.minRedForFinger;
   }
 
-  /**
-   * Get current contact state
-   */
   getState(): ContactState {
     return this.contactState;
   }
