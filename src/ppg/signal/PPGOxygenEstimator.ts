@@ -31,14 +31,16 @@ export function estimateCameraSpO2(params: {
   samples: PPGOpticalSample[];
   quality: PPGSignalQuality;
   canPublishVitals: boolean;
+  calibrationBadge: SpO2CalibrationBadge;
 }): PublishedOxygenMeasurement {
-  const { samples, quality, canPublishVitals } = params;
+  const { samples, quality, canPublishVitals, calibrationBadge } = params;
   const reasons: string[] = [];
 
   if (!canPublishVitals) reasons.push("PPG_NOT_VALIDATED");
   if (samples.length < 180) reasons.push("OXYGEN_BUFFER_SHORT");
   if (quality.totalScore < 75) reasons.push("SQI_BELOW_OXYGEN_THRESHOLD");
   if (quality.estimatorAgreementBpm > 5) reasons.push("BPM_ESTIMATORS_NOT_LOCKED");
+  if (calibrationBadge === "uncalibrated") reasons.push("CAMERA_UNCALIBRATED_FOR_SPO2");
 
   const last = samples[samples.length - 1];
   if (!last) {
@@ -48,6 +50,7 @@ export function estimateCameraSpO2(params: {
       canPublish: false,
       method: "NONE",
       reasons: ["NO_OPTICAL_SAMPLES"],
+      calibrationBadge,
     };
   }
 
@@ -89,21 +92,30 @@ export function estimateCameraSpO2(params: {
 
   const channelScore = clamp((Math.min(snrR, snrG, blueUsable ? snrB : snrG) - 0.9) / 3.2, 0, 1);
   const perfusionScore = clamp(quality.acDcPerfusionIndex / 0.6, 0, 1);
+  // Confidence is reduced for partial calibration; stays 0 for uncalibrated.
+  const calibFactor =
+    calibrationBadge === "calibrated" ? 1.0 : calibrationBadge === "partial" ? 0.7 : 0;
   const confidence = clamp(
-    quality.totalScore / 100 * 0.45 +
+    (quality.totalScore / 100 * 0.45 +
       channelScore * 0.30 +
       perfusionScore * 0.15 +
-      (blueUsable ? 0.10 : 0.04),
+      (blueUsable ? 0.10 : 0.04)) *
+      calibFactor,
     0,
     1,
   );
   if (confidence < 0.72) reasons.push("OXYGEN_CONFIDENCE_LOW");
 
+  // Hard publication policy:
+  //   - calibrated: full publication when confidence + reasons OK
+  //   - partial:    publish with badge=partial (UI must surface it)
+  //   - uncalibrated: never publish
   const canPublish =
     canPublishVitals &&
-    reasons.length === 0 &&
-    confidence >= 0.72 &&
-    physiological;
+    reasons.filter((r) => r !== "OXYGEN_CONFIDENCE_LOW").length === 0 &&
+    confidence >= (calibrationBadge === "calibrated" ? 0.72 : 0.6) &&
+    physiological &&
+    calibrationBadge !== "uncalibrated";
 
   return {
     spo2: canPublish ? spo2 : null,
@@ -111,5 +123,6 @@ export function estimateCameraSpO2(params: {
     canPublish,
     method: canPublish ? "CAMERA_RGB_RATIO_OF_RATIOS" : "NONE",
     reasons,
+    calibrationBadge,
   };
 }
