@@ -1355,8 +1355,58 @@ export class PPGCameraController {
       }
     };
 
-    // torch
-    await tryConstraint("torch", true, torchConstraint(true), capabilities?.torch === true);
+    // torch — try several known dialects, with read-back. The flash MUST
+    // physically turn on; otherwise we record the most informative failure.
+    const torchSupported = capabilities?.torch === true;
+    if (!torchSupported) {
+      diagnostics.fineConstraints.push({
+        key: "torch",
+        attempted: true,
+        applied: null,
+        status: "unsupported",
+      });
+    } else {
+      const torchStrategies: { label: string; payload: MediaTrackConstraints }[] = [
+        { label: "advanced.torch", payload: torchConstraint(true) },
+        { label: "top-level.torch", payload: { torch: true } as MediaTrackConstraints },
+        {
+          label: "fillLightMode.flash",
+          payload: { advanced: [{ fillLightMode: "flash" } as MediaTrackConstraintSet] },
+        },
+      ];
+      let torchOk = false;
+      let lastTorchErr: string | undefined;
+      for (const strat of torchStrategies) {
+        try {
+          await track.applyConstraints(strat.payload);
+          const s = track.getSettings();
+          const readback = s.torch === true || s.fillLightMode === "flash";
+          if (readback) {
+            diagnostics.fineConstraints.push({
+              key: "torch",
+              attempted: true,
+              applied: true,
+              status: "applied",
+            });
+            torchOk = true;
+            break;
+          }
+          lastTorchErr = `no-readback after ${strat.label}`;
+        } catch (e) {
+          lastTorchErr = `${strat.label}: ${(e as Error).message}`;
+        }
+      }
+      if (!torchOk) {
+        diagnostics.failedConstraints.push("torch");
+        diagnostics.fineConstraints.push({
+          key: "torch",
+          attempted: true,
+          applied: null,
+          status: "failed",
+          errorMessage: lastTorchErr ?? "torch did not engage",
+        });
+      }
+    }
 
     // exposureMode
     const exposureModes = capabilities?.exposureMode ?? [];
