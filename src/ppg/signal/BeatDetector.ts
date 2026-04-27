@@ -186,12 +186,12 @@ export class BeatDetector {
 
     // Multi-estimator: peaks, FFT, autocorr
     const spectral = spectralMetrics(signal, 0.5, 4.0);
-    const fftBpm = spectral.bandPowerRatio >= 0.35 ? spectral.dominantFrequencyBpm : null;
+    const fftBpmValue = spectral.bandPowerRatio >= 0.30 ? spectral.dominantFrequencyBpm : null;
     const autocorrResult = autocorrBpm(signal, this.minBpm, this.maxBpm);
-    const autocorrBpm = autocorrResult.bpm;
+    const autocorrBpmValue = autocorrResult.bpm;
 
     // Calculate estimator agreement
-    const estimates = [bpm, fftBpm, autocorrBpm].filter(
+    const estimates = [bpm, fftBpmValue, autocorrBpmValue].filter(
       (value): value is number => typeof value === "number" && Number.isFinite(value),
     );
     let estimatorAgreementBpm = 999;
@@ -199,33 +199,15 @@ export class BeatDetector {
       estimatorAgreementBpm = Math.max(...estimates) - Math.min(...estimates);
     }
 
-    // Only publish if all 3 exist and agree within 5 BPM
-    if (estimates.length < 3 || estimatorAgreementBpm > 5) {
-      return {
-        beats,
-        bpm: null,
-        rrIntervalsMs,
-        confidence: 0,
-        fftBpm,
-        autocorrBpm,
-        estimatorAgreementBpm,
-        rejectedCandidates: rejectedCount,
-      };
-    }
+    // Quality-aware confidence: do NOT zero-out the temporal BPM when fewer
+    // estimators agree. Downstream gate decides whether to publish.
+    let confidenceFactor = 1.0;
+    if (estimates.length < 2) confidenceFactor *= 0.5;
+    else if (estimatorAgreementBpm > 12) confidenceFactor *= 0.5;
+    else if (estimatorAgreementBpm > 6) confidenceFactor *= 0.75;
 
-    // Require at least 6 valid beats or long window for bradycardia
-    if (beats.length < 6 && bpm > 50) {
-      return {
-        beats,
-        bpm: null,
-        rrIntervalsMs,
-        confidence: 0,
-        fftBpm,
-        autocorrBpm,
-        estimatorAgreementBpm,
-        rejectedCandidates: rejectedCount,
-      };
-    }
+    if (beats.length < 4) confidenceFactor *= 0.6;
+    else if (beats.length < 6 && bpm > 50) confidenceFactor *= 0.85;
 
     return {
       beats,
