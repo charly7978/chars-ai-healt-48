@@ -534,6 +534,36 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
 
     cameraRef.current = cameraState;
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraState);
+
+    // Hot-start adaptive thresholds from any prior record for this device +
+    // camera. The hydrated record provides the threshold floor; runtime EMA
+    // and live observeFrame() calls will continue tightening from there.
+    const cameraLabel = cameraState.diagnostics?.selectedDevice?.label ?? "";
+    const adaptiveKey = buildAdaptiveKey({
+      deviceId: cameraState.selectedDeviceId,
+      cameraLabel,
+    });
+    adaptivePersistKeyRef.current = adaptiveKey;
+    lastAdaptivePersistAtRef.current = 0;
+    const restored = loadAdaptiveRecord(adaptiveKey);
+    if (restored) {
+      adaptiveThresholdsRef.current.hydrate({
+        thresholds: restored.thresholds,
+        sensorNoiseDb: restored.observed.sensorNoiseDb,
+        p10MeasuredFps: restored.observed.p10MeasuredFps,
+        p90JitterMs: restored.observed.p90JitterMs,
+        acquisitionMethod: restored.acquisitionMethod,
+        torchApplied: restored.torchApplied,
+      });
+      // eslint-disable-next-line no-console
+      console.info(
+        "[usePPGMeasurement] Hot-started adaptive thresholds for",
+        adaptiveKey,
+        "sessions=",
+        restored.sessions,
+      );
+    }
+
     publishUiSnapshot(true);
 
     if (!cameraState.stream) {
