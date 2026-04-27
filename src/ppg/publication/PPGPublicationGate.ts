@@ -190,6 +190,15 @@ export class PPGPublicationGate {
   private wasValid = false;
   private lastValidBpm: number | null = null;
   private lastValidAtMs: number | null = null;
+  /**
+   * Per-frame consecutive ROI-contact streak. Increments only on frames where
+   * ROI is accepted, contactState === "stable" and pressureState === "optimal".
+   * Resets to 0 on any break. Vitals (BPM/SpO2) cannot publish until the streak
+   * reaches MIN_CONTACT_STREAK_FRAMES, even if all spectral conditions pass.
+   * This eliminates one-shot false positives from transient flashes/motion.
+   */
+  private contactFrameStreak = 0;
+  private static readonly MIN_CONTACT_STREAK_FRAMES = 30; // ~1.0s @ 30fps
 
   reset(): void {
     this.goodWindowStreak = 0;
@@ -197,6 +206,7 @@ export class PPGPublicationGate {
     this.wasValid = false;
     this.lastValidBpm = null;
     this.lastValidAtMs = null;
+    this.contactFrameStreak = 0;
   }
 
   evaluate(params: {
@@ -265,6 +275,20 @@ export class PPGPublicationGate {
     const contactStateOk = roi.accepted === true && roi.contactState === "stable";
     const pressureOk = roi.pressureState === "optimal";
 
+    // Per-frame consecutive contact streak. Increment ONLY when this frame
+    // shows accepted ROI + stable contact + optimal pressure. Any break resets
+    // the counter to 0. Vitals cannot publish until the streak reaches the
+    // minimum (~1s of continuous contact). This is independent of the 2s
+    // windowed `goodWindowStreak` and explicitly defends BPM/SpO2 against
+    // single-frame false positives from transient flashes/motion.
+    if (contactStateOk && pressureOk) {
+      this.contactFrameStreak += 1;
+    } else {
+      this.contactFrameStreak = 0;
+    }
+    const contactStreakOk =
+      this.contactFrameStreak >= PPGPublicationGate.MIN_CONTACT_STREAK_FRAMES;
+
     const coreQualityPass =
       quality.totalScore >= thr.minTotalQualityScore &&
       quality.bandPowerRatio >= thr.minBandPowerRatio &&
@@ -295,6 +319,11 @@ export class PPGPublicationGate {
     if (!tileGateOk) reasons.add(`TILE_GATE_FAIL_${roi.usableTileCount}/${roi.tileCount}`);
     if (!contactStateOk) reasons.add(`CONTACT_NOT_ACCEPTED_${roi.contactState.toUpperCase()}`);
     if (!pressureOk) reasons.add(`PRESSURE_${roi.pressureState.toUpperCase()}`);
+    if (!contactStreakOk) {
+      reasons.add(
+        `CONTACT_STREAK_${this.contactFrameStreak}/${PPGPublicationGate.MIN_CONTACT_STREAK_FRAMES}`,
+      );
+    }
 
     const now = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
     const windowBucket = Math.floor(now / 2000);
@@ -334,6 +363,7 @@ export class PPGPublicationGate {
       enoughBeats &&
       coreQualityPass &&
       this.goodWindowStreak >= 2 &&
+      contactStreakOk &&
       beats.bpm !== null;
 
     // Quality dropped — wasValid transition handled below; nothing else to clear
