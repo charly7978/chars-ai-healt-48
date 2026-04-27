@@ -122,6 +122,9 @@ function emptyBeats(): BeatDetectionResult {
     sampleRateHz: 30,
     irregularityFlag: false,
     ibiStdMs: 0,
+    pulseRegularity: 0,
+    derivativeQuality: 0,
+    publicationException: "NO_BEATS_DETECTED",
   };
 }
 

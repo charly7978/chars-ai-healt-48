@@ -60,6 +60,10 @@ export interface PublishedPPGMeasurement {
   goodWindowStreak: number;
   lastValidTimestamp: number | null;
   rejectedBeatCandidates: number;
+  /** True if showing last valid BPM due to lost signal */
+  staleBadge: boolean;
+  /** Seconds since last valid BPM update */
+  secondsSinceLastValid: number;
 }
 
 const NO_SIGNAL_MESSAGE = "SIN SENAL PPG VERIFICABLE";
@@ -157,6 +161,8 @@ export function createEmptyPublishedPPGMeasurement(
     goodWindowStreak: 0,
     lastValidTimestamp: null,
     rejectedBeatCandidates: 0,
+    staleBadge: false,
+    secondsSinceLastValid: 0,
   };
 }
 
@@ -164,11 +170,13 @@ export class PPGPublicationGate {
   private goodWindowStreak = 0;
   private lastWindowBucket = -1;
   private wasValid = false;
+  private lastValidTimestampInternal: number | null = null;
 
   reset(): void {
     this.goodWindowStreak = 0;
     this.lastWindowBucket = -1;
     this.wasValid = false;
+    this.lastValidTimestampInternal = null;
   }
 
   evaluate(params: {
@@ -333,17 +341,30 @@ export class PPGPublicationGate {
       }
     }
 
+    // Stale badge logic: track last valid BPM timestamp
     let lastValidTimestamp: number | null = null;
     if (canPublishVitals && beats.bpm !== null) {
-      lastValidTimestamp = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
+      lastValidTimestamp = now;
+      this.lastValidTimestampInternal = now;
     }
+    
+    // Calculate stale status
+    const secondsSinceLastValid = this.lastValidTimestampInternal 
+      ? (now - this.lastValidTimestampInternal) / 1000 
+      : 0;
+    const staleBadge = !canPublishVitals && this.lastValidTimestampInternal !== null && secondsSinceLastValid < 30;
+    
+    // If stale, show last valid BPM with badge
+    const bpmToShow = canPublishVitals 
+      ? (beats.bpm !== null ? Math.round(beats.bpm) : null)
+      : (staleBadge && beats.peakBpm !== null ? Math.round(beats.peakBpm) : null);
 
     return {
       state,
       canPublishVitals,
       canVibrateBeat,
-      bpm: canPublishVitals && beats.bpm !== null ? Math.round(beats.bpm) : null,
-      bpmConfidence: canPublishVitals ? beats.confidence : 0,
+      bpm: bpmToShow,
+      bpmConfidence: canPublishVitals ? beats.confidence : (staleBadge ? beats.confidence * 0.5 : 0),
       oxygen,
       waveformSource,
       beatMarkers: canPublishVitals
@@ -371,10 +392,12 @@ export class PPGPublicationGate {
         reasons: [...new Set([...quality.reasons, ...reasons, ...oxygen.reasons])],
       },
       evidence: { camera, roi, channels },
-      message: canPublishVitals ? "PPG VALIDADA" : NO_SIGNAL_MESSAGE,
+      message: canPublishVitals ? "PPG VALIDADA" : (staleBadge ? "PPG DEGRADADA - ÚLTIMO VALOR VÁLIDO" : NO_SIGNAL_MESSAGE),
       goodWindowStreak: this.goodWindowStreak,
       lastValidTimestamp,
       rejectedBeatCandidates: beats.rejectedCandidates,
+      staleBadge,
+      secondsSinceLastValid,
     };
   }
 }

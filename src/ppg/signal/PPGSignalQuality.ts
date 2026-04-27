@@ -22,6 +22,10 @@ export interface PPGSignalQuality {
   dominantFrequencyHz: number;
   dominantFrequencyBpm: number;
   spectralPeakProminence: number;
+  /** Ratio of 2nd harmonic power to fundamental (healthy PPG: 0.15-0.35) */
+  harmonic2Ratio: number;
+  /** Consistency of harmonic structure: 1 = perfect, 0 = none */
+  harmonicConsistency: number;
   autocorrBpm: number | null;
   fftBpm: number | null;
   peakBpm: number | null;
@@ -46,6 +50,8 @@ export function createEmptySignalQuality(reasons: string[] = ["NO_REAL_PPG_WINDO
     dominantFrequencyHz: 0,
     dominantFrequencyBpm: 0,
     spectralPeakProminence: 0,
+    harmonic2Ratio: 0,
+    harmonicConsistency: 0,
     autocorrBpm: null,
     fftBpm: null,
     peakBpm: null,
@@ -160,6 +166,7 @@ export class PPGSignalQualityAnalyzer {
     if (estimatorAgreementBpm > 5) reasons.add("ESTIMATORS_DISAGREE");
     if (acDcPerfusionIndex < 0.03) reasons.add("PERFUSION_TOO_LOW");
     if (rrScore < 0.55 && beats.rrIntervalsMs.length >= 3) reasons.add("RR_INCONSISTENT");
+    if (spectral.harmonicConsistency < 0.3) reasons.add("LOW_HARMONIC_CONSISTENCY");
 
     const contactPart = roi.contactScore * 16;
     const illuminationPart = roi.illuminationScore * 10;
@@ -202,6 +209,8 @@ export class PPGSignalQualityAnalyzer {
       dominantFrequencyHz: spectral.dominantFrequencyHz,
       dominantFrequencyBpm: spectral.dominantFrequencyBpm,
       spectralPeakProminence: spectral.spectralPeakProminence,
+      harmonic2Ratio: spectral.harmonic2Ratio,
+      harmonicConsistency: spectral.harmonicConsistency,
       autocorrBpm: autocorr.bpm,
       fftBpm,
       peakBpm,

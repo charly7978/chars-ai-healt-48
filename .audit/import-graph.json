@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-27T05:41:49.270Z",
+  "generatedAt": "2026-04-27T06:11:36.650Z",
   "runtimeEntries": [
     "src/main.tsx",
     "src/App.tsx"
@@ -10,7 +10,6 @@
   "counts": {
     "KEEP_PRODUCTION": 19,
     "KEEP_TEST": 1,
-    "KEEP_DOC": 1,
     "KEEP_TYPES": 2
   },
   "classification": {
@@ -34,7 +33,6 @@
     "src/ppg/signal/RadiometricPPGExtractor.ts": "KEEP_PRODUCTION",
     "src/ppg/signal/__tests__/BeatDetector.test.ts": "KEEP_TEST",
     "src/ppg/usePPGMeasurement.ts": "KEEP_PRODUCTION",
-    "src/tailwind.config.lov.json": "KEEP_DOC",
     "src/types/media-stream.d.ts": "KEEP_TYPES",
     "src/vite-env.d.ts": "KEEP_TYPES"
   }

@@ -275,13 +275,44 @@ export function onePoleLowPass(samples: TimeSample[], cutoffHz: number, fs: numb
 
 /**
  * Band-pass filter using real sample rate (Fs)
- * Adult standard: 0.5-4.0 Hz (30-240 BPM)
- * Extended debug: 0.4-5.0 Hz (24-300 BPM)
+ * 
+ * FILTER RESPONSE DOCUMENTATION:
+ * 
+ * Adult standard band: 0.5-4.0 Hz (30-240 BPM)
+ * Extended debug band: 0.3-5.0 Hz (18-300 BPM) - configurable
+ * 
+ * Implementation: cascaded one-pole IIR (EMA high-pass + low-pass)
+ * 
+ * Phase Response:
+ * - Single pole IIR has non-linear phase near cutoff
+ * - For peak timing: this is acceptable because PPG morphology is 
+ *   preserved (steep slopes maintained)
+ * - If precise timing is critical, use zero-phase filtering (filtfilt)
+ *   but this adds latency (non-causal)
+ * 
+ * Magnitude Response:
+ * - High-pass (detrendEma): -3dB at cutoff, -6dB/octave rolloff
+ * - Low-pass (onePoleLowPass): -3dB at cutoff, -6dB/octave rolloff
+ * - Combined: bandpass with gentle skirts
+ * 
+ * Group Delay:
+ * - Max delay ≈ 1/(2π·fc) at cutoff frequency
+ * - For fc=0.5Hz: ~318ms theoretical delay
+ * - In practice: peaks align well due to morphological consistency
+ * 
+ * Alternative for stricter phase preservation:
+ * - Use forward-backward (zero-phase) filtering
+ * - Trade-off: adds 2x window latency, not suitable for real-time
+ * 
+ * @param samples Input time samples
+ * @param lowHz High-pass cutoff (Hz) - default 0.5 for adult PPG
+ * @param highHz Low-pass cutoff (Hz) - default 4.0 for adult PPG
+ * @param fs Sample rate (Hz) - actual measured rate, not assumed 30
  */
 export function bandpass(samples: TimeSample[], lowHz: number, highHz: number, fs: number): TimeSample[] {
-  // High-pass: remove slow trends
+  // High-pass: remove slow trends (DC drift, respiration < 0.5Hz)
   const highPassed = detrendEma(samples, lowHz, fs);
-  // Low-pass: remove high frequency noise
+  // Low-pass: remove high frequency noise (motion > 4Hz, electrical interference)
   return onePoleLowPass(highPassed, highHz, fs);
 }
 
@@ -359,6 +390,10 @@ export interface SpectralMetrics {
   bandPowerRatio: number;
   spectralPeakProminence: number;
   snrDb: number;
+  /** Ratio of 2nd harmonic power to fundamental. Healthy PPG has H2 ≈ 0.15-0.35 x H1 */
+  harmonic2Ratio: number;
+  /** Consistency of harmonics: 1 = perfect harmonic relationship, 0 = no harmonic structure */
+  harmonicConsistency: number;
 }
 
 // Cached Hann windows keyed by length. PPG windows are typically the same
@@ -393,6 +428,8 @@ export function spectralMetrics(
     bandPowerRatio: 0,
     spectralPeakProminence: 0,
     snrDb: -60,
+    harmonic2Ratio: 0,
+    harmonicConsistency: 0,
   };
   const result = resampleUniform(samples, 30);
   if (!result.valid) return empty;
@@ -416,9 +453,12 @@ export function spectralMetrics(
   const bandHighK = Math.min(maxK, Math.floor(upperHz * n / fs));
   const totalHighK = Math.min(maxK, Math.floor(8 * n / fs));
 
+  // Store power spectrum for harmonic analysis
+  const powerSpectrum = new Float32Array(maxK + 1);
   let totalPower = 0;
   let bandPower = 0;
   let peakPower = 0;
+  let peakK = 0;
   let peakFrequency = 0;
   let bandBins = 0;
 
@@ -442,14 +482,51 @@ export function spectralMetrics(
       sPrev = sNext;
     }
     const power = re * re + im * im;
+    powerSpectrum[k] = power;
     totalPower += power;
     if (k >= bandLowK && k <= bandHighK) {
       bandPower += power;
       bandBins += 1;
       if (power > peakPower) {
         peakPower = power;
+        peakK = k;
         peakFrequency = (k * fs) / n;
       }
+    }
+  }
+
+  // Harmonic analysis: check 2nd harmonic at 2*fundamental
+  let harmonic2Ratio = 0;
+  let harmonicConsistency = 0;
+  if (peakK > 0) {
+    const h2K = Math.round(peakK * 2);
+    if (h2K <= maxK && h2K >= totalLowK) {
+      const h2Power = powerSpectrum[h2K];
+      harmonic2Ratio = h2Power / Math.max(1e-12, peakPower);
+      
+      // Check for 3rd harmonic too
+      const h3K = Math.round(peakK * 3);
+      let h3Score = 0;
+      if (h3K <= maxK && h3K >= totalLowK) {
+        const h3Power = powerSpectrum[h3K];
+        // Expected ratio H3/H1 ≈ 0.05-0.15 for PPG
+        const expectedH3Ratio = 0.1;
+        const actualH3Ratio = h3Power / Math.max(1e-12, peakPower);
+        h3Score = Math.max(0, 1 - Math.abs(actualH3Ratio - expectedH3Ratio) / expectedH3Ratio);
+      }
+      
+      // Harmonic consistency: H2 should be ~0.15-0.35 of H1 for healthy PPG
+      // The dicrotic notch creates 2nd harmonic content
+      const expectedH2Min = 0.1;
+      const expectedH2Max = 0.5;
+      const h2Score = harmonic2Ratio >= expectedH2Min && harmonic2Ratio <= expectedH2Max 
+        ? 1 - Math.abs(harmonic2Ratio - 0.25) / 0.25  // Peak at 0.25
+        : Math.max(0, 1 - Math.min(
+            Math.abs(harmonic2Ratio - expectedH2Min),
+            Math.abs(harmonic2Ratio - expectedH2Max)
+          ) / 0.2);
+      
+      harmonicConsistency = h2Score * 0.7 + h3Score * 0.3;
     }
   }
 
@@ -461,6 +538,8 @@ export function spectralMetrics(
     bandPowerRatio: bandPower / Math.max(1e-12, totalPower),
     spectralPeakProminence: peakPower / averageBandRemainder,
     snrDb: 10 * Math.log10(peakPower / noisePower),
+    harmonic2Ratio,
+    harmonicConsistency,
   };
 }
 

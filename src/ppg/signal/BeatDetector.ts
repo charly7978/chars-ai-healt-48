@@ -39,9 +39,11 @@ import {
   clamp,
   durationMs,
   mad,
+  mean,
   median,
   preprocessPPGRobust,
   spectralMetrics,
+  std,
   type TimeSample,
 } from "./PPGFilters";
 
@@ -133,6 +135,10 @@ export interface BeatDetectionResult {
   irregularityFlag: boolean;
   /** Standard deviation of IBI in ms (HRV-like, informative only). */
   ibiStdMs: number;
+  /** Pulse regularity: consistency of pulse morphology across beats [0-1]. */
+  pulseRegularity: number;
+  /** Derivative-based quality: average slope consistency [0-1]. */
+  derivativeQuality: number;
 }
 
 function emptyResult(sampleRateHz = 30): BeatDetectionResult {
@@ -152,6 +158,8 @@ function emptyResult(sampleRateHz = 30): BeatDetectionResult {
     irregularityFlag: false,
     ibiStdMs: 0,
     publicationException: "NO_BEATS_DETECTED",
+    pulseRegularity: 0,
+    derivativeQuality: 0,
   };
 }
 
@@ -391,6 +399,48 @@ export class BeatDetector {
     const ibiStdMs = Math.sqrt(ibiVar);
     const irregularityFlag = rrMedian > 0 && ibiStdMs / rrMedian > 0.18;
 
+    // Pulse regularity: consistency of morphology features across beats
+    let pulseRegularity = 0;
+    if (accepted.length >= 3) {
+      const widths = accepted.map(b => b.pulseWidthMs);
+      const amplitudes = accepted.map(b => b.amplitude);
+      const riseTimes = accepted.map(b => b.riseTimeMs).filter((t): t is number => t !== null);
+      
+      const widthCv = std(widths) / (mean(widths) || 1); // Coefficient of variation
+      const ampCv = std(amplitudes) / (mean(amplitudes) || 1);
+      const riseCv = riseTimes.length > 2 ? std(riseTimes) / (mean(riseTimes) || 1) : 1;
+      
+      // Lower CV = higher regularity. Typical PPG: width CV < 0.15, amp CV < 0.25
+      pulseRegularity = clamp(
+        (1 - clamp(widthCv, 0, 0.5) / 0.5) * 0.4 +
+        (1 - clamp(ampCv, 0, 0.5) / 0.5) * 0.35 +
+        (1 - clamp(riseCv, 0, 0.5) / 0.5) * 0.25,
+        0, 1
+      );
+    }
+
+    // Derivative quality: consistency of first derivative in cardiac band
+    let derivativeQuality = 0;
+    if (signal.length > 10) {
+      const derivatives: number[] = [];
+      for (let i = 1; i < signal.length; i++) {
+        const dt = signal[i].t - signal[i-1].t;
+        if (dt > 0) {
+          derivatives.push((signal[i].value - signal[i-1].value) / dt);
+        }
+      }
+      if (derivatives.length > 5) {
+        const meanAbsDeriv = mean(derivatives.map(d => Math.abs(d)));
+        const derivVariance = std(derivatives);
+        // High quality: consistent derivative magnitude, not too noisy
+        derivativeQuality = clamp(
+          (1 - clamp(derivVariance / (meanAbsDeriv + 1e-6), 0, 2) / 2) * 0.7 +
+          clamp(meanAbsDeriv / (meanAbsDeriv + 0.1), 0, 1) * 0.3,
+          0, 1
+        );
+      }
+    }
+
     return {
       beats: accepted,
       withheldBeats: withheld,
@@ -407,6 +457,8 @@ export class BeatDetector {
       sampleRateHz: fs,
       irregularityFlag,
       ibiStdMs,
+      pulseRegularity,
+      derivativeQuality,
     };
   }
 
