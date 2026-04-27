@@ -163,6 +163,13 @@ export class FingerOpticalROI {
   // (intersection-over-union of usable tiles).
   private previousUsableTileMask: boolean[] | null = null;
 
+  // Centroid (in normalised tile coordinates) of usable tiles in the previous
+  // frame — used to compute frame-to-frame ROI drift independently of IoU.
+  private previousCentroid: { x: number; y: number } | null = null;
+
+  // Smoothed AC/DC ratio on the green channel — used by the pressure model.
+  private smoothedGreenAcDc = 0;
+
   reset(): void {
     this.previousLuma = null;
     this.dcStability = 1;
@@ -170,6 +177,8 @@ export class FingerOpticalROI {
     this.frameCount = 0;
     this.baselineLinear = null;
     this.previousUsableTileMask = null;
+    this.previousCentroid = null;
+    this.smoothedGreenAcDc = 0;
   }
 
   analyze(imageData: ImageData): FingerOpticalEvidence {
