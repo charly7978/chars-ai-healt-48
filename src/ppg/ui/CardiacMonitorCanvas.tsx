@@ -105,8 +105,6 @@ export function CardiacMonitorCanvas({ state }: CardiacMonitorCanvasProps) {
         const pointsToDraw = Math.min(waveform.length, Math.floor(width / 2));  // 1 punto cada 2 pixels
         const step = Math.max(1, Math.floor(waveform.length / pointsToDraw));
         
-        const startX = width - (pointsToDraw * 2);
-        
         for (let i = 0; i < pointsToDraw; i++) {
           const idx = waveform.length - 1 - (i * step);
           if (idx < 0) break;

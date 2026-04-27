@@ -9,10 +9,10 @@
  */
 
 import { Activity, Camera, Flashlight, Play, Square } from "lucide-react";
-import type { PpgEngineState } from "../hooks/usePpgEngine";
+import type { PpgEngineState as EngineState } from "../hooks/usePpgEngine";
 
 interface FloatingVitalsOverlayProps {
-  state: PpgEngineState;
+  state: EngineState;
   onStart: () => void;
   onStop: () => void;
 }
