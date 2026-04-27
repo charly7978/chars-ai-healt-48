@@ -342,9 +342,8 @@ export class PPGPublicationGate {
 
     const waveformSource: PublishedPPGMeasurement["waveformSource"] = canPublishVitals
       ? "REAL_PPG"
-      : hasRealData && selectedSeries.length >= 3
-        ? "RAW_DEBUG_ONLY"
-        : "NONE";
+      : "NONE";
+    void hasRealData;
 
     // SpO2 needs BOTH red AND green to be optically valid (Ratio-of-Ratios).
     // If red is saturated under flash but green is fine, we still publish BPM
