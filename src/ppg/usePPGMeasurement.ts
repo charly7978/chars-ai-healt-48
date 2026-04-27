@@ -181,6 +181,29 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const noFingerSelfTestRef = useRef(new NoFingerSelfTest());
   const adaptivePersistKeyRef = useRef<string | null>(null);
   const lastAdaptivePersistAtRef = useRef(0);
+  // Reposition prompt: tracks how long contactState has been non-stable.
+  const nonStableSinceMsRef = useRef<number | null>(null);
+  const repositionAttemptRef = useRef(0);
+  const lastContactStateRef = useRef<string>("absent");
+  // Calibration hot-start info (populated on start() if a record was restored).
+  const calibrationRef = useRef<UsePPGMeasurementResult["calibration"]>({
+    loaded: false,
+    key: null,
+    sessions: 0,
+    ageMs: null,
+    sensorNoiseDb: null,
+    acquisitionMethod: null,
+  });
+  const repositionRef = useRef<UsePPGMeasurementResult["repositionPrompt"]>({
+    active: false,
+    sinceMs: 0,
+    lastContactState: "absent",
+    attempt: 0,
+    message: "",
+  });
+
+  /** Threshold (ms) of continuous non-stable contact before prompting reposition. */
+  const REPOSITION_PROMPT_AFTER_MS = 4000;
 
   const cameraRef = useRef<PPGCameraState>(createEmptyCameraState());
   const rawSamplesRef = useRef<PPGOpticalSample[]>([]);
