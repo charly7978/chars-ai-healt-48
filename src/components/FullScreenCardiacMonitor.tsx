@@ -328,21 +328,15 @@ function drawBeatMarkers(
     }
   }
 
-  // Withheld candidates: small red 'x' high in the band, with reason text
+  // Withheld candidates: per-reason color + glyph (matches the legend).
   ctx.font = `${9 * dpr}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   for (const w of withheldMarkers) {
     if (w.t < minT || w.t > maxT) continue;
     const x = xOf(w.t);
-    ctx.strokeStyle = "rgba(248,113,113,0.55)";
-    ctx.lineWidth = 1.1 * dpr;
     const y = top + height * 0.06;
     const r = 4 * dpr;
-    ctx.beginPath();
-    ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
-    ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r);
-    ctx.stroke();
-    ctx.fillStyle = "rgba(248,113,113,0.6)";
-    ctx.fillText(w.reason.slice(0, 6), x + 6 * dpr, y + 3 * dpr);
+    const s = styleFor(w.reason);
+    drawMarkerGlyph(ctx, x, y, r, s.marker, s.color, dpr);
   }
 }
 
