@@ -98,12 +98,17 @@ export class FingerOpticalROI {
   private baselineLinear: { r: number; g: number; b: number } | null = null;
   private baselineAlpha = 0.02; // Slow adaptation
 
+  // Tile usability mask from the previous frame, used to compute roiStabilityScore
+  // (intersection-over-union of usable tiles).
+  private previousUsableTileMask: boolean[] | null = null;
+
   reset(): void {
     this.previousLuma = null;
     this.dcStability = 1;
     this.lumaHistory = [];
     this.frameCount = 0;
     this.baselineLinear = null;
+    this.previousUsableTileMask = null;
   }
 
   analyze(imageData: ImageData): FingerOpticalEvidence {
