@@ -370,8 +370,22 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
               <span
                 className="cursor-help text-white/55 underline decoration-dotted decoration-white/30 underline-offset-2"
                 title={
-                  "RR consistency: 1 − normalized stdev of consecutive RR intervals (1.0 = perfectly regular). " +
-                  "Requires ≥2 accepted beats so at least one RR interval exists; ≥4 RR intervals recommended for a stable estimate."
+                  "RR consistency: 1 − normalized stdev of consecutive RR intervals (1.0 = perfectly regular).\n" +
+                  "Requires ≥2 accepted beats so at least one RR interval exists; ≥4 RR intervals recommended for a stable estimate.\n\n" +
+                  "Trend arrows compare the oldest vs. newest value in the last 5 updates:\n" +
+                  "  ▲ improving  (delta > +0.02)\n" +
+                  "  ▼ degrading  (delta < −0.02)\n" +
+                  "  ▬ stable     (|delta| ≤ 0.02)\n\n" +
+                  `Trend window (${rrConsistencyHistoryRef.current.length}/5): ` +
+                  (rrConsistencyHistoryRef.current.length === 0
+                    ? "empty"
+                    : rrConsistencyHistoryRef.current.map((v) => v.toFixed(2)).join(" → ")) +
+                  (rrConsistencyHistoryRef.current.length >= 2
+                    ? `\nDelta: ${(
+                        rrConsistencyHistoryRef.current[rrConsistencyHistoryRef.current.length - 1] -
+                        rrConsistencyHistoryRef.current[0]
+                      ).toFixed(3)}`
+                    : "")
                 }
               >
                 RR consistency ⓘ
@@ -411,6 +425,12 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                   ? `need ≥2 beats (have ${beats.beats.length})`
                   : beats.rrIntervalsMs.slice(-5).map((rr) => `${fmt(rr, 0)}ms`).join(", ")}
               </span>
+              {beats.beats.length >= 2 && rrCount < beats.beats.length - 1 && (
+                <div className="col-span-2 mt-1 rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-1 text-[10px] text-amber-300">
+                  ⚠ beat/RR mismatch: {beats.beats.length} beats but only {rrCount} RR interval{rrCount === 1 ? "" : "s"}{" "}
+                  (expected {beats.beats.length - 1}). Some beats were dropped from the RR series — RR consistency is waiting for a contiguous run.
+                </div>
+              )}
               </div>
             </>
           );
