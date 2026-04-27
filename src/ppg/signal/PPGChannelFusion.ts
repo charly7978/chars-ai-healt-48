@@ -137,12 +137,14 @@ function firstPrincipalVector(rows: number[][]): number[] {
 export class PPGChannelFusion {
   private opticalSamples: PPGOpticalSample[] = [];
   private history: FusedPPGChannels[] = [];
+  private lastSelectedChannel: ChannelName | null = null;
 
   constructor(private readonly maxSeconds = 30) {}
 
   reset(): void {
     this.opticalSamples = [];
     this.history = [];
+    this.lastSelectedChannel = null;
   }
 
   push(sample: PPGOpticalSample): FusedPPGChannels {
