@@ -157,6 +157,9 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const qualityAnalyzerRef = useRef(new PPGSignalQualityAnalyzer());
   const publicationGateRef = useRef(new PPGPublicationGate());
   const adaptiveThresholdsRef = useRef(new AdaptiveAcquisitionThresholds());
+  const noFingerSelfTestRef = useRef(new NoFingerSelfTest());
+  const adaptivePersistKeyRef = useRef<string | null>(null);
+  const lastAdaptivePersistAtRef = useRef(0);
 
   const cameraRef = useRef<PPGCameraState>(createEmptyCameraState());
   const rawSamplesRef = useRef<PPGOpticalSample[]>([]);
