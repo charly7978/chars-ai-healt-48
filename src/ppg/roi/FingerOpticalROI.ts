@@ -731,23 +731,35 @@ export class FingerOpticalROI {
     else if (contactState === "stable") userGuidance = "";
     else userGuidance = "Buscando señal estable…";
 
+    // Acceptance thresholds — relaxed to physiologically realistic values for
+    // smartphone fingertip PPG under flash. The previous values (contactScore
+    // >= 0.62, opticalContact >= 0.58, dcStability >= 0.50) were too strict
+    // for the first second of contact and blocked all signal. The publication
+    // gate (>= 6 s buffer + spectral SQI + bandpower) remains the real
+    // anti-false-positive guard. Pressure can be optimal OR low_pressure
+    // (low_pressure still has good perfusion; only excessive/weak_contact veto).
+    const pressureAcceptable = pressureState === "optimal" || pressureState === "low_pressure";
     const frameAcceptedNow =
       contactState === "stable" &&
-      contactScore >= 0.62 &&
-      opticalContactScore >= 0.58 &&
-      coverageScore >= 0.42 &&
-      redDominance >= 0.22 &&
-      greenPulseAvailability >= 0.18 &&
-      usableTileCount >= minStableTiles &&
-      roiStabilityScore >= 0.55 &&
-      textureScore >= 0.12 &&
-      highClip < 0.18 &&
-      lowClip < 0.18 &&
-      this.dcStability >= 0.50 &&
-      motionRisk < 0.38 &&
-      pressureState === "optimal";
+      contactScore >= 0.40 &&
+      opticalContactScore >= 0.40 &&
+      coverageScore >= 0.30 &&
+      redDominance >= 0.12 &&
+      greenPulseAvailability >= 0.10 &&
+      usableTileCount >= Math.max(4, minStableTiles - 2) &&
+      roiStabilityScore >= 0.35 &&
+      textureScore >= 0.06 &&
+      highClip < 0.30 &&
+      lowClip < 0.30 &&
+      this.dcStability >= 0.30 &&
+      motionRisk < 0.55 &&
+      pressureAcceptable;
     this.contactStableFrames = frameAcceptedNow ? this.contactStableFrames + 1 : 0;
-    const accepted = frameAcceptedNow && this.contactStableFrames >= 8;
+    // 2-frame streak: enough to reject single-frame transients but does NOT
+    // block the user from getting a reading in the first second. The publication
+    // gate adds an additional ~6s of buffer + spectral validation, which is
+    // the real anti-false-positive defense.
+    const accepted = frameAcceptedNow && this.contactStableFrames >= 2;
 
     return {
       roi,

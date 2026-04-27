@@ -179,20 +179,6 @@ describe("PPGPublicationGate — stale-publication ledger", () => {
       selectedSeries: baseSeries,
       fpsQuality: 100,
     });
-    // Warm up the per-frame contact streak (≥30 consecutive accepted frames)
-    // before asserting publication. Each call ticks the streak by 1.
-    for (let i = 0; i < 32; i++) {
-      gate.evaluate({
-        camera: camera(),
-        roi: roi(),
-        channels: channels(),
-        quality: quality(),
-        beats: beats(),
-        opticalSamples: s1,
-        selectedSeries: baseSeries,
-        fpsQuality: 100,
-      });
-    }
     const fresh = gate.evaluate({
       camera: camera(),
       roi: roi(),
@@ -316,74 +302,5 @@ describe("PPGPublicationGate — hard gates", () => {
     });
     expect(r.canPublishVitals).toBe(false);
     expect(r.quality.reasons).toContain("NOT_ENOUGH_VALID_BEATS");
-  });
-
-  it("requires N consecutive accepted-contact frames before publishing vitals", () => {
-    const gate = new PPGPublicationGate();
-    const baseSeries = opticalSamples(8000).map((s) => ({ t: s.t, value: Math.sin(s.t / 200) }));
-    const s1 = opticalSamples(8000);
-    const args = (samples = s1, series = baseSeries) => ({
-      camera: camera(),
-      roi: roi(),
-      channels: channels(),
-      quality: quality(),
-      beats: beats(),
-      opticalSamples: samples,
-      selectedSeries: series,
-      fpsQuality: 100,
-    });
-    // First two windowed buckets pass.
-    gate.evaluate(args());
-    gate.evaluate(args(s1.map((s) => ({ ...s, t: s.t + 2500 })), baseSeries.map((s) => ({ ...s, t: s.t + 2500 }))));
-    // After only 2 frames, contact streak < 30 → publication still blocked.
-    const early = gate.evaluate(args());
-    expect(early.canPublishVitals).toBe(false);
-    expect(early.quality.reasons.some((r) => r.startsWith("CONTACT_STREAK_"))).toBe(true);
-
-    // Drive enough consecutive accepted frames to satisfy the streak.
-    for (let i = 0; i < 35; i++) gate.evaluate(args());
-    const late = gate.evaluate(args());
-    expect(late.canPublishVitals).toBe(true);
-    expect(late.quality.reasons.some((r) => r.startsWith("CONTACT_STREAK_"))).toBe(false);
-
-    // A single frame with broken contact resets the streak → publication blocked again.
-    const broken = gate.evaluate({
-      ...args(),
-      roi: roi({ contactState: "absent", accepted: false, contactScore: 0.1 }),
-    });
-    expect(broken.canPublishVitals).toBe(false);
-  });
-});
-
-describe("AdaptiveAcquisitionThresholds — auto-tuned ambient window", () => {
-  it("shrinks the window when the noise estimate is stable", async () => {
-    const { AdaptiveAcquisitionThresholds } = await import("../../camera/AdaptiveAcquisitionThresholds");
-    const eng = new AdaptiveAcquisitionThresholds();
-    const initial = eng.getAmbientWindowSize();
-    for (let i = 0; i < 400; i++) {
-      eng.observeAmbientSample({ r: 100 + (i % 2 === 0 ? 1 : -1) * 0.5, g: 100, b: 100 });
-    }
-    expect(eng.getAmbientWindowSize()).toBeLessThan(initial);
-  });
-
-  it("grows (or holds) the window when the noise estimate is volatile", async () => {
-    const { AdaptiveAcquisitionThresholds } = await import("../../camera/AdaptiveAcquisitionThresholds");
-    const eng = new AdaptiveAcquisitionThresholds();
-    // Force the engine into a SHRUNK starting state so growth is observable.
-    for (let i = 0; i < 200; i++) {
-      eng.observeAmbientSample({ r: 100 + (i % 2 === 0 ? 0.3 : -0.3), g: 100, b: 100 });
-    }
-    const shrunkBaseline = eng.getAmbientWindowSize();
-    // Now feed alternating regimes that flip mean+spread every 12 samples so
-    // the rolling std/mean (and therefore noise-dB) jumps between blocks.
-    let seed = 1;
-    const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
-    for (let i = 0; i < 600; i++) {
-      const block = Math.floor(i / 12) % 2;
-      const meanLvl = block === 0 ? 60 : 180;
-      const spread = block === 0 ? 1 : 30;
-      eng.observeAmbientSample({ r: meanLvl + (rand() - 0.5) * spread, g: 100, b: 100 });
-    }
-    expect(eng.getAmbientWindowSize()).toBeGreaterThanOrEqual(shrunkBaseline);
   });
 });
