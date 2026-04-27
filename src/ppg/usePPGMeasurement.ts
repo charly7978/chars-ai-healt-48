@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import {
   PPGCameraController,
+  createEmptyPPGCameraState,
   type PPGCameraState,
 } from "./camera/PPGCameraController";
 import {
