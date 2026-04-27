@@ -355,6 +355,8 @@ export class FingerOpticalROI {
       opticalDensity,
       highSaturation,
       lowSaturation,
+      usablePixelRatio,
+      usablePixelRatioMax,
       spatialVariance,
       dcStability: this.dcStability,
       dcTrend,
