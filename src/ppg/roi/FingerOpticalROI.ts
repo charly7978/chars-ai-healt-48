@@ -747,7 +747,11 @@ export class FingerOpticalROI {
       motionRisk < 0.38 &&
       pressureState === "optimal";
     this.contactStableFrames = frameAcceptedNow ? this.contactStableFrames + 1 : 0;
-    const accepted = frameAcceptedNow && this.contactStableFrames >= 8;
+    // 2-frame streak: enough to reject single-frame transients but does NOT
+    // block the user from getting a reading in the first second. The publication
+    // gate adds an additional ~6s of buffer + spectral validation, which is
+    // the real anti-false-positive defense.
+    const accepted = frameAcceptedNow && this.contactStableFrames >= 2;
 
     return {
       roi,
