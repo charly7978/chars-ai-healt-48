@@ -437,7 +437,7 @@ function drawMonitor(canvas: HTMLCanvasElement, measurement: UsePPGMeasurementRe
   // Legend mapping every withheld rejectionReason to its color/marker + count.
   drawWithheldLegend(
     ctx,
-    measurement.published.withheldBeatMarkers ?? [],
+    official ? (measurement.published.withheldBeatMarkers ?? []) : [],
     width,
     mainTop,
     mainHeight,
