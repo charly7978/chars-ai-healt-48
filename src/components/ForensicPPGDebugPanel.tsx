@@ -857,10 +857,10 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           </span>
           <span>
             {(() => {
-              // Latest optical sample exposed by usePPGMeasurement (debug bag).
-              // We avoid inventing values: if the bag is empty we render '--'.
-              const lastSample = (debug as { opticalSamples?: Array<{ channelMask?: { r: boolean; g: boolean; b: boolean } }> })
-                ?.opticalSamples?.slice(-1)[0];
+              // `measurement.rawSamples` is the actual PPGOpticalSample[]
+              // ring buffer the fusion engine consumes. We read the *last*
+              // sample's channelMask — same source of truth, no second copy.
+              const lastSample = measurement.rawSamples[measurement.rawSamples.length - 1];
               const m = lastSample?.channelMask;
               if (!m) return <span className="text-white/40">--</span>;
               return (
