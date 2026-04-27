@@ -3,16 +3,19 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "PPG Cardiac Monitor - Real camera-based photoplethysmography acquisition",
+  "description": "Forensic PPG Cardiac Monitor — real camera-based photoplethysmography for vital-sign acquisition. No simulations, no mocks.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "build:dev": "vite build --mode development",
-    "lint": "eslint .",
     "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
     "audit:no-simulation": "node scripts/audit-no-simulation.mjs",
     "audit:graph": "node scripts/audit-import-graph.mjs",
-    "verify": "npm run lint && npm run audit:no-simulation && npm run audit:graph && npm run build"
+    "validate": "npm run typecheck && npm run lint && npm run audit:no-simulation && npm run audit:graph && npm run test && npm run build",
+    "verify": "npm run validate"
   },
   "dependencies": {
     "lucide-react": "^0.462.0",
