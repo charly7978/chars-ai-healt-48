@@ -797,7 +797,7 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
           className="inline-flex h-11 items-center gap-2 rounded border border-emerald-300/20 bg-emerald-400/14 px-4 text-sm font-semibold uppercase tracking-wide text-white backdrop-blur-md transition hover:bg-emerald-400/24 disabled:opacity-55"
         >
           {active ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-          {active ? "Stop" : "Start"}
+          {active ? "Detener" : "Iniciar con linterna"}
         </button>
       </div>
 
