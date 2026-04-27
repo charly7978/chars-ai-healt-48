@@ -239,7 +239,7 @@ export class PPGPublicationGate {
     const torchCondition = !camera.torchAvailable || (camera.torchEnabled && camera.torchApplied);
     const acquisitionCondition = camera.acquisitionReady === true;
     const saturationOk = quality.saturationPenalty <= 0.55;
-    const perfusionOk = quality.acDcPerfusionIndex >= 0.02;
+    const perfusionOk = quality.acDcPerfusionIndex >= thr.minPerfusionIndex;
     // Multi-estimator agreement (informative, not a hard binary lock)
     const estimatorAgreementBpm = beats.estimatorAgreementBpm ?? 999;
     const estimatorsAvailable =
@@ -257,8 +257,8 @@ export class PPGPublicationGate {
     const agreementOk = twoEstimatorsAgree || strongTemporalAlone;
 
     // Sampler cadence quality must be high enough that the temporal axis is
-    // physically meaningful. Below 40 we don't trust BPM at all.
-    const fpsQualityOk = fpsQuality >= 40;
+    // physically meaningful. Adaptive: per-device floor (>= 40 always).
+    const fpsQualityOk = fpsQuality >= Math.max(40, thr.minFpsQuality - 10);
     // Tile-based hard gate: BPM/SpO2 require enough usable optical real estate.
     const tileGateOk = roi.usableTileCount >= 6 && roi.roiStabilityScore >= 0.4;
     // Contact state veto for any heart-rate publication.
@@ -266,10 +266,10 @@ export class PPGPublicationGate {
     const pressureOk = roi.pressureState === "optimal";
 
     const coreQualityPass =
-      quality.totalScore >= 60 &&
-      quality.bandPowerRatio >= 0.30 &&
+      quality.totalScore >= thr.minTotalQualityScore &&
+      quality.bandPowerRatio >= thr.minBandPowerRatio &&
       agreementOk &&
-      roi.contactScore >= 0.45 &&
+      roi.contactScore >= thr.minContactScore &&
       saturationOk &&
       perfusionOk &&
       quality.rrConsistency >= 0.4 &&
