@@ -79,3 +79,9 @@ export {
 
 // Hook principal
 export { usePpgEngine, type PpgEngineState as EngineState } from "./hooks/usePpgEngine";
+
+// UI
+export {
+  CardiacMonitorCanvas,
+  FloatingVitalsOverlay,
+} from "./ui";
