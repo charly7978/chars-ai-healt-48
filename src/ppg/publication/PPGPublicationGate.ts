@@ -69,6 +69,7 @@ export function createEmptyPublishedPPGMeasurement(
       canPublish: false,
       method: "NONE",
       reasons: ["NO_PPG_PUBLICATION"],
+      calibrationBadge: camera.diagnostics?.calibration.status ?? "uncalibrated",
     },
     waveform: [],
     waveformSource: "NONE",
