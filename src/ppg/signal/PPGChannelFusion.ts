@@ -140,8 +140,46 @@ export class PPGChannelFusion {
 
     const recent = this.getRecentOptical(12);
 
+    // HARD REJECT: Don't generate data if insufficient samples
+    // This prevents generating false data from noise
+    if (recent.length < 8) {
+      // Return minimal valid data with zeros to indicate no signal
+      const minimal: FusedPPGChannels = {
+        t: sample.t,
+        g1: 0,
+        g2: 0,
+        g3: 0,
+        selected: 0,
+        selectedName: "GREEN_OD",
+        channelSnr: { g1: -60, g2: -60, g3: -60 },
+        allChannels: [],
+        selectionReason: "INSUFFICIENT_SAMPLES",
+      };
+      this.history.push(minimal);
+      this.prune(sample.t);
+      return minimal;
+    }
+
     // Calculate all channel metrics
     const allChannels = this.calculateAllChannels(recent);
+
+    // If no valid channels, return minimal data
+    if (allChannels.length === 0) {
+      const minimal: FusedPPGChannels = {
+        t: sample.t,
+        g1: 0,
+        g2: 0,
+        g3: 0,
+        selected: 0,
+        selectedName: "GREEN_OD",
+        channelSnr: { g1: -60, g2: -60, g3: -60 },
+        allChannels,
+        selectionReason: "NO_VALID_CHANNELS",
+      };
+      this.history.push(minimal);
+      this.prune(sample.t);
+      return minimal;
+    }
 
     // Select best channel using robust ranking
     const selection = this.selectBestChannel(allChannels, recent);

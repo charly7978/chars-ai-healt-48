@@ -247,9 +247,12 @@ export class PPGPublicationGate {
       quality.totalScore >= 70 &&
       !lastBeat.rejectionReason;
 
+    // Check if selectedSeries contains real data (not all zeros)
+    const hasRealData = selectedSeries.some((s) => Math.abs(s.value) > 0.001);
+
     const waveformSource: PublishedPPGMeasurement["waveformSource"] = canPublishVitals
       ? "REAL_PPG"
-      : selectedSeries.length >= 3
+      : hasRealData && selectedSeries.length >= 3
         ? "RAW_DEBUG_ONLY"
         : "NONE";
 

@@ -170,6 +170,12 @@ function mainTrace(measurement: UsePPGMeasurementResult): TracePoint[] {
 
   for (let i = 0; i < recentChannels.length; i++) {
     const sample = recentChannels[i];
+
+    // Skip zero values (no signal)
+    if (sample.selected === 0 && sample.g1 === 0 && sample.g2 === 0 && sample.g3 === 0) {
+      continue;
+    }
+
     if (i > 0) {
       const prev = recentChannels[i - 1];
       const gap = sample.t - prev.t;

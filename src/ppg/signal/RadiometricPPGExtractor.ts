@@ -110,8 +110,12 @@ export class RadiometricPPGExtractor {
 
     const evidence = this.roiAnalyzer.analyze(frame.imageData);
 
-    // DO NOT hard-reject ROI - let quality scores handle it downstream
-    // The ROI analyzer provides scores; hard rejection was blocking all frames
+    // HARD REJECT: Only process if ROI is accepted and has minimum contact
+    // This prevents generating noise from ambient light when no finger is present
+    // Threshold must match ROI acceptance criteria (contactScore >= 0.45)
+    if (!evidence.accepted || evidence.contactScore < 0.45) {
+      return null;
+    }
 
     const { data, width } = frame.imageData;
     const roi = evidence.roi;
