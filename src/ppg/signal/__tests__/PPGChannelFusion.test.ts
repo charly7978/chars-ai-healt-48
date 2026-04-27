@@ -69,7 +69,7 @@ function buildSamples(opts: BuildOpts): PPGOpticalSample[] {
 function runEngine(samples: PPGOpticalSample[]) {
   const engine = new PPGChannelFusion();
   let last;
-  for (const s of samples) last = engine.update(s);
+  for (const s of samples) last = engine.push(s);
   if (!last) throw new Error("engine produced no output");
   return { engine, fused: last };
 }
@@ -184,7 +184,7 @@ describe("PPGChannelFusion — selection regression", () => {
     let firstName = "";
     let lastName = "";
     for (let i = 0; i < a.length; i += 1) {
-      const f = engine.update(a[i]);
+      const f = engine.push(a[i]);
       if (i === a.length - 1) firstName = f.selectedName;
     }
     // Push 30 more nearly-identical frames; the winner must NOT flip.
@@ -193,7 +193,7 @@ describe("PPGChannelFusion — selection regression", () => {
       maskAt: () => ({ r: true, g: true, b: false }),
     }).map((s, i) => ({ ...s, t: a[a.length - 1].t + (i + 1) * (1000 / 30) }));
     for (const s of b) {
-      const f = engine.update(s);
+      const f = engine.push(s);
       lastName = f.selectedName;
     }
     expect(lastName).toBe(firstName);
