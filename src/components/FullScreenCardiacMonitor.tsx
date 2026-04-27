@@ -592,14 +592,27 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
             <Camera className="h-3.5 w-3.5 text-cyan-300" />
             {active ? "CAM LIVE" : "CAM OFF"}
           </span>
-          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
-            <Flashlight className="h-3.5 w-3.5 text-amber-300" />
-            {measurement.camera.torchAvailable
-              ? measurement.camera.torchEnabled
-                ? "TORCH ON"
-                : "TORCH OFF"
-              : "TORCH N/A"}
-          </span>
+          {(() => {
+            const cam = measurement.camera;
+            const resolved = cam.diagnostics?.torchStatus?.resolved ?? "unsupported";
+            // 4 explicit states: unsupported / available-not-applied / applied / denied
+            let label = "TORCH N/A";
+            let cls = "border-white/10 bg-white/[0.045] text-slate-300";
+            let icon = "text-slate-500";
+            if (cam.torchAvailable && cam.torchEnabled && resolved === "applied") {
+              label = "TORCH APLICADA"; cls = "border-amber-300/40 bg-amber-400/10 text-amber-200"; icon = "text-amber-300";
+            } else if (cam.torchAvailable && (resolved === "denied" || resolved === "ignored-by-browser")) {
+              label = "TORCH DENEGADA"; cls = "border-red-400/40 bg-red-500/10 text-red-300"; icon = "text-red-400";
+            } else if (cam.torchAvailable && !cam.torchEnabled) {
+              label = "TORCH DISPONIBLE"; cls = "border-amber-300/20 bg-amber-400/5 text-amber-300/80"; icon = "text-amber-300/70";
+            }
+            return (
+              <span className={`inline-flex items-center gap-1 rounded border px-2 py-1 ${cls}`}>
+                <Flashlight className={`h-3.5 w-3.5 ${icon}`} />
+                {label}
+              </span>
+            );
+          })()}
           <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
             {measurement.published.evidence.roi.accepted ? (
               <CheckCircle className="h-3.5 w-3.5 text-emerald-300" />
@@ -615,6 +628,14 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
               <XCircle className="h-3.5 w-3.5 text-red-400" />
             )}
             SIGNAL
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
+            {measurement.camera.acquisitionReady ? (
+              <CheckCircle className="h-3.5 w-3.5 text-emerald-300" />
+            ) : (
+              <XCircle className="h-3.5 w-3.5 text-red-400" />
+            )}
+            ACQ
           </span>
           <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
             {measurement.published.canPublishVitals ? (
@@ -776,7 +797,7 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
           className="inline-flex h-11 items-center gap-2 rounded border border-emerald-300/20 bg-emerald-400/14 px-4 text-sm font-semibold uppercase tracking-wide text-white backdrop-blur-md transition hover:bg-emerald-400/24 disabled:opacity-55"
         >
           {active ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-          {active ? "Stop" : "Start"}
+          {active ? "Detener" : "Iniciar con linterna"}
         </button>
       </div>
 
