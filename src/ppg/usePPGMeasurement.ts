@@ -113,7 +113,6 @@ function emptyBeats(): BeatDetectionResult {
 
 export function usePPGMeasurement(): UsePPGMeasurementResult {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeRef = useRef(false);
   const lastUiUpdateRef = useRef(0);
   const lastVibratedBeatRef = useRef<number | null>(null);
