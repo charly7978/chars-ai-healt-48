@@ -357,9 +357,28 @@ export class PPGPublicationGate {
       }
     }
 
+    const nowMs = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
     let lastValidTimestamp: number | null = null;
     if (canPublishVitals && beats.bpm !== null) {
-      lastValidTimestamp = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
+      lastValidTimestamp = nowMs;
+      this.lastValidBpm = Math.round(beats.bpm);
+      this.lastValidAtMs = nowMs;
+    }
+
+    // Stale-publication ledger. NEVER substitutes the fresh `bpm` value —
+    // only exposes "what was the last valid number and how old is it" so
+    // the UI can render a dimmed "stale 3.2s" badge instead of a number
+    // that looks fresh.
+    let staleSinceMs = 0;
+    let staleBadge: PublishedPPGMeasurement["staleBadge"] = "never";
+    if (this.lastValidAtMs !== null) {
+      if (canPublishVitals) {
+        staleBadge = "fresh";
+        staleSinceMs = 0;
+      } else {
+        staleSinceMs = Math.max(0, nowMs - this.lastValidAtMs);
+        staleBadge = staleSinceMs <= 6000 ? "stale" : "expired";
+      }
     }
 
     return {
@@ -399,6 +418,9 @@ export class PPGPublicationGate {
       goodWindowStreak: this.goodWindowStreak,
       lastValidTimestamp,
       rejectedBeatCandidates: beats.rejectedCandidates,
+      lastValidBpm: this.lastValidBpm,
+      staleSinceMs,
+      staleBadge,
     };
   }
 }
