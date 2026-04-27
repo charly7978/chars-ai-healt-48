@@ -296,7 +296,10 @@ export class PPGPublicationGate {
     const bradycardiaWindowAllowed =
       beats.bpm !== null && beats.bpm < 45 && bufferMs >= 14000 && validBeats.length >= 4;
     const enoughBeats = validBeats.length >= 5 || bradycardiaWindowAllowed;
-    const torchCondition = !camera.torchAvailable || camera.torchEnabled;
+    // Forensic: torch MUST be engaged when the device exposes a torch
+    // capability. Devices without torch capability cannot publish PPG-by-finger.
+    const torchCondition = camera.torchAvailable && camera.torchEnabled;
+    const acquisitionReady = camera.acquisitionReady === true;
     const saturationOk = quality.saturationPenalty <= 0.55;
     const perfusionOk = quality.acDcPerfusionIndex >= 0.02;
     // Multi-estimator agreement (informative, not a hard binary lock)
