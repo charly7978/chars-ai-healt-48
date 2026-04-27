@@ -1,69 +1,90 @@
-# Welcome to your Lovable project
+# Forensic PPG Cardiac Monitor
 
-## Project info
+Aplicación biomédica profesional para adquisición de señales fotopletismográficas (PPG) mediante cámara trasera de dispositivos móviles con iluminación LED (flash/torch).
 
-**URL**: https://lovable.dev/projects/d19c3295-2b5b-4a30-ba82-d64b04ac6a03
+## ⚠️ Advertencias Técnicas Críticas
 
-## How can I edit this code?
+**PPG Óptico ≠ ECG Bioeléctrico**
+- Esta aplicación mide **variaciones de luz reflejada** en tejido vascular, no actividad eléctrica cardíaca.
+- El PPG es susceptible a artefactos de movimiento, presión inconsistente del dedo, y variaciones de perfusión.
 
-There are several ways of editing your application.
+**SpO2 Absoluto Requiere Calibración por Dispositivo**
+- Los valores de saturación de oxígeno estimados por software sin calibración específica del hardware (LEDs, sensor CMOS, óptica) tienen **margen de error significativo**.
+- No usar para diagnóstico médico sin validación clínica del dispositivo específico.
 
-**Use Lovable**
+**Presión Arterial / Glucosa / Lípidos**
+- Estos parámetros **NO se calculan** en esta versión. Cualquier publicación de BP, glucosa, o lípidos requiere:
+  - Modelo calibrado y validado clínicamente
+  - Aprobación regulatoria (FDA/CE/ANMAT)
+  - Estudio de equivalencia con método estándar de referencia
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/d19c3295-2b5b-4a30-ba82-d64b04ac6a03) and start prompting.
+## 📊 Flujo de Datos Real
 
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```
+CAMERA FRAME (Real) → FrameSampler → RadiometricPPGExtractor → PPGChannelFusion → BeatDetector → PPGSignalQuality → PPGPublicationGate → UI
+                     ↓                                                      ↑
+                FingerOpticalROI                                       Evidence Gate
 ```
 
-**Edit a file directly in GitHub**
+El sistema solo renderiza:
+- **Waveform** cuando `waveformSource === "REAL_PPG"`
+- **BPM** cuando `canPublishVitals === true`
+- **SpO2** cuando `oxygen.canPublish === true` (con confianza > umbral)
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## 🚀 Cómo Correr
 
-**Use GitHub Codespaces**
+```bash
+# Instalar dependencias
+npm install
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+# Desarrollo local
+npm run dev
 
-## What technologies are used for this project?
+# Build producción
+npm run build
 
-This project is built with .
+# Preview build
+npm run preview
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## 📱 Prueba en Dispositivo Real
 
-## How can I deploy this project?
+1. Conectar dispositivo Android/iOS por USB
+2. Habilitar modo desarrollador y USB debugging
+3. Ejecutar: `npm run dev -- --host`
+4. En el dispositivo, navegar a la IP local mostrada
+5. **Requisitos críticos:**
+   - Cámara trasera con flash LED
+   - Dedo cubriendo completamente la lente
+   - Presión suave y constante
+   - Mínimo movimiento relativo
 
-Simply open [Lovable](https://lovable.dev/projects/d19c3295-2b5b-4a30-ba82-d64b04ac6a03) and click on Share -> Publish.
+## 🐛 Panel Forense/Debug
 
-## I want to use a custom domain - is that possible?
+Haz clic en el icono **Bug** (esquina inferior derecha) durante medición para ver:
+- Estado de cámara y torch
+- Estadísticas de muestreo de frames
+- Valores RGB/OD en tiempo real
+- SQI (Signal Quality Index) detallado
+- Códigos de rechazo de publicación
 
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)
+## 🏗️ Arquitectura del Pipeline PPG
+
+| Módulo | Descripción |
+|--------|-------------|
+| `PPGCameraController.ts` | Acceso MediaDevices, gestión de torch |
+| `FrameSampler.ts` | Muestreo temporal de frames a 30fps objetivo |
+| `RadiometricPPGExtractor.ts` | Extracción de valores ópticos densidad óptica (OD) |
+| `PPGChannelFusion.ts` | Fusión multicanal G1/G2/G3 con selección adaptativa |
+| `BeatDetector.ts` | Detección de picos sistólicos en señal fusionada |
+| `PPGSignalQuality.ts` | Análisis SQI: perfusión, acuerdo de estimadores, bandas frecuenciales |
+| `PPGPublicationGate.ts` | Gating final: solo publica si evidencia supera umbrales técnicos |
+| `PPGOxygenEstimator.ts` | Estimación relativa SpO2 (no absoluta sin calibración) |
+
+## 📝 Licencia y Uso
+
+Esta aplicación es para **investigación y desarrollo** de algoritmos PPG. No está aprobada para diagnóstico médico sin validación regulatoria adicional.
+
+---
+
+**Stack Tecnológico:** React 18 + TypeScript + Vite + Tailwind CSS

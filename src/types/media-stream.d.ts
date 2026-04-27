@@ -1,4 +1,3 @@
-
 interface MediaTrackCapabilities {
   torch?: boolean;
   exposureMode?: string;
