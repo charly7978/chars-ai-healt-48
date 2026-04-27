@@ -1,15 +1,17 @@
 {
-  "generatedAt": "2026-04-27T06:11:36.650Z",
+  "generatedAt": "2026-04-27T06:52:36.817Z",
   "runtimeEntries": [
     "src/main.tsx",
     "src/App.tsx"
   ],
   "testEntries": [
-    "src/ppg/signal/__tests__/BeatDetector.test.ts"
+    "src/ppg/publication/__tests__/PPGPublicationGate.test.ts",
+    "src/ppg/signal/__tests__/BeatDetector.test.ts",
+    "src/ppg/signal/__tests__/PPGFilters.test.ts"
   ],
   "counts": {
     "KEEP_PRODUCTION": 19,
-    "KEEP_TEST": 1,
+    "KEEP_TEST": 3,
     "KEEP_TYPES": 2
   },
   "classification": {
@@ -24,6 +26,7 @@
     "src/ppg/camera/FrameSampler.ts": "KEEP_PRODUCTION",
     "src/ppg/camera/PPGCameraController.ts": "KEEP_PRODUCTION",
     "src/ppg/publication/PPGPublicationGate.ts": "KEEP_PRODUCTION",
+    "src/ppg/publication/__tests__/PPGPublicationGate.test.ts": "KEEP_TEST",
     "src/ppg/roi/FingerOpticalROI.ts": "KEEP_PRODUCTION",
     "src/ppg/signal/BeatDetector.ts": "KEEP_PRODUCTION",
     "src/ppg/signal/PPGChannelFusion.ts": "KEEP_PRODUCTION",
@@ -32,6 +35,7 @@
     "src/ppg/signal/PPGSignalQuality.ts": "KEEP_PRODUCTION",
     "src/ppg/signal/RadiometricPPGExtractor.ts": "KEEP_PRODUCTION",
     "src/ppg/signal/__tests__/BeatDetector.test.ts": "KEEP_TEST",
+    "src/ppg/signal/__tests__/PPGFilters.test.ts": "KEEP_TEST",
     "src/ppg/usePPGMeasurement.ts": "KEEP_PRODUCTION",
     "src/types/media-stream.d.ts": "KEEP_TYPES",
     "src/vite-env.d.ts": "KEEP_TYPES"

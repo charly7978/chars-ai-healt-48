@@ -23,7 +23,7 @@ function camera(over: Partial<PPGCameraState> = {}): PPGCameraState {
     acquisitionReady: true,
     notReadyReasons: [],
     error: null,
-    diagnostics: { calibration: { status: "calibrated" } } as any,
+    diagnostics: { calibration: { status: "calibrated" } } as unknown as PPGCameraState["diagnostics"],
     ...over,
   } as PPGCameraState;
 }
@@ -117,7 +117,7 @@ function channels(over: Partial<FusedPPGChannels> = {}): FusedPPGChannels {
     g3: 0,
     selected: 0,
     selectedName: "GREEN_OD",
-    channelSnr: { g1: 8, g2: 8, g3: 8 } as any,
+    channelSnr: { g1: 8, g2: 8, g3: 8 },
     allChannels: [],
     selectionReason: "OK",
     ...over,
