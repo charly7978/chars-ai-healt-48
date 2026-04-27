@@ -180,6 +180,8 @@ export class AdaptiveAcquisitionThresholds {
     this.ambientRedSamples = [];
     this.ambientGreenSamples = [];
     this.sensorNoiseDb = -40;
+    this.ambientWindowSize = 120;
+    this.ambientNoiseHistory.length = 0;
     this.framesObserved = 0;
     this.acquisitionMethod = "none";
     this.torchApplied = null;
