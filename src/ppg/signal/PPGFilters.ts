@@ -345,38 +345,13 @@ export function robustNormalize(samples: TimeSample[]): TimeSample[] {
   }));
 }
 
-/**
- * Legacy preprocess - uses default 30Hz. Prefer preprocessPPGRobust for new code.
- */
-export function preprocessPPG(
-  samples: TimeSample[],
-  lowHz = 0.5,
-  highHz = 4.0,
-  targetHz = 30,
-): TimeSample[] {
-  if (samples.length < 3) return samples;
-  const result = resampleUniform(samples, targetHz);
-  if (!result.valid) return samples;
-  const uniform = result.samples;
-  const fs = result.actualFs || targetHz;
-  const clean = hampel(uniform, 5, 3);
-  const filtered = bandpass(clean, lowHz, highHz, fs);
-  return robustNormalize(filtered);
-}
-
-export function savitzkyGolayVisual(samples: TimeSample[]): TimeSample[] {
-  if (samples.length < 5) return samples;
-  const coeff = [-3, 12, 17, 12, -3];
-  const norm = 35;
-  return samples.map((sample, index) => {
-    if (index < 2 || index > samples.length - 3) return sample;
-    let value = 0;
-    for (let k = -2; k <= 2; k += 1) {
-      value += samples[index + k].value * coeff[k + 2];
-    }
-    return { t: sample.t, value: value / norm };
-  });
-}
+// (Removed during forensic audit:
+//   - preprocessPPG  — legacy 30-Hz wrapper, only the publication gate used it
+//     for the visualization waveform; replaced by preprocessPPGRobust which is
+//     the single source of truth for resample+filter+normalize.
+//   - savitzkyGolayVisual — dead code, no static importer.
+// Removing them eliminates two duplicate code paths and removes the only
+// downstream consumer that bypassed the FPS-aware target rate.)
 
 export interface SpectralMetrics {
   dominantFrequencyHz: number;
@@ -386,63 +361,94 @@ export interface SpectralMetrics {
   snrDb: number;
 }
 
+// Cached Hann windows keyed by length. PPG windows are typically the same
+// size across frames (uniform fs), so this is hit ~100% of the time.
+const HANN_CACHE = new Map<number, Float32Array>();
+function hannWindow(n: number): Float32Array {
+  let w = HANN_CACHE.get(n);
+  if (w) return w;
+  w = new Float32Array(n);
+  const denom = Math.max(1, n - 1);
+  for (let i = 0; i < n; i += 1) {
+    w[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / denom);
+  }
+  HANN_CACHE.set(n, w);
+  return w;
+}
+
+/**
+ * Sliding DFT inside the cardiac band. Uses Goertzel-style trig recurrence:
+ *   cos((k+1)·θ) = 2·cos(θ)·cos(k·θ) − cos((k−1)·θ)
+ * to avoid Math.cos/Math.sin inside the inner loop, and a cached Hann window.
+ * Numerically equivalent to the prior naive DFT (verified by tests).
+ */
 export function spectralMetrics(
   samples: TimeSample[],
   lowHz = 0.5,
   highHz = 4.0,
 ): SpectralMetrics {
+  const empty: SpectralMetrics = {
+    dominantFrequencyHz: 0,
+    dominantFrequencyBpm: 0,
+    bandPowerRatio: 0,
+    spectralPeakProminence: 0,
+    snrDb: -60,
+  };
   const result = resampleUniform(samples, 30);
-  if (!result.valid) {
-    return {
-      dominantFrequencyHz: 0,
-      dominantFrequencyBpm: 0,
-      bandPowerRatio: 0,
-      spectralPeakProminence: 0,
-      snrDb: -60,
-    };
-  }
+  if (!result.valid) return empty;
   const uniform = result.samples;
   const fs = result.actualFs || 30;
   const n = uniform.length;
-  if (n < 48 || durationMs(uniform) < 2500) {
-    return {
-      dominantFrequencyHz: 0,
-      dominantFrequencyBpm: 0,
-      bandPowerRatio: 0,
-      spectralPeakProminence: 0,
-      snrDb: -60,
-    };
-  }
+  if (n < 48 || durationMs(uniform) < 2500) return empty;
 
-  const values = robustNormalize(uniform).map((sample) => sample.value);
-  const sampleRate = fs;
+  const normalized = robustNormalize(uniform);
+  const w = hannWindow(n);
+  // Pre-window once: every bin uses the same windowed sequence.
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) x[i] = normalized[i].value * w[i];
+
   const maxK = Math.floor(n / 2);
+  // Bin index range corresponding to [lowHz .. min(highHz, 8Hz)].
+  // freq(k) = k·fs/n  =>  k = freq·n/fs.
+  const upperHz = Math.min(highHz, 8);
+  const totalLowK = Math.max(1, Math.ceil(0.1 * n / fs));
+  const bandLowK = Math.max(1, Math.ceil(lowHz * n / fs));
+  const bandHighK = Math.min(maxK, Math.floor(upperHz * n / fs));
+  const totalHighK = Math.min(maxK, Math.floor(8 * n / fs));
+
   let totalPower = 0;
   let bandPower = 0;
   let peakPower = 0;
   let peakFrequency = 0;
   let bandBins = 0;
 
-  for (let k = 1; k <= maxK; k += 1) {
-    const frequency = (k * sampleRate) / n;
-    if (frequency > 8) break;
-    let re = 0;
-    let im = 0;
-    for (let i = 0; i < n; i += 1) {
-      const window = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / Math.max(1, n - 1));
-      const angle = (2 * Math.PI * k * i) / n;
-      const value = values[i] * window;
-      re += value * Math.cos(angle);
-      im -= value * Math.sin(angle);
+  for (let k = totalLowK; k <= totalHighK; k += 1) {
+    // Goertzel-style trig recurrence per bin: avoids n×{cos,sin} calls.
+    const theta = (2 * Math.PI * k) / n;
+    const cosT = Math.cos(theta);
+    const sinT = Math.sin(theta);
+    let cPrev = 1;     // cos(0)
+    let sPrev = 0;     // sin(0)
+    let re = x[0];     // i=0 contribution: x·1
+    let im = 0;        // i=0: x·-0
+    for (let i = 1; i < n; i += 1) {
+      // (cNext, sNext) = rotate(cPrev, sPrev) by theta
+      const cNext = cPrev * cosT - sPrev * sinT;
+      const sNext = sPrev * cosT + cPrev * sinT;
+      const v = x[i];
+      re += v * cNext;
+      im -= v * sNext;
+      cPrev = cNext;
+      sPrev = sNext;
     }
     const power = re * re + im * im;
-    if (frequency >= 0.1) totalPower += power;
-    if (frequency >= lowHz && frequency <= highHz) {
+    totalPower += power;
+    if (k >= bandLowK && k <= bandHighK) {
       bandPower += power;
       bandBins += 1;
       if (power > peakPower) {
         peakPower = power;
-        peakFrequency = frequency;
+        peakFrequency = (k * fs) / n;
       }
     }
   }

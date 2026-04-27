@@ -7,7 +7,7 @@ import {
   createEmptySignalQuality,
   type PPGSignalQuality,
 } from "../signal/PPGSignalQuality";
-import { durationMs, preprocessPPG, type TimeSample } from "../signal/PPGFilters";
+import { durationMs, type TimeSample } from "../signal/PPGFilters";
 import {
   estimateCameraSpO2,
   type PublishedOxygenMeasurement,
@@ -30,7 +30,9 @@ export interface PublishedPPGMeasurement {
   bpm: number | null;
   bpmConfidence: number;
   oxygen: PublishedOxygenMeasurement;
-  waveform: number[];
+  // Note: numeric waveform was previously serialized here for the monitor,
+  // but the monitor renders directly from `channels` (see FullScreenCardiacMonitor.mainTrace).
+  // We keep `waveformSource` as the contract — the array itself was dead work.
   waveformSource: "REAL_PPG" | "RAW_DEBUG_ONLY" | "NONE";
   beatMarkers: Array<{
     t: number;
@@ -62,13 +64,6 @@ export interface PublishedPPGMeasurement {
 
 const NO_SIGNAL_MESSAGE = "SIN SENAL PPG VERIFICABLE";
 
-function waveformFromSeries(series: TimeSample[], maxPoints = 520): number[] {
-  if (series.length < 3) return [];
-  const processed = preprocessPPG(series, 0.5, 4.0, 30);
-  const tail = processed.slice(-maxPoints);
-  return tail.map((sample) => sample.value);
-}
-
 export function createEmptyPublishedPPGMeasurement(
   camera: PPGCameraState,
 ): PublishedPPGMeasurement {
@@ -86,7 +81,6 @@ export function createEmptyPublishedPPGMeasurement(
       reasons: ["NO_PPG_PUBLICATION"],
       calibrationBadge: camera.diagnostics?.calibration.status ?? "uncalibrated",
     },
-    waveform: [],
     waveformSource: "NONE",
     beatMarkers: [],
     withheldBeatMarkers: [],
@@ -347,7 +341,6 @@ export class PPGPublicationGate {
       bpm: canPublishVitals && beats.bpm !== null ? Math.round(beats.bpm) : null,
       bpmConfidence: canPublishVitals ? beats.confidence : 0,
       oxygen,
-      waveform: waveformSource === "NONE" ? [] : waveformFromSeries(selectedSeries),
       waveformSource,
       beatMarkers: canPublishVitals
         ? beats.beats.slice(-16).map((beat) => ({

@@ -514,6 +514,12 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
   const lastRenderTimeRef = useRef(0);
   const renderFpsRef = useRef(0);
 
+  // Keep the latest measurement in a ref so the RAF loop is mounted ONCE.
+  // Previously the effect depended on `measurement` and was torn down + restarted
+  // on every state tick (~5–10 Hz), losing animation frames and causing jank.
+  const measurementRef = useRef(measurement);
+  measurementRef.current = measurement;
+
   const sessionLabel = useMemo(() => {
     const width = measurement.camera.settings?.width ?? measurement.frameStats.width;
     const height = measurement.camera.settings?.height ?? measurement.frameStats.height;
@@ -522,8 +528,11 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
 
   useEffect(() => {
     let raf = 0;
+    let mounted = true;
     const render = () => {
-      if (canvasRef.current) drawMonitor(canvasRef.current, measurement);
+      if (!mounted) return;
+      const canvas = canvasRef.current;
+      if (canvas) drawMonitor(canvas, measurementRef.current);
 
       // Track render FPS
       renderCountRef.current++;
@@ -536,9 +545,14 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
 
       raf = requestAnimationFrame(render);
     };
-    render();
-    return () => cancelAnimationFrame(raf);
-  }, [measurement]);
+    raf = requestAnimationFrame(render);
+    return () => {
+      mounted = false;
+      cancelAnimationFrame(raf);
+    };
+    // Mount once. The ref above carries the latest measurement into the loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggle = async () => {
     if (busy) return;
