@@ -356,16 +356,23 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                 RR consistency ⓘ
               </span>
               <span
-                key={beats.rrIntervalsMs.length < 2 ? "rr-empty" : "rr-value"}
+                key={`rr-${beats.rrIntervalsMs.length}`}
                 className={
                   beats.rrIntervalsMs.length < 2
                     ? "animate-fade-in italic text-white/40"
                     : "animate-fade-in"
                 }
               >
-                {beats.rrIntervalsMs.length < 2
-                  ? `need ≥2 beats (have ${beats.beats.length})`
-                  : fmt(quality.rrConsistency, 2)}
+                {beats.rrIntervalsMs.length < 2 ? (
+                  `need ≥2 beats (have ${beats.beats.length})`
+                ) : (
+                  <>
+                    {fmt(quality.rrConsistency, 2)}
+                    <span className="ml-1 text-[9px] text-white/40">
+                      (using {beats.rrIntervalsMs.length} RR{beats.rrIntervalsMs.length === 1 ? "" : "s"})
+                    </span>
+                  </>
+                )}
               </span>
               <span className="text-white/55">RR intervals (last 5)</span>
               <span
