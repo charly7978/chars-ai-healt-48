@@ -243,6 +243,63 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         }));
       }
 
+      // ============================================================
+      // FORENSIC HARD GATE: block ROI/PPG/publication unless every
+      // hardware precondition is satisfied. No soft fallbacks.
+      // ============================================================
+      const cam = cameraRef.current;
+      const samplerStats = frameStatsRef.current;
+      const video = videoRef.current;
+      const videoReady = video !== null && video.readyState >= 2 &&
+        video.videoWidth > 0 && video.videoHeight > 0;
+      const decodedFramesOk = samplerStats.frameCount >= 30;
+      const fpsOk = samplerStats.fpsQuality >= 50 && samplerStats.measuredFps >= 18;
+      const jitterOk = samplerStats.jitterMs <= 14;
+      const torchRequested = cam.torchAvailable === true;
+      const torchOk = !torchRequested || cam.torchEnabled === true;
+      const streamOk = cam.streamActive === true && cam.cameraReady === true;
+
+      const gateReasons: string[] = [];
+      if (!videoReady) gateReasons.push("video-not-decoding");
+      if (!decodedFramesOk) gateReasons.push(`warmup-frames<30 (${samplerStats.frameCount})`);
+      if (!fpsOk) gateReasons.push(`fps-quality<50 (q=${samplerStats.fpsQuality},fps=${samplerStats.measuredFps.toFixed(1)})`);
+      if (!jitterOk) gateReasons.push(`jitter>14ms (${samplerStats.jitterMs.toFixed(1)})`);
+      if (!streamOk) gateReasons.push("stream-not-live");
+      if (!torchOk) gateReasons.push("torch-requested-but-not-applied");
+
+      const acquisitionReadyNow = gateReasons.length === 0;
+
+      // Sync controller state (mark/clear acquisitionReady) and refresh local
+      // cameraRef snapshot so downstream UI/publication see the truth.
+      if (acquisitionReadyNow && !cam.acquisitionReady) {
+        cameraControllerRef.current.markAcquisitionReady({
+          warmupFrames: samplerStats.frameCount,
+          warmupJitterMs: samplerStats.jitterMs,
+          warmupFpsStdMs: samplerStats.sampleIntervalStdMs,
+          fpsReal: samplerStats.measuredFps,
+        });
+        cameraRef.current = cameraControllerRef.current.getState();
+      } else if (!acquisitionReadyNow && cam.acquisitionReady) {
+        cameraControllerRef.current.clearAcquisitionReady(gateReasons);
+        cameraRef.current = cameraControllerRef.current.getState();
+      }
+
+      if (!acquisitionReadyNow) {
+        // Hard gate: do NOT touch extractor / fusion / beats / publication.
+        // Only refresh published snapshot so the HUD shows the rejection.
+        const prev = publishedRef.current;
+        publishedRef.current = {
+          ...prev,
+          evidence: {
+            ...prev.evidence,
+            camera: cameraRef.current,
+          },
+          message: `ADQUISICIÓN NO LISTA: ${gateReasons.join(" | ")}`,
+        };
+        publishUiSnapshot();
+        return;
+      }
+
       const sample = extractorRef.current.processFrame(frame);
 
       // Always refresh ROI evidence for diagnostics, even if frame rejected.
