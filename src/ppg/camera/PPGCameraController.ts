@@ -677,7 +677,189 @@ export class PPGCameraController {
     return true;
   }
 
+  /**
+   * Called by FrameSampler once warmup is satisfied. Mutates state +
+   * acquisitionReport. Idempotent.
+   */
+  markAcquisitionReady(metrics: {
+    warmupFrames: number;
+    warmupJitterMs: number;
+    warmupFpsStdMs: number;
+    fpsReal: number;
+  }): void {
+    if (!this.state.acquisitionReport) return;
+    const report = {
+      ...this.state.acquisitionReport,
+      warmupFrames: metrics.warmupFrames,
+      warmupJitterMs: metrics.warmupJitterMs,
+      warmupFpsStdMs: metrics.warmupFpsStdMs,
+      fpsReal: metrics.fpsReal,
+      acquisitionReady: true,
+      notReadyReasons: [] as string[],
+    };
+    this.state = {
+      ...this.state,
+      acquisitionReady: true,
+      notReadyReasons: [],
+      acquisitionReport: report,
+    };
+  }
+
+  /** Called when the sampler observes a regression (jitter spike, freeze). */
+  clearAcquisitionReady(reasons: string[]): void {
+    if (!this.state.acquisitionReady && !this.state.acquisitionReport) return;
+    this.state = {
+      ...this.state,
+      acquisitionReady: false,
+      notReadyReasons: reasons,
+      acquisitionReport: this.state.acquisitionReport
+        ? { ...this.state.acquisitionReport, acquisitionReady: false, notReadyReasons: reasons }
+        : null,
+    };
+  }
+
+  /**
+   * Multi-rear PPG probe — opens each candidate device briefly (≤2s), measures
+   * red saturation / coverage / perfusion proxy / jitter, and returns the
+   * winner. Real implementation is best-effort: if a probe fails (browser
+   * refuses concurrent access, etc.) the candidate is recorded with a reason
+   * and skipped, never silently ignored.
+   */
+  private async runMultiRearProbe(
+    candidates: DeviceCameraProfile[],
+    diagnostics: CameraDiagnostics,
+  ): Promise<MultiRearProbeReport> {
+    const results: MultiRearProbeCandidate[] = [];
+    const PROBE_MS = 2000;
+
+    for (const cand of candidates) {
+      const entry: MultiRearProbeCandidate = {
+        deviceId: cand.deviceId,
+        label: cand.label,
+        durationMs: 0,
+        framesAnalyzed: 0,
+        meanRed: 0,
+        meanGreen: 0,
+        saturationHigh: 0,
+        coverage: 0,
+        perfusionProxy: 0,
+        jitterMs: 0,
+        score: -Infinity,
+        rejectedReason: null,
+      };
+      let stream: MediaStream | null = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: { exact: cand.deviceId },
+            width: { ideal: 320 },
+            height: { ideal: 240 },
+            frameRate: { ideal: 30 },
+          },
+          audio: false,
+        });
+        const track = stream.getVideoTracks()[0];
+        // Best-effort torch on for the probe so PPG metrics reflect the real
+        // operating condition. Ignore failures.
+        try {
+          if (track.getCapabilities?.().torch === true) {
+            await track.applyConstraints(torchConstraint(true));
+          }
+        } catch { /* noop */ }
+
+        const t0 = performance.now();
+        const intervals: number[] = [];
+        let frames = 0;
+        let lastT = 0;
+        let sumR = 0, sumG = 0, sumSat = 0, sumCoverage = 0, sumPerf = 0;
+
+        const video = document.createElement("video");
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+        try { await video.play(); } catch { /* noop */ }
+
+        await new Promise<void>((resolve) => {
+          const canvas = document.createElement("canvas");
+          canvas.width = 64; canvas.height = 64;
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          const tick = () => {
+            if (performance.now() - t0 >= PROBE_MS) return resolve();
+            if (video.readyState >= 2 && ctx) {
+              const now = performance.now();
+              if (lastT > 0) intervals.push(now - lastT);
+              lastT = now;
+              ctx.drawImage(video, 0, 0, 64, 64);
+              const data = ctx.getImageData(0, 0, 64, 64).data;
+              let r = 0, g = 0, hi = 0, cov = 0;
+              const px = 64 * 64;
+              for (let i = 0; i < data.length; i += 4) {
+                const R = data[i], G = data[i + 1];
+                r += R; g += G;
+                if (R >= 250) hi++;
+                if (R > 80 && R > G * 1.2) cov++;
+              }
+              r /= px; g /= px;
+              const satHi = hi / px;
+              const coverage = cov / px;
+              sumR += r; sumG += g; sumSat += satHi; sumCoverage += coverage;
+              sumPerf += Math.max(0, r - g) / Math.max(1, r);
+              frames++;
+            }
+            requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        });
+
+        entry.durationMs = Math.round(performance.now() - t0);
+        entry.framesAnalyzed = frames;
+        if (frames > 0) {
+          entry.meanRed = sumR / frames;
+          entry.meanGreen = sumG / frames;
+          entry.saturationHigh = sumSat / frames;
+          entry.coverage = sumCoverage / frames;
+          entry.perfusionProxy = sumPerf / frames;
+        }
+        if (intervals.length >= 4) {
+          const med = intervals.slice().sort((a, b) => a - b)[intervals.length >> 1];
+          let mad = 0;
+          for (const v of intervals) mad += Math.abs(v - med);
+          entry.jitterMs = mad / intervals.length;
+        }
+        // Score: reward perfusion + coverage, penalise saturation + jitter.
+        entry.score =
+          entry.perfusionProxy * 100 +
+          entry.coverage * 50 -
+          entry.saturationHigh * 80 -
+          Math.min(50, entry.jitterMs);
+      } catch (error) {
+        entry.rejectedReason = (error as Error).message ?? "probe-failed";
+      } finally {
+        stream?.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
+      }
+      results.push(entry);
+      diagnostics.attempts.push({
+        label: `multi-rear-probe:${cand.deviceId.slice(0, 8)}`,
+        constraints: { video: { deviceId: { exact: cand.deviceId } }, audio: false },
+        outcome: entry.rejectedReason ? "failure" : "success",
+        errorMessage: entry.rejectedReason ?? undefined,
+        resolvedDeviceId: cand.deviceId,
+        resolvedLabel: cand.label,
+      });
+    }
+
+    const valid = results.filter((r) => r.rejectedReason === null && r.framesAnalyzed > 0);
+    const winner = valid.sort((a, b) => b.score - a.score)[0] ?? null;
+    return {
+      ran: true,
+      reason: winner ? "scored-by-ppg-metrics" : "no-valid-probe-results",
+      candidates: results,
+      winnerDeviceId: winner?.deviceId ?? null,
+    };
+  }
+
   /* ---------------- private ---------------- */
+
 
   private async openCamera(
     diagnostics: CameraDiagnostics,
