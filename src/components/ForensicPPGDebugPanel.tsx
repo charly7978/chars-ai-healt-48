@@ -377,20 +377,23 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                 RR consistency ⓘ
               </span>
               <span
-                key={`rr-${beats.rrIntervalsMs.length}`}
+                key={`rr-${rrCount}`}
                 className={
-                  beats.rrIntervalsMs.length < 2
+                  rrCount < 2
                     ? "animate-fade-in italic text-white/40"
-                    : "animate-fade-in"
+                    : "animate-scale-in rounded px-1 ring-1 ring-emerald-300/40 bg-emerald-300/10"
                 }
               >
-                {beats.rrIntervalsMs.length < 2 ? (
-                  `need ≥2 beats (have ${beats.beats.length})`
+                {rrCount < 2 ? (
+                  `need ≥2 beats (have ${beats.beats.length} beats / ${rrCount} RRs)`
                 ) : (
                   <>
                     {fmt(quality.rrConsistency, 2)}
+                    {rrTrend === "up" && <span className="ml-1 text-emerald-400">▲</span>}
+                    {rrTrend === "down" && <span className="ml-1 text-red-400">▼</span>}
+                    {rrTrend === "flat" && <span className="ml-1 text-white/40">▬</span>}
                     <span className="ml-1 text-[9px] text-white/40">
-                      (using {beats.rrIntervalsMs.length} RR{beats.rrIntervalsMs.length === 1 ? "" : "s"})
+                      ({beats.beats.length} beats / using {rrCount} RR{rrCount === 1 ? "" : "s"})
                     </span>
                   </>
                 )}
