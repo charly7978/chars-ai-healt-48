@@ -32,7 +32,22 @@ export interface PublishedPPGMeasurement {
   oxygen: PublishedOxygenMeasurement;
   waveform: number[];
   waveformSource: "REAL_PPG" | "RAW_DEBUG_ONLY" | "NONE";
-  beatMarkers: Array<{ t: number; confidence: number }>;
+  beatMarkers: Array<{
+    t: number;
+    confidence: number;
+    onsetT?: number | null;
+    troughT?: number | null;
+  }>;
+  withheldBeatMarkers: Array<{ t: number; reason: string }>;
+  irregularityFlag: boolean;
+  estimatorBreakdown: {
+    peakBpm: number | null;
+    medianIbiBpm: number | null;
+    fftBpm: number | null;
+    autocorrBpm: number | null;
+    agreementBpm: number;
+    publicationException?: string;
+  };
   quality: PPGSignalQuality;
   evidence: {
     camera: PPGCameraState;
@@ -74,6 +89,15 @@ export function createEmptyPublishedPPGMeasurement(
     waveform: [],
     waveformSource: "NONE",
     beatMarkers: [],
+    withheldBeatMarkers: [],
+    irregularityFlag: false,
+    estimatorBreakdown: {
+      peakBpm: null,
+      medianIbiBpm: null,
+      fftBpm: null,
+      autocorrBpm: null,
+      agreementBpm: 999,
+    },
     quality: createEmptySignalQuality(),
     evidence: {
       camera,
@@ -326,8 +350,25 @@ export class PPGPublicationGate {
       waveform: waveformSource === "NONE" ? [] : waveformFromSeries(selectedSeries),
       waveformSource,
       beatMarkers: canPublishVitals
-        ? beats.beats.slice(-16).map((beat) => ({ t: beat.t, confidence: beat.confidence }))
+        ? beats.beats.slice(-16).map((beat) => ({
+            t: beat.t,
+            confidence: beat.confidence,
+            onsetT: beat.onsetT,
+            troughT: beat.troughT,
+          }))
         : [],
+      withheldBeatMarkers: beats.withheldBeats
+        .slice(-12)
+        .map((beat) => ({ t: beat.t, reason: beat.rejectionReason ?? "UNKNOWN" })),
+      irregularityFlag: beats.irregularityFlag,
+      estimatorBreakdown: {
+        peakBpm: beats.peakBpm,
+        medianIbiBpm: beats.medianIbiBpm,
+        fftBpm: beats.fftBpm,
+        autocorrBpm: beats.autocorrBpm,
+        agreementBpm: beats.estimatorAgreementBpm,
+        publicationException: beats.publicationException,
+      },
       quality: {
         ...quality,
         reasons: [...new Set([...quality.reasons, ...reasons, ...oxygen.reasons])],
