@@ -246,6 +246,13 @@ export class RadiometricPPGExtractor {
         `highMax=${maxHigh.toFixed(2)} lowMax=${maxLow.toFixed(2)}`,
       );
     }
+    if (!evidence.accepted) {
+      return this.reject(
+        evidence,
+        "ROI_NOT_ACCEPTED",
+        `state=${evidence.contactState} pressure=${evidence.pressureState} score=${evidence.contactScore.toFixed(2)} tiles=${evidence.usableTileCount}/${evidence.tileCount} reasons=${evidence.reason.join("+") || "NONE"}`,
+      );
+    }
 
     // ── PIXEL POOL (per-channel, independently masked) ──────────────────
     const { data, width } = frame.imageData;

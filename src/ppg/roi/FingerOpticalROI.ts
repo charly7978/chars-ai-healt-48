@@ -119,7 +119,7 @@ export interface FingerOpticalEvidence {
   userGuidance: string;
 }
 
-const TILE_GRID = 5; // 5×5 tile grid
+const TILE_GRID = 7; // 7×7 adaptive tile grid: stricter spatial proof of finger contact
 
 type Channel = "r" | "g" | "b";
 
@@ -169,6 +169,7 @@ export class FingerOpticalROI {
 
   // Smoothed AC/DC ratio on the green channel — used by the pressure model.
   private smoothedGreenAcDc = 0;
+  private contactStableFrames = 0;
 
   reset(): void {
     this.previousLuma = null;
@@ -179,6 +180,7 @@ export class FingerOpticalROI {
     this.previousUsableTileMask = null;
     this.previousCentroid = null;
     this.smoothedGreenAcDc = 0;
+    this.contactStableFrames = 0;
   }
 
   analyze(imageData: ImageData): FingerOpticalEvidence {
@@ -410,12 +412,16 @@ export class FingerOpticalROI {
     const uniformityScore = clamp01(1 - spatialVariance * 25);
     const coverageScore = clamp01(coverageRatio * uniformityScore);
 
-    // Contact score (composite of factors that indicate finger contact)
+    // Contact score (composite of factors that indicate finger contact). A
+    // no-finger scene can be bright and stable; it must also look hemoglobin-
+    // dominant, spatially covered, textured, and not globally clipped.
     const contactScore = clamp01(
-      coverageScore * 0.35 +
-      illuminationScore * 0.25 +
-      this.dcStability * 0.25 +
-      redDominance * 0.15,
+      coverageScore * 0.22 +
+      illuminationScore * 0.16 +
+      this.dcStability * 0.16 +
+      redDominance * 0.24 +
+      greenPulseAvailability * 0.12 +
+      Math.min(1, usablePixelRatio.g / 0.65) * 0.10,
     );
 
     // Per-channel saturation aliases (spec name).
@@ -459,16 +465,8 @@ export class FingerOpticalROI {
     // NOTE: motion / pressure / texture / centroid reasons are pushed AFTER
     // the tile pass below, where those metrics are computed.
 
-    // Acceptance criteria
-    const accepted =
-      contactScore >= 0.45 &&
-      coverageScore >= 0.3 &&
-      illuminationScore >= 0.3 &&
-      highClip < 0.15 &&
-      lowClip < 0.2 &&
-      this.dcStability >= 0.4 &&
-      motionRisk < 0.5 &&
-      pressureRisk < 0.5;
+    // Early acceptance is intentionally not final; final acceptance is
+    // recomputed after tile stability, texture and pressure have been scored.
 
     // ── Tile grid (TILE_GRID×TILE_GRID) ─────────────────────────────────────
     // Single, sparse pass over each tile. Used to:
@@ -637,11 +635,13 @@ export class FingerOpticalROI {
     const perfusionScore = perfusionCount > 0 ? clamp01(perfusionAccum / perfusionCount) : 0;
     const motionScore = clamp01(1 - motionRisk);
     const opticalContactScore = clamp01(
-      coverageScore * 0.3 +
-        illuminationScore * 0.2 +
-        this.dcStability * 0.2 +
-        redDominance * 0.15 +
-        (usableTileCount / (TILE_GRID * TILE_GRID)) * 0.15,
+      coverageScore * 0.22 +
+        illuminationScore * 0.14 +
+        this.dcStability * 0.14 +
+        redDominance * 0.22 +
+        greenPulseAvailability * 0.10 +
+        textureScore * 0.08 +
+        (usableTileCount / (TILE_GRID * TILE_GRID)) * 0.10,
     );
 
     // Per-channel availability for downstream gates.
@@ -689,6 +689,9 @@ export class FingerOpticalROI {
     if (centroidDrift > 0.35) reason.push("CENTROID_DRIFT");
     if (textureScore < 0.1 && coverageScore > 0.4) reason.push("FLAT_SURFACE_NO_TEXTURE");
 
+    const minStableTiles = Math.ceil(TILE_GRID * TILE_GRID * 0.38);
+    const minPartialTiles = Math.ceil(TILE_GRID * TILE_GRID * 0.24);
+
     // High-level contact state (does NOT replace `accepted` — it adds nuance).
     let contactState: FingerContactState;
     if (highClip > 0.35 && meanLuma > 220) contactState = "overexposed";
@@ -698,17 +701,17 @@ export class FingerOpticalROI {
       contactState = "motion_rejected";
     else if (
       opticalContactScore >= 0.55 &&
-      usableTileCount >= 12 &&
+      usableTileCount >= minStableTiles &&
       roiStabilityScore >= 0.6 &&
       this.dcStability >= 0.5 &&
       textureScore >= 0.15 &&
       pressureState === "optimal"
     )
       contactState = "stable";
-    else if (opticalContactScore >= 0.35 && usableTileCount >= 6) contactState = "partial";
+    else if (opticalContactScore >= 0.35 && usableTileCount >= minPartialTiles) contactState = "partial";
     else contactState = "searching";
 
-    if (usableTileCount < 6) reason.push("INSUFFICIENT_USABLE_TILES");
+    if (usableTileCount < minPartialTiles) reason.push("INSUFFICIENT_USABLE_TILES");
     if (roiStabilityScore < 0.4) reason.push("ROI_UNSTABLE");
     if (contactState === "overexposed") reason.push("OVEREXPOSED");
     if (contactState === "underexposed") reason.push("UNDEREXPOSED");
@@ -727,6 +730,24 @@ export class FingerOpticalROI {
     else if (textureScore < 0.12 && coverageScore > 0.4) userGuidance = "No detecto un dedo real — recolocá el dedo.";
     else if (contactState === "stable") userGuidance = "";
     else userGuidance = "Buscando señal estable…";
+
+    const frameAcceptedNow =
+      contactState === "stable" &&
+      contactScore >= 0.62 &&
+      opticalContactScore >= 0.58 &&
+      coverageScore >= 0.42 &&
+      redDominance >= 0.22 &&
+      greenPulseAvailability >= 0.18 &&
+      usableTileCount >= minStableTiles &&
+      roiStabilityScore >= 0.55 &&
+      textureScore >= 0.12 &&
+      highClip < 0.18 &&
+      lowClip < 0.18 &&
+      this.dcStability >= 0.50 &&
+      motionRisk < 0.38 &&
+      pressureState === "optimal";
+    this.contactStableFrames = frameAcceptedNow ? this.contactStableFrames + 1 : 0;
+    const accepted = frameAcceptedNow && this.contactStableFrames >= 8;
 
     return {
       roi,

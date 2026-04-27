@@ -288,13 +288,29 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         // Hard gate: do NOT touch extractor / fusion / beats / publication.
         // Only refresh published snapshot so the HUD shows the rejection.
         const prev = publishedRef.current;
+        const staleSinceMs = prev.lastValidTimestamp !== null
+          ? Math.max(0, frame.timestampMs - prev.lastValidTimestamp)
+          : 0;
         publishedRef.current = {
           ...prev,
+          state: cam.cameraReady ? "CAMERA_READY_NO_PPG" : "CAMERA_STARTING",
+          canPublishVitals: false,
+          canVibrateBeat: false,
+          bpm: null,
+          bpmConfidence: 0,
+          oxygen: { ...prev.oxygen, spo2: null, confidence: 0, canPublish: false, reasons: ["ACQUISITION_NOT_READY"] },
+          waveformSource: "NONE",
+          beatMarkers: [],
+          withheldBeatMarkers: [],
+          quality: createEmptySignalQuality(gateReasons),
           evidence: {
             ...prev.evidence,
             camera: cameraRef.current,
           },
           message: `ADQUISICIÓN NO LISTA: ${gateReasons.join(" | ")}`,
+          lastValidTimestamp: null,
+          staleSinceMs,
+          staleBadge: prev.lastValidTimestamp === null ? "never" : staleSinceMs <= 6000 ? "stale" : "expired",
         };
         publishUiSnapshot();
         return;
@@ -310,8 +326,21 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         // Refresh published.evidence.roi so HUD reflects current camera state
         if (lastEvidence) {
           const prev = publishedRef.current;
+          const staleSinceMs = prev.lastValidTimestamp !== null
+            ? Math.max(0, frame.timestampMs - prev.lastValidTimestamp)
+            : 0;
           publishedRef.current = {
             ...prev,
+            state: "CAMERA_READY_NO_PPG",
+            canPublishVitals: false,
+            canVibrateBeat: false,
+            bpm: null,
+            bpmConfidence: 0,
+            oxygen: { ...prev.oxygen, spo2: null, confidence: 0, canPublish: false, reasons: [lastRejectionMsg ?? "ROI_NOT_ACCEPTED"] },
+            waveformSource: "NONE",
+            beatMarkers: [],
+            withheldBeatMarkers: [],
+            quality: createEmptySignalQuality([...(lastEvidence.reason ?? []), lastRejectionMsg ?? "ROI_NOT_ACCEPTED"]),
             evidence: {
               ...prev.evidence,
               camera: cameraRef.current,
@@ -320,6 +349,9 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
             message: lastRejectionMsg
               ? `SIN MUESTRA PPG: ${lastRejectionMsg}`
               : prev.message,
+            lastValidTimestamp: null,
+            staleSinceMs,
+            staleBadge: prev.lastValidTimestamp === null ? "never" : staleSinceMs <= 6000 ? "stale" : "expired",
           };
         }
         publishUiSnapshot();

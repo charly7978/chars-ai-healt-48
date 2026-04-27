@@ -223,7 +223,8 @@ export class PPGPublicationGate {
     const bradycardiaWindowAllowed =
       beats.bpm !== null && beats.bpm < 45 && bufferMs >= 14000 && validBeats.length >= 4;
     const enoughBeats = validBeats.length >= 5 || bradycardiaWindowAllowed;
-    const torchCondition = !camera.torchAvailable || camera.torchEnabled;
+    const torchCondition = !camera.torchAvailable || (camera.torchEnabled && camera.torchApplied);
+    const acquisitionCondition = camera.acquisitionReady === true;
     const saturationOk = quality.saturationPenalty <= 0.55;
     const perfusionOk = quality.acDcPerfusionIndex >= 0.02;
     // Multi-estimator agreement (informative, not a hard binary lock)
@@ -248,8 +249,8 @@ export class PPGPublicationGate {
     // Tile-based hard gate: BPM/SpO2 require enough usable optical real estate.
     const tileGateOk = roi.usableTileCount >= 6 && roi.roiStabilityScore >= 0.4;
     // Contact state veto for any heart-rate publication.
-    const contactStateOk =
-      roi.contactState === "stable" || roi.contactState === "partial";
+    const contactStateOk = roi.accepted === true && roi.contactState === "stable";
+    const pressureOk = roi.pressureState === "optimal";
 
     const coreQualityPass =
       quality.totalScore >= 60 &&
@@ -262,9 +263,12 @@ export class PPGPublicationGate {
       beats.confidence >= 0.45 &&
       fpsQualityOk &&
       tileGateOk &&
-      contactStateOk;
+      contactStateOk &&
+      pressureOk &&
+      acquisitionCondition;
 
     if (!camera.cameraReady) reasons.add("CAMERA_NOT_READY");
+    if (!acquisitionCondition) reasons.add(`ACQUISITION_NOT_READY_${camera.notReadyReasons?.join("+") || "UNKNOWN"}`);
     if (!torchCondition) reasons.add("TORCH_NOT_ENABLED");
     if (bufferMs < 6000 || selectedDurationMs < 6000) reasons.add("BUFFER_LT_6S");
     if (bufferMs < 10000) reasons.add("BUFFER_LT_10S_PREFERRED");
@@ -276,7 +280,8 @@ export class PPGPublicationGate {
     if (quality.rrConsistency < 0.4) reasons.add("RR_CHAOTIC_OR_INSUFFICIENT");
     if (!fpsQualityOk) reasons.add(`FPS_QUALITY_LOW_${fpsQuality.toFixed(0)}`);
     if (!tileGateOk) reasons.add(`TILE_GATE_FAIL_${roi.usableTileCount}/${roi.tileCount}`);
-    if (!contactStateOk) reasons.add(`CONTACT_STATE_${roi.contactState.toUpperCase()}`);
+    if (!contactStateOk) reasons.add(`CONTACT_NOT_ACCEPTED_${roi.contactState.toUpperCase()}`);
+    if (!pressureOk) reasons.add(`PRESSURE_${roi.pressureState.toUpperCase()}`);
 
     const now = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
     const windowBucket = Math.floor(now / 2000);
@@ -309,6 +314,7 @@ export class PPGPublicationGate {
     const canPublishVitals =
       state === "PPG_VALID" &&
       camera.cameraReady &&
+      acquisitionCondition &&
       torchCondition &&
       bufferMs >= 6000 &&
       selectedDurationMs >= 6000 &&
@@ -336,9 +342,8 @@ export class PPGPublicationGate {
 
     const waveformSource: PublishedPPGMeasurement["waveformSource"] = canPublishVitals
       ? "REAL_PPG"
-      : hasRealData && selectedSeries.length >= 3
-        ? "RAW_DEBUG_ONLY"
-        : "NONE";
+      : "NONE";
+    void hasRealData;
 
     // SpO2 needs BOTH red AND green to be optically valid (Ratio-of-Ratios).
     // If red is saturated under flash but green is fine, we still publish BPM
