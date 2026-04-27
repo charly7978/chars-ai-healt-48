@@ -412,12 +412,16 @@ export class FingerOpticalROI {
     const uniformityScore = clamp01(1 - spatialVariance * 25);
     const coverageScore = clamp01(coverageRatio * uniformityScore);
 
-    // Contact score (composite of factors that indicate finger contact)
+    // Contact score (composite of factors that indicate finger contact). A
+    // no-finger scene can be bright and stable; it must also look hemoglobin-
+    // dominant, spatially covered, textured, and not globally clipped.
     const contactScore = clamp01(
-      coverageScore * 0.35 +
-      illuminationScore * 0.25 +
-      this.dcStability * 0.25 +
-      redDominance * 0.15,
+      coverageScore * 0.22 +
+      illuminationScore * 0.16 +
+      this.dcStability * 0.16 +
+      redDominance * 0.24 +
+      greenPulseAvailability * 0.12 +
+      Math.min(1, usablePixelRatio.g / 0.65) * 0.10,
     );
 
     // Per-channel saturation aliases (spec name).
@@ -461,16 +465,8 @@ export class FingerOpticalROI {
     // NOTE: motion / pressure / texture / centroid reasons are pushed AFTER
     // the tile pass below, where those metrics are computed.
 
-    // Acceptance criteria
-    const accepted =
-      contactScore >= 0.45 &&
-      coverageScore >= 0.3 &&
-      illuminationScore >= 0.3 &&
-      highClip < 0.15 &&
-      lowClip < 0.2 &&
-      this.dcStability >= 0.4 &&
-      motionRisk < 0.5 &&
-      pressureRisk < 0.5;
+    // Early acceptance is intentionally not final; final acceptance is
+    // recomputed after tile stability, texture and pressure have been scored.
 
     // ── Tile grid (TILE_GRID×TILE_GRID) ─────────────────────────────────────
     // Single, sparse pass over each tile. Used to:
