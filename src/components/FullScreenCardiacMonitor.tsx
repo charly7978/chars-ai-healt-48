@@ -642,6 +642,20 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
         </div>
       </header>
 
+      {measurement.published.evidence.roi.userGuidance && (
+        <div
+          className={`pointer-events-none absolute left-1/2 top-[58px] z-20 -translate-x-1/2 rounded-full border px-3 py-1 text-xs font-medium backdrop-blur-md ${
+            measurement.published.evidence.roi.contactState === "stable"
+              ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
+              : "border-amber-400/40 bg-amber-500/10 text-amber-200"
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          {measurement.published.evidence.roi.userGuidance}
+        </div>
+      )}
+
       <aside className="pointer-events-none absolute right-3 top-[86px] z-20 w-[min(38vw,350px)] space-y-2">
         <div className="rounded border border-emerald-300/14 bg-black/62 p-3 backdrop-blur-md">
           <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-slate-400">

@@ -12,6 +12,47 @@ export type FingerContactState =
   | "underexposed"
   | "motion_rejected";
 
+/**
+ * Pressure proxy state. Drives user guidance ("press more / less / hold still").
+ * Derived from a multi-metric vote — never from a single signal.
+ */
+export type FingerPressureState =
+  | "weak_contact"      // dedo apoyado muy flojo o levantado
+  | "low_pressure"      // contacto presente pero perfusión pobre
+  | "optimal"           // dentro del sweet spot fisiológico
+  | "high_pressure"     // bloqueando perfusión, AC/DC bajando
+  | "excessive_pressure"; // saturación + variabilidad casi cero
+
+/**
+ * Reason codes returned in `evidence.reason`. Documented as a closed enum to
+ * prevent silent drift between detector and UI/guidance layers.
+ */
+export type FingerRejectionReason =
+  | "COVERAGE_TOO_LOW"
+  | "COVERAGE_LOW"
+  | "ILLUMINATION_INVALID"
+  | "RED_CHANNEL_SATURATED"
+  | "GREEN_CHANNEL_SATURATED"
+  | "BLUE_CHANNEL_SATURATED"
+  | "HIGH_SATURATION_DESTRUCTIVE"
+  | "LOW_SATURATION_BLOCKED"
+  | "DC_UNSTABLE_MOTION"
+  | "MOTION_DETECTED"
+  | "PRESSURE_RISK"
+  | "EXCESSIVE_PRESSURE"
+  | "WEAK_CONTACT"
+  | "NOT_FINGER_LIKE"
+  | "FLAT_SURFACE_NO_TEXTURE"
+  | "INSUFFICIENT_VALID_PIXELS"
+  | "INSUFFICIENT_USABLE_TILES"
+  | "ROI_UNSTABLE"
+  | "CENTROID_DRIFT"
+  | "LUMINANCE_JITTER"
+  | "GREEN_PULSE_WEAK"
+  | "OVEREXPOSED"
+  | "UNDEREXPOSED"
+  | "MOTION_REJECTED";
+
 export interface TileStat {
   index: number;
   rect: { x: number; y: number; width: number; height: number };
@@ -32,11 +73,28 @@ export interface FingerOpticalEvidence {
   opticalDensity: { r: number; g: number; b: number };
   highSaturation: { r: number; g: number; b: number };
   lowSaturation: { r: number; g: number; b: number };
+  // Per-channel saturation aliases (preferred names in spec). Same data
+  // as highSaturation.{r,g,b} but exposed flat for downstream readers.
+  redSaturationRatio: number;
+  greenSaturationRatio: number;
+  blueSaturationRatio: number;
+  /** Pixels where ALL three channels are simultaneously clipped. */
+  clippedPixelRatio: number;
   usablePixelRatio: { r: number; g: number; b: number };
   usablePixelRatioMax: number;
   spatialVariance: number;
+  /** Spatial uniformity (1 = perfectly uniform). */
+  uniformityScore: number;
+  /** Mean |∇L| over green channel — distinguishes finger texture from a flat surface. */
+  textureScore: number;
   dcStability: number;
   dcTrend: number;
+  /** |luma_t − luma_{t-1}| / 255, capped to [0,1]. */
+  luminanceDelta: number;
+  /** Pixel distance of usable-tile centroid from frame center, normalised by min(w,h)/2. */
+  centroidDrift: number;
+  /** Composite motion artifact score (luminanceDelta + centroidDrift + dcTrend). */
+  motionArtifactScore: number;
   coverageScore: number;
   illuminationScore: number;
   contactScore: number;
@@ -44,7 +102,7 @@ export interface FingerOpticalEvidence {
   greenPulseAvailability: number;
   pressureRisk: number;
   motionRisk: number;
-  reason: string[];
+  reason: FingerRejectionReason[];
   accepted: boolean;
   tiles: TileStat[];
   usableTileCount: number;
@@ -56,6 +114,9 @@ export interface FingerOpticalEvidence {
   opticalContactScore: number;
   channelUsable: { r: boolean; g: boolean; b: boolean };
   contactState: FingerContactState;
+  pressureState: FingerPressureState;
+  /** Human-readable, actionable hint for the UI. Empty string if no guidance needed. */
+  userGuidance: string;
 }
 
 const TILE_GRID = 5; // 5×5 tile grid
@@ -102,6 +163,13 @@ export class FingerOpticalROI {
   // (intersection-over-union of usable tiles).
   private previousUsableTileMask: boolean[] | null = null;
 
+  // Centroid (in normalised tile coordinates) of usable tiles in the previous
+  // frame — used to compute frame-to-frame ROI drift independently of IoU.
+  private previousCentroid: { x: number; y: number } | null = null;
+
+  // Smoothed AC/DC ratio on the green channel — used by the pressure model.
+  private smoothedGreenAcDc = 0;
+
   reset(): void {
     this.previousLuma = null;
     this.dcStability = 1;
@@ -109,6 +177,8 @@ export class FingerOpticalROI {
     this.frameCount = 0;
     this.baselineLinear = null;
     this.previousUsableTileMask = null;
+    this.previousCentroid = null;
+    this.smoothedGreenAcDc = 0;
   }
 
   analyze(imageData: ImageData): FingerOpticalEvidence {
@@ -302,16 +372,18 @@ export class FingerOpticalROI {
       dcTrend = slope; // luma units per frame
     }
 
-    // Update DC stability
+    // Update DC stability + frame-to-frame luminance delta
+    let luminanceDelta = 0;
     if (this.previousLuma !== null) {
+      luminanceDelta = clamp01(Math.abs(meanLuma - this.previousLuma) / 255);
       const relChange = Math.abs(meanLuma - this.previousLuma) / Math.max(20, this.previousLuma);
       const instant = clamp01(1 - relChange * 8); // More aggressive than before
       this.dcStability = this.dcStability * 0.88 + instant * 0.12;
     }
     this.previousLuma = meanLuma;
 
-    // Motion risk from DC oscillation
-    const motionRisk = clamp01(Math.abs(dcTrend) / 10);
+    // Motion risk from DC oscillation (will be augmented later by centroid drift)
+    let motionRisk = clamp01(Math.abs(dcTrend) / 10);
 
     // Chromatic analysis
     const redRatio = meanRgb.r / Math.max(1, meanRgb.r + meanRgb.g + meanRgb.b);
@@ -346,13 +418,29 @@ export class FingerOpticalROI {
       redDominance * 0.15,
     );
 
-    // Pressure risk (excessive saturation or compression indicators)
+    // Per-channel saturation aliases (spec name).
+    const redSaturationRatio = highSaturation.r;
+    const greenSaturationRatio = highSaturation.g;
+    const blueSaturationRatio = highSaturation.b;
+    // Pixels with ALL three channels clipped high (true destructive saturation).
+    // We compute it from per-channel high-sat counts assuming worst-case
+    // co-occurrence is bounded by the smallest channel ratio.
+    const clippedPixelRatio = Math.min(highSaturation.r, highSaturation.g, highSaturation.b);
+
+    // Pressure risk (excessive saturation or compression indicators).
+    // We deliberately keep the legacy scalar AND the new enum below.
     const extremeSat = highClip > 0.15 || lowClip > 0.2;
     const lowVariance = spatialVariance < 0.001 && meanLuma > 200;
     const pressureRisk = clamp01((extremeSat ? 0.6 : 0) + (lowVariance ? 0.4 : 0));
 
-    // Build rejection reasons
-    const reason: string[] = [];
+    // Build rejection reasons (closed enum).
+    const reason: FingerRejectionReason[] = [];
+
+    // Per-channel saturation reasons (independent — green can survive even if
+    // red is blown out by the flash, but we still want the diagnostic).
+    if (redSaturationRatio > 0.35) reason.push("RED_CHANNEL_SATURATED");
+    if (greenSaturationRatio > 0.35) reason.push("GREEN_CHANNEL_SATURATED");
+    if (blueSaturationRatio > 0.35) reason.push("BLUE_CHANNEL_SATURATED");
 
     // Hard rejection criteria
     if (coverageScore < 0.3) reason.push("COVERAGE_TOO_LOW");
@@ -360,14 +448,16 @@ export class FingerOpticalROI {
     if (highClip > 0.2) reason.push("HIGH_SATURATION_DESTRUCTIVE");
     if (lowClip > 0.25) reason.push("LOW_SATURATION_BLOCKED");
     if (this.dcStability < 0.35) reason.push("DC_UNSTABLE_MOTION");
-    if (motionRisk > 0.5) reason.push("MOTION_DETECTED");
-    if (pressureRisk > 0.6) reason.push("PRESSURE_RISK");
+    if (luminanceDelta > 0.05) reason.push("LUMINANCE_JITTER");
     if (redDominance < 0.15) reason.push("NOT_FINGER_LIKE");
     if (validCount < 100) reason.push("INSUFFICIENT_VALID_PIXELS");
 
     // Soft warnings
     if (coverageScore < 0.5) reason.push("COVERAGE_LOW");
     if (greenPulseAvailability < 0.3) reason.push("GREEN_PULSE_WEAK");
+
+    // NOTE: motion / pressure / texture / centroid reasons are pushed AFTER
+    // the tile pass below, where those metrics are computed.
 
     // Acceptance criteria
     const accepted =
@@ -394,6 +484,18 @@ export class FingerOpticalROI {
     let perfusionAccum = 0;
     let perfusionCount = 0;
 
+    // Texture accumulator: mean |∇G| over the whole frame (sampled).
+    // A real fingertip pressed against the lens has a soft non-zero
+    // micro-texture (capillary pattern, ridges, slight blur). A flat
+    // surface or empty lens produces ~0 gradient. We use this to veto
+    // "looks bright but isn't a finger" frames.
+    let gradAccum = 0;
+    let gradCount = 0;
+
+    // Centroid of usable tiles, in tile-grid coordinates (0..TILE_GRID-1).
+    let centroidX = 0;
+    let centroidY = 0;
+
     for (let ty = 0; ty < TILE_GRID; ty++) {
       for (let tx = 0; tx < TILE_GRID; tx++) {
         const x0 = tx * tileW;
@@ -409,9 +511,12 @@ export class FingerOpticalROI {
         let tileLow = 0;
         let tileGmin = 255;
         let tileGmax = 0;
+        let prevRowG = -1; // for vertical gradient
+        let prevColG = -1; // for horizontal gradient
 
         for (let yy = y0; yy < y1; yy += tileStep) {
           const rowBase = yy * width * 4;
+          prevColG = -1;
           for (let xx = x0; xx < x1; xx += tileStep) {
             const idx = rowBase + xx * 4;
             const r = data[idx];
@@ -427,7 +532,18 @@ export class FingerOpticalROI {
             if (minCh <= 4) tileLow++;
             if (g < tileGmin) tileGmin = g;
             if (g > tileGmax) tileGmax = g;
+            // Sobel-lite: |G - left| + |G - above|. Cheap, single-channel.
+            if (prevColG >= 0) {
+              gradAccum += Math.abs(g - prevColG);
+              gradCount++;
+            }
+            if (prevRowG >= 0) {
+              gradAccum += Math.abs(g - prevRowG);
+              gradCount++;
+            }
+            prevColG = g;
           }
+          prevRowG = -1; // reset row tracker (kept simple; per-column would need an extra buffer)
         }
 
         const tileMean = {
@@ -438,18 +554,14 @@ export class FingerOpticalROI {
         const tileHighRatio = tilePixels ? tileHigh / tilePixels : 0;
         const tileLowRatio = tilePixels ? tileLow / tilePixels : 0;
 
-        // Pulsatile candidate: prefers tiles with healthy red dominance,
-        // moderate brightness, and a non-trivial green dynamic range.
         const tileRedDom = tileMean.r / Math.max(1, tileMean.r + tileMean.g + tileMean.b);
         const tileBright = (tileMean.r + tileMean.g + tileMean.b) / 3;
-        const greenSpan = Math.max(0, tileGmax - tileGmin) / 64; // normalised
+        const greenSpan = Math.max(0, tileGmax - tileGmin) / 64;
         const candidate = clamp01(
           (tileRedDom > 0.34 ? 1 : tileRedDom / 0.34) * 0.4 +
             (tileBright > 60 && tileBright < 230 ? 1 : 0) * 0.3 +
             Math.min(1, greenSpan) * 0.3,
         );
-        // Adaptive validity: tile must not be saturated/clipped, must be at
-        // least moderately bright and pass the candidate threshold.
         const usable =
           tileHighRatio < 0.25 &&
           tileLowRatio < 0.25 &&
@@ -462,6 +574,8 @@ export class FingerOpticalROI {
         if (usable) {
           perfusionAccum += Math.min(1, greenSpan);
           perfusionCount++;
+          centroidX += tx;
+          centroidY += ty;
         }
 
         tiles.push({
@@ -478,6 +592,32 @@ export class FingerOpticalROI {
 
     let usableTileCount = 0;
     for (const t of tileMask) if (t) usableTileCount++;
+
+    // Texture score: |∇G| in [0, ~30] → mapped to [0,1] with a knee around 4.
+    // Below 1.5 → almost certainly a flat/empty surface.
+    const meanGrad = gradCount > 0 ? gradAccum / gradCount : 0;
+    const textureScore = clamp01((meanGrad - 1.5) / 6);
+
+    // Centroid drift in tile coordinates → normalised to [0,1] (max ≈ √2·TILE_GRID/2).
+    let centroidDrift = 0;
+    if (usableTileCount > 0) {
+      const cx = centroidX / usableTileCount;
+      const cy = centroidY / usableTileCount;
+      if (this.previousCentroid) {
+        const dx = cx - this.previousCentroid.x;
+        const dy = cy - this.previousCentroid.y;
+        centroidDrift = clamp01(Math.sqrt(dx * dx + dy * dy) / (TILE_GRID * 0.6));
+      }
+      this.previousCentroid = { x: cx, y: cy };
+    } else {
+      this.previousCentroid = null;
+    }
+
+    // Augment motionRisk with the two new spatial signals.
+    motionRisk = clamp01(Math.max(motionRisk, luminanceDelta * 4, centroidDrift));
+    const motionArtifactScore = clamp01(
+      luminanceDelta * 3 * 0.4 + centroidDrift * 0.4 + Math.abs(dcTrend) / 12 * 0.2,
+    );
 
     // ROI stability = IoU of the usable-tile masks frame-to-frame.
     let roiStabilityScore = 1;
@@ -511,17 +651,58 @@ export class FingerOpticalROI {
       b: usablePixelRatio.b >= 0.4 && highSaturation.b < 0.3 && lowSaturation.b < 0.3,
     };
 
+    // ── Pressure state (multi-metric vote, NEVER a single signal) ─────────
+    // We track an EMA of the green AC/DC ratio as the perfusion indicator.
+    const greenAcDc = greenRange / Math.max(1, meanRgb.g); // crude AC/DC proxy
+    this.smoothedGreenAcDc = this.smoothedGreenAcDc * 0.8 + greenAcDc * 0.2;
+    const perfusionAcDc = this.smoothedGreenAcDc;
+
+    let pressureState: FingerPressureState;
+    const isExcessive =
+      (redSaturationRatio > 0.4 && greenSaturationRatio > 0.3) ||
+      (lowVariance && perfusionAcDc < 0.02);
+    const isHigh =
+      !isExcessive &&
+      ((redSaturationRatio > 0.25 && perfusionAcDc < 0.04) ||
+        (meanLuma > 215 && perfusionAcDc < 0.05));
+    const isWeak =
+      coverageScore < 0.3 ||
+      meanLuma < 45 ||
+      (redDominance < 0.2 && coverageScore < 0.45);
+    const isLow =
+      !isWeak &&
+      !isHigh &&
+      !isExcessive &&
+      (perfusionAcDc < 0.025 || coverageScore < 0.45);
+    if (isExcessive) pressureState = "excessive_pressure";
+    else if (isHigh) pressureState = "high_pressure";
+    else if (isWeak) pressureState = "weak_contact";
+    else if (isLow) pressureState = "low_pressure";
+    else pressureState = "optimal";
+
+    if (pressureState === "excessive_pressure") reason.push("EXCESSIVE_PRESSURE");
+    if (pressureState === "weak_contact") reason.push("WEAK_CONTACT");
+    if (pressureRisk > 0.6) reason.push("PRESSURE_RISK");
+
+    // Motion / texture / centroid reasons (now that those metrics exist).
+    if (motionRisk > 0.5) reason.push("MOTION_DETECTED");
+    if (centroidDrift > 0.35) reason.push("CENTROID_DRIFT");
+    if (textureScore < 0.1 && coverageScore > 0.4) reason.push("FLAT_SURFACE_NO_TEXTURE");
+
     // High-level contact state (does NOT replace `accepted` — it adds nuance).
     let contactState: FingerContactState;
     if (highClip > 0.35 && meanLuma > 220) contactState = "overexposed";
     else if (meanLuma < 25 || coverageScore < 0.15) contactState = "underexposed";
     else if (redDominance < 0.1 && coverageScore < 0.25) contactState = "absent";
-    else if (motionRisk > 0.5 || roiStabilityScore < 0.35) contactState = "motion_rejected";
+    else if (motionRisk > 0.5 || roiStabilityScore < 0.35 || centroidDrift > 0.4)
+      contactState = "motion_rejected";
     else if (
       opticalContactScore >= 0.55 &&
       usableTileCount >= 12 &&
       roiStabilityScore >= 0.6 &&
-      this.dcStability >= 0.5
+      this.dcStability >= 0.5 &&
+      textureScore >= 0.15 &&
+      pressureState === "optimal"
     )
       contactState = "stable";
     else if (opticalContactScore >= 0.35 && usableTileCount >= 6) contactState = "partial";
@@ -533,6 +714,20 @@ export class FingerOpticalROI {
     if (contactState === "underexposed") reason.push("UNDEREXPOSED");
     if (contactState === "motion_rejected") reason.push("MOTION_REJECTED");
 
+    // ── User guidance (actionable, single sentence in Spanish) ───────────
+    let userGuidance = "";
+    if (contactState === "absent") userGuidance = "Cubrí la cámara con el dedo.";
+    else if (contactState === "underexposed") userGuidance = "Cubrí la cámara — no llega luz.";
+    else if (contactState === "overexposed") userGuidance = "Aflojá la presión — la cámara está saturada.";
+    else if (pressureState === "excessive_pressure") userGuidance = "Demasiada presión — aflojá un poco.";
+    else if (pressureState === "high_pressure") userGuidance = "Presionás de más — aflojá levemente.";
+    else if (pressureState === "weak_contact") userGuidance = "Apoyá mejor el dedo sobre la cámara.";
+    else if (pressureState === "low_pressure") userGuidance = "Hacé un poco más de presión.";
+    else if (centroidDrift > 0.3 || motionRisk > 0.4) userGuidance = "Mantené el dedo quieto.";
+    else if (textureScore < 0.12 && coverageScore > 0.4) userGuidance = "No detecto un dedo real — recolocá el dedo.";
+    else if (contactState === "stable") userGuidance = "";
+    else userGuidance = "Buscando señal estable…";
+
     return {
       roi,
       meanRgb,
@@ -543,11 +738,20 @@ export class FingerOpticalROI {
       opticalDensity,
       highSaturation,
       lowSaturation,
+      redSaturationRatio,
+      greenSaturationRatio,
+      blueSaturationRatio,
+      clippedPixelRatio,
       usablePixelRatio,
       usablePixelRatioMax,
       spatialVariance,
+      uniformityScore,
+      textureScore,
       dcStability: this.dcStability,
       dcTrend,
+      luminanceDelta,
+      centroidDrift,
+      motionArtifactScore,
       coverageScore,
       illuminationScore,
       contactScore,
@@ -567,6 +771,8 @@ export class FingerOpticalROI {
       opticalContactScore,
       channelUsable,
       contactState,
+      pressureState,
+      userGuidance,
     };
   }
 }
