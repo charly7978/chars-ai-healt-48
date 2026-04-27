@@ -2,12 +2,15 @@ import { clamp, mad, median } from "./PPGFilters";
 import type { PPGOpticalSample } from "./RadiometricPPGExtractor";
 import type { PPGSignalQuality } from "./PPGSignalQuality";
 
+export type SpO2CalibrationBadge = "calibrated" | "partial" | "uncalibrated";
+
 export interface PublishedOxygenMeasurement {
   spo2: number | null;
   confidence: number;
   canPublish: boolean;
   method: "CAMERA_RGB_RATIO_OF_RATIOS" | "NONE";
   reasons: string[];
+  calibrationBadge: SpO2CalibrationBadge;
 }
 
 function percentile(values: number[], p: number): number {
