@@ -109,10 +109,19 @@ function createEmptyFrameStats(): FrameSamplerStats {
 function emptyBeats(): BeatDetectionResult {
   return {
     beats: [],
+    withheldBeats: [],
     bpm: null,
     rrIntervalsMs: [],
     confidence: 0,
+    peakBpm: null,
+    medianIbiBpm: null,
+    fftBpm: null,
+    autocorrBpm: null,
+    estimatorAgreementBpm: 999,
     rejectedCandidates: 0,
+    sampleRateHz: 30,
+    irregularityFlag: false,
+    ibiStdMs: 0,
   };
 }
 
