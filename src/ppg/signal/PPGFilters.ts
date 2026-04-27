@@ -36,6 +36,19 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+export function srgbToLinear(v8: number): number {
+  const c = v8 / 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+export function trimmedMean(values: number[], trim = 0.1): number {
+  const finite = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (finite.length === 0) return 0;
+  const cut = Math.floor(finite.length * trim);
+  const sliced = finite.slice(cut, Math.max(cut + 1, finite.length - cut));
+  return sliced.reduce((sum, value) => sum + value, 0) / sliced.length;
+}
+
 export function median(values: number[]): number {
   const finite = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (finite.length === 0) return 0;

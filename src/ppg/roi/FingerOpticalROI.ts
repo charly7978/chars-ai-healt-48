@@ -1,3 +1,5 @@
+import { clamp, srgbToLinear, trimmedMean } from "../signal/PPGFilters";
+
 export interface FingerOpticalEvidence {
   roi: { x: number; y: number; width: number; height: number };
   meanRgb: { r: number; g: number; b: number };
@@ -31,10 +33,6 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
   const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p)));
@@ -48,24 +46,9 @@ function trapezoid(value: number, low0: number, low1: number, high1: number, hig
   return (high0 - value) / Math.max(1e-6, high0 - high1);
 }
 
-/** Convert sRGB to linear intensity */
-export function srgbToLinear(v8: number): number {
-  const c = v8 / 255;
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
-
 /** Calculate optical density from linear intensity and baseline */
-function opticalDensity(linear: number, baseline: number): number {
+function calculateOpticalDensity(linear: number, baseline: number): number {
   return -Math.log((linear + EPS) / (baseline + EPS));
-}
-
-/** Robust trimmed mean - removes outliers before averaging */
-function trimmedMean(values: number[], trim = 0.1): number {
-  const finite = values.filter(Number.isFinite).sort((a, b) => a - b);
-  if (finite.length === 0) return 0;
-  const cut = Math.floor(finite.length * trim);
-  const sliced = finite.slice(cut, Math.max(cut + 1, finite.length - cut));
-  return sliced.reduce((sum, v) => sum + v, 0) / sliced.length;
 }
 
 export class FingerOpticalROI {
@@ -199,9 +182,9 @@ export class FingerOpticalROI {
 
     // Calculate optical density
     const opticalDensity = {
-      r: opticalDensity(linearMean.r, this.baselineLinear.r),
-      g: opticalDensity(linearMean.g, this.baselineLinear.g),
-      b: opticalDensity(linearMean.b, this.baselineLinear.b),
+      r: calculateOpticalDensity(linearMean.r, this.baselineLinear.r),
+      g: calculateOpticalDensity(linearMean.g, this.baselineLinear.g),
+      b: calculateOpticalDensity(linearMean.b, this.baselineLinear.b),
     };
 
     // Saturation ratios

@@ -1,5 +1,6 @@
 import type { RealFrame } from "../camera/FrameSampler";
 import { FingerOpticalROI, type FingerOpticalEvidence } from "../roi/FingerOpticalROI";
+import { clamp, srgbToLinear, trimmedMean } from "./PPGFilters";
 
 export interface PPGOpticalSample {
   t: number;
@@ -27,23 +28,6 @@ export interface PPGOpticalSample {
 type Rgb = { r: number; g: number; b: number };
 
 const EPS = 1e-6;
-
-export function srgbToLinear(v8: number): number {
-  const c = v8 / 255;
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function trimmedMean(values: number[], trim = 0.1): number {
-  const finite = values.filter(Number.isFinite).sort((a, b) => a - b);
-  if (finite.length === 0) return 0;
-  const cut = Math.floor(finite.length * trim);
-  const sliced = finite.slice(cut, Math.max(cut + 1, finite.length - cut));
-  return sliced.reduce((sum, value) => sum + value, 0) / sliced.length;
-}
 
 export class RadiometricPPGExtractor {
   private roiAnalyzer = new FingerOpticalROI();
