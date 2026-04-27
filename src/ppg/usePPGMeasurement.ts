@@ -7,6 +7,7 @@ import {
 import {
   FrameSampler,
   type FrameSamplerStats,
+  type RealFrame,
 } from "./camera/FrameSampler";
 import {
   createEmptyPublishedPPGMeasurement,
@@ -201,7 +202,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   }, []);
 
   const processFrame = useCallback(() => {
-    return (frame: Parameters<FrameSampler["start"]>[1] extends (arg: infer F) => void ? F : never) => {
+    return (frame: RealFrame) => {
       if (!activeRef.current) return;
       frameStatsRef.current = frameSamplerRef.current.getStats();
 
