@@ -12,6 +12,10 @@ import {
   estimateCameraSpO2,
   type PublishedOxygenMeasurement,
 } from "../signal/PPGOxygenEstimator";
+import {
+  ADAPTIVE_SAFETY_FLOOR,
+  type AdaptiveThresholds,
+} from "../camera/AdaptiveAcquisitionThresholds";
 
 export type PublicationState =
   | "CAMERA_STARTING"
