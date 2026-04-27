@@ -62,6 +62,8 @@ export interface CameraDiagnostics {
     available: boolean;
     requested: boolean;
     appliedReadback: boolean;
+    /** Final resolved status — never "pending" once start() returns. */
+    resolved: "applied" | "unsupported" | "denied" | "ignored-by-browser";
   };
   calibration: {
     status: CalibrationStatus;
@@ -73,6 +75,63 @@ export interface CameraDiagnostics {
   fpsTarget: number;
   fpsMeasured: number;
   userAgent: string;
+  /**
+   * Marker emitted when the browser exposes ZERO controllable optical
+   * constraints (torch + exposureMode + focusMode + whiteBalanceMode all
+   * unsupported). This is the explicit signal required by the audit:
+   * we never fabricate manual control where the browser does not allow it.
+   */
+  autoCameraControlUnavailable: boolean;
+  /** Multi-rear PPG probe outcome (see runMultiRearProbe). */
+  multiRearProbe: MultiRearProbeReport | null;
+}
+
+/**
+ * Camera acquisition report — emitted exactly once per successful start().
+ * Provides the auditable summary the UI uses to render
+ * "rear camera verified", "torch verified", "fps real" badges.
+ */
+export interface CameraAcquisitionReport {
+  startedAt: string;
+  durationMs: number;
+  rearVerified: boolean;
+  torchVerified: boolean;
+  fpsReal: number;
+  width: number;
+  height: number;
+  selectedDeviceId: string | null;
+  selectedDeviceLabel: string;
+  selectionReason: string;
+  warmupFrames: number;
+  warmupJitterMs: number;
+  warmupFpsStdMs: number;
+  acquisitionReady: boolean;
+  notReadyReasons: string[];
+  multiRearProbe: MultiRearProbeReport | null;
+  autoCameraControlUnavailable: boolean;
+  userAgent: string;
+}
+
+export interface MultiRearProbeCandidate {
+  deviceId: string;
+  label: string;
+  durationMs: number;
+  framesAnalyzed: number;
+  meanRed: number;
+  meanGreen: number;
+  saturationHigh: number;
+  coverage: number;
+  perfusionProxy: number;
+  jitterMs: number;
+  score: number;
+  rejectedReason: string | null;
+}
+
+export interface MultiRearProbeReport {
+  ran: boolean;
+  reason: string;
+  candidates: MultiRearProbeCandidate[];
+  winnerDeviceId: string | null;
 }
 
 export interface PPGCameraState {
@@ -85,6 +144,10 @@ export interface PPGCameraState {
   torchEnabled: boolean;
   torchApplied: boolean;
   cameraReady: boolean;
+  /** Strict gate — true only after warmup + fps stable + torch resolved. */
+  acquisitionReady: boolean;
+  notReadyReasons: string[];
+  acquisitionReport: CameraAcquisitionReport | null;
   streamActive: boolean;
   measuredFps: number;
   width: number;
