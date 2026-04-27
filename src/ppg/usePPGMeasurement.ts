@@ -428,6 +428,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         opticalSamples: opticalWindow,
         selectedSeries,
         fpsQuality: frameStatsRef.current.fpsQuality,
+        adaptiveThresholds: adaptiveThresholdsRef.current.getThresholds(),
       });
 
       rawSamplesRef.current = opticalWindow;
