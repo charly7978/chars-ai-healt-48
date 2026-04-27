@@ -408,15 +408,12 @@ export class PPGChannelFusion {
     // Stability score (requires at least 8s of stable data)
     const stabilityScore = opticalSamples.every((s) => s.baselineValid) ? 1 : 0.5;
 
-    // Final score combining all criteria
-    const finalScore =
-      spectral.snrDb * 0.25 +
-      spectral.bandPowerRatio * 30 +
-      (autocorr.score || 0) * 20 +
-      fftAgreement * 15 -
-      avgSaturation * 25 -
-      dcDrift * 5 +
-      stabilityScore * 10;
+    // NOTE: finalScore is computed in a second pass (recomputeFinalScore)
+    // because we need cross-channel BPM agreement first.
+    // Perfusion index for THIS channel — uses robust AC/DC from extractor.
+    const perfChannel: keyof PPGOpticalSample["acdc"] =
+      name === "RED_OD" || name === "RG_RATIO_OD" ? "r" : name === "BLUE_OD" ? "b" : "g";
+    const perfusionIndex = mean(opticalSamples.map((s) => s.acdc[perfChannel]));
 
     return {
       name,
@@ -424,12 +421,52 @@ export class PPGChannelFusion {
       bandPowerRatio: spectral.bandPowerRatio,
       autocorrPeakStrength: autocorr.score || 0,
       fftAgreement,
+      channelAgreement: 0.5, // filled by recomputeFinalScore second pass
       avgSaturation,
+      perfusionIndex,
       dcDrift,
       stabilityScore,
-      finalScore,
+      finalScore: 0,
+      scoreBreakdown: {
+        snr: 0, bpr: 0, autocorr: 0, fftAgreement: 0,
+        perfusion: 0, saturationPenalty: 0, driftPenalty: 0,
+        stability: 0, channelAgreement: 0,
+      },
+      fftBpm,
+      autocorrBpm: autocorr.bpm,
       series: processed,
       actualFs,
+    };
+  }
+
+  /**
+   * Composite final score in [-1..1] as a weighted sum of NORMALISED terms.
+   * Replaces the prior mixed-scale formula. Weights are physically motivated:
+   * spectral terms 36 %, temporal 14 %, agreement 26 %, perfusion 14 %,
+   * stability 10 %; minus saturation 20 % and drift 10 %.
+   */
+  private recomputeFinalScore(ch: ChannelMetrics): void {
+    const snrTerm = clamp(1 / (1 + Math.exp(-(ch.snrDb - 6) / 4)), 0, 1);
+    const bprTerm = clamp(ch.bandPowerRatio, 0, 1);
+    const autocorrTerm = clamp(ch.autocorrPeakStrength, 0, 1);
+    const fftAgree = clamp(ch.fftAgreement, 0, 1);
+    const perfTerm = clamp((ch.perfusionIndex - 0.005) / 0.015, 0, 1);
+    const satPenalty = clamp(ch.avgSaturation * 2, 0, 1);
+    const driftPenalty = clamp(ch.dcDrift / 0.05, 0, 1);
+    const stabilityTerm = clamp(ch.stabilityScore, 0, 1);
+    const agreeTerm = clamp(ch.channelAgreement, 0, 1);
+
+    const score =
+      0.18 * snrTerm + 0.18 * bprTerm + 0.14 * autocorrTerm +
+      0.10 * fftAgree + 0.14 * perfTerm + 0.10 * stabilityTerm +
+      0.16 * agreeTerm - 0.20 * satPenalty - 0.10 * driftPenalty;
+
+    ch.finalScore = clamp(score, -1, 1);
+    ch.scoreBreakdown = {
+      snr: snrTerm, bpr: bprTerm, autocorr: autocorrTerm,
+      fftAgreement: fftAgree, perfusion: perfTerm,
+      saturationPenalty: satPenalty, driftPenalty,
+      stability: stabilityTerm, channelAgreement: agreeTerm,
     };
   }
 
@@ -443,17 +480,16 @@ export class PPGChannelFusion {
     const stabilityScore = opticalSamples.every((s) => s.baselineValid) ? 1 : 0.5;
     const avgFps = mean(opticalSamples.map((s) => s.fps));
     return {
-      name,
-      snrDb: -60,
-      bandPowerRatio: 0,
-      autocorrPeakStrength: 0,
-      fftAgreement: 0,
-      avgSaturation,
-      dcDrift,
-      stabilityScore,
-      finalScore: -1000,
-      series,
-      actualFs: clamp(avgFps, 15, 60),
+      name, snrDb: -60, bandPowerRatio: 0, autocorrPeakStrength: 0,
+      fftAgreement: 0, channelAgreement: 0, avgSaturation,
+      perfusionIndex: 0, dcDrift, stabilityScore, finalScore: -1,
+      scoreBreakdown: {
+        snr: 0, bpr: 0, autocorr: 0, fftAgreement: 0, perfusion: 0,
+        saturationPenalty: 1, driftPenalty: 1, stability: stabilityScore,
+        channelAgreement: 0,
+      },
+      fftBpm: null, autocorrBpm: null,
+      series, actualFs: clamp(avgFps, 15, 60),
     };
   }
 
@@ -462,19 +498,19 @@ export class PPGChannelFusion {
     samples: PPGOpticalSample[],
   ): { selected: ChannelMetrics; reason: string } {
     if (channels.length === 0) {
-      // Fallback to simple green OD
       const avgFps = mean(samples.map((s) => s.fps));
       return {
         selected: {
-          name: "GREEN_OD",
-          snrDb: -60,
-          bandPowerRatio: 0,
-          autocorrPeakStrength: 0,
-          fftAgreement: 0,
-          avgSaturation: 1,
-          dcDrift: 0,
-          stabilityScore: 0,
-          finalScore: -1000,
+          name: "GREEN_OD", snrDb: -60, bandPowerRatio: 0,
+          autocorrPeakStrength: 0, fftAgreement: 0, channelAgreement: 0,
+          avgSaturation: 1, perfusionIndex: 0, dcDrift: 0,
+          stabilityScore: 0, finalScore: -1,
+          scoreBreakdown: {
+            snr: 0, bpr: 0, autocorr: 0, fftAgreement: 0, perfusion: 0,
+            saturationPenalty: 1, driftPenalty: 0, stability: 0,
+            channelAgreement: 0,
+          },
+          fftBpm: null, autocorrBpm: null,
           series: samples.map((s) => ({ t: s.t, value: s.od.g })),
           actualFs: clamp(avgFps, 15, 60),
         },
@@ -482,21 +518,30 @@ export class PPGChannelFusion {
       };
     }
 
-    // Sort by final score
     const ranked = [...channels].sort((a, b) => b.finalScore - a.finalScore);
-    const best = ranked[0];
+    let best = ranked[0];
 
-    // Build selection reason
+    // Hysteresis: stick with the previous winner if within 0.05 of the new
+    // top score. Prevents nervous channel-flapping when sources are tied.
+    if (this.lastSelectedChannel) {
+      const prev = channels.find((c) => c.name === this.lastSelectedChannel);
+      if (prev && best.finalScore - prev.finalScore < 0.05) {
+        best = prev;
+      }
+    }
+    this.lastSelectedChannel = best.name;
+
     const reasons: string[] = [];
     if (best.snrDb > 5) reasons.push(`SNR:${best.snrDb.toFixed(1)}dB`);
     if (best.bandPowerRatio > 0.4) reasons.push(`BPR:${(best.bandPowerRatio * 100).toFixed(0)}%`);
     if (best.autocorrPeakStrength > 0.3) reasons.push(`AC:${(best.autocorrPeakStrength * 100).toFixed(0)}%`);
     if (best.fftAgreement > 0.7) reasons.push("FFT_AGREE");
+    if (best.channelAgreement > 0.7) reasons.push("CH_AGREE");
+    if (best.perfusionIndex > 0.01) reasons.push(`PI:${(best.perfusionIndex * 100).toFixed(2)}%`);
     if (best.avgSaturation < 0.1) reasons.push("LOW_SAT");
     if (best.stabilityScore >= 1) reasons.push("STABLE");
 
-    const reason = `${best.name} (${ranked.length} ch) Score:${best.finalScore.toFixed(1)} [${reasons.join(", ")}]`;
-
+    const reason = `${best.name} (${ranked.length} ch) Score:${best.finalScore.toFixed(2)} [${reasons.join(", ")}]`;
     return { selected: best, reason };
   }
 
