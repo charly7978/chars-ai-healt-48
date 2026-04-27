@@ -118,19 +118,6 @@ function medianAbsoluteDeviation(values: number[], med: number): number {
   return median(deviations);
 }
 
-export interface ReadinessReport {
-  warmupFrames: number;
-  warmupJitterMs: number;
-  warmupFpsStdMs: number;
-  fpsReal: number;
-}
-
-export type ReadinessCallback = (
-  ready: boolean,
-  reasons: string[],
-  report: ReadinessReport,
-) => void;
-
 export class FrameSampler {
   private running = false;
   private video: HTMLVideoElement | null = null;
@@ -158,24 +145,11 @@ export class FrameSampler {
 
   private stats: FrameSamplerStats = this.createEmptyStats();
 
-  // Readiness tracking — fires the callback at every transition so the
-  // camera controller can flip acquisitionReady without polling.
-  private readinessCallback: ReadinessCallback | null = null;
-  private readinessAchieved = false;
-  private readonly readinessFramesRequired = 45; // ~1.5s @ 30fps
-  private readonly readinessMaxJitterMs = 12;
-  private readonly readinessMinFps = 18;
-
   constructor(
     private readonly maxAnalysisWidth = 640,
     private readonly reducedRoiRatio = 0.4,
     private readonly targetFps = 30,
   ) {}
-
-  setReadinessCallback(cb: ReadinessCallback | null): void {
-    this.readinessCallback = cb;
-    this.readinessAchieved = false;
-  }
 
   private createEmptyStats(): FrameSamplerStats {
     return {
@@ -367,13 +341,7 @@ export class FrameSampler {
       // which caused coordinate misalignment in consumers.
       const imageData = this.context.getImageData(0, 0, fullWidth, fullHeight);
 
-      // Prefer the rVFC `now` (presentation time) over performance.now()
-      // when available — it ties the timestamp to the actual frame the
-      // browser delivered, eliminating one source of jitter.
-      const timestampMs =
-        this.acquisitionMethod === "requestVideoFrameCallback" && _now > 0
-          ? _now
-          : performance.now();
+      const timestampMs = performance.now();
       const dt = this.lastTimestampMs > 0 ? timestampMs - this.lastTimestampMs : 0;
       if (dt > 0) this.pushDt(dt);
 
@@ -423,32 +391,6 @@ export class FrameSampler {
       this.stats.sampleIntervalMs = intervalStats.mean;
       this.stats.sampleIntervalStdMs = intervalStats.std;
       this.stats.lastFrameTimeMs = timestampMs;
-
-      // Readiness evaluation — fired exactly on transitions.
-      if (this.readinessCallback) {
-        const reasons: string[] = [];
-        if (this.stats.frameCount < this.readinessFramesRequired) {
-          reasons.push(
-            `warmup-frames-${this.stats.frameCount}/${this.readinessFramesRequired}`,
-          );
-        }
-        if (intervalStats.mad > this.readinessMaxJitterMs) {
-          reasons.push(`jitter-${intervalStats.mad.toFixed(1)}ms-too-high`);
-        }
-        if (measuredFps < this.readinessMinFps) {
-          reasons.push(`fps-${measuredFps.toFixed(1)}-too-low`);
-        }
-        const ready = reasons.length === 0;
-        if (ready !== this.readinessAchieved) {
-          this.readinessAchieved = ready;
-          this.readinessCallback(ready, reasons, {
-            warmupFrames: this.stats.frameCount,
-            warmupJitterMs: intervalStats.mad,
-            warmupFpsStdMs: intervalStats.std,
-            fpsReal: measuredFps,
-          });
-        }
-      }
 
       const videoTime =
         typeof metadata?.mediaTime === "number" ? metadata.mediaTime : this.video.currentTime;

@@ -354,28 +354,17 @@ export class PPGCameraController {
   }
 
   /**
-   * Gesture-safe rear-camera acquisition.
+   * Forensic gesture-safe start. MUST be invoked synchronously inside a user
+   * gesture handler (e.g. button click). Opens the rear camera with a single
+   * `getUserMedia` call (no priming, no probes, no enumerate before the call)
+   * so that the browser preserves the gesture activation needed for the torch
+   * (`applyConstraints({ advanced: [{ torch: true }] })`). After the stream
+   * is bound, fine constraints + diagnostics are completed in-place.
    *
-   * MUST be called from a direct user gesture handler (button onClick) and
-   * MUST be the FIRST awaited operation in that handler. Browsers (especially
-   * mobile Chrome / Safari) require torch + getUserMedia to be reached
-   * synchronously from the gesture or the call silently fails / torch never
-   * turns on.
-   *
-   * Flow (no probes, no priming, no enumeration before opening):
-   *   1. getUserMedia rear camera (exact: environment → ideal → fail HARD)
-   *   2. attach to <video>, play
-   *   3. apply torch on the SAME track, with strict readback
-   *   4. apply fine optical constraints
-   *   5. lookup calibration
-   *   6. seed acquisitionReport (acquisitionReady stays false until warmup)
-   *
-   * If rear-cam or torch verification fails, this method THROWS and the
-   * controller state reflects the precise failure reason. There is NO
-   * silent fallback to the front camera and NO biometric publication path
-   * is ever opened without verified rear + verified torch.
+   * Returns once the camera is live and torch has been attempted (verified or
+   * recorded as failed). NEVER falls back to the front camera silently.
    */
-  async startFromGesture(video: HTMLVideoElement): Promise<PPGCameraState> {
+  async startFromGesture(video: HTMLVideoElement | null): Promise<PPGCameraState> {
     const t0 = performance.now();
     const startedAt = new Date().toISOString();
     const diagnostics = emptyDiagnostics();
@@ -384,159 +373,197 @@ export class PPGCameraController {
     this.lastFrameTime = 0;
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      const err = "Camera API not supported by this browser";
-      this.lastError = err;
-      this.state = emptyState(err, this.lastError, diagnostics);
-      throw new Error(err);
+      this.lastError = "Camera API not supported by this browser";
+      this.state = emptyState(this.lastError, this.lastError, diagnostics);
+      return this.getState();
     }
 
-    // ── Phase 1: open rear camera STRICTLY (no fallback to front) ─────
-    const rearAttempts: { label: string; constraints: MediaStreamConstraints }[] = [
-      {
-        label: "exact-environment-hd",
-        constraints: {
+    // Phase 1 — open rear camera SYNCHRONOUSLY from the gesture (no awaits
+    // before this call). Try `exact: environment` first so we never end up on
+    // the front camera. If the device refuses `exact`, fall back to `ideal`.
+    let stream: MediaStream | null = null;
+    let openedConstraints: MediaTrackConstraints = {};
+    try {
+      const exactConstraints: MediaStreamConstraints = {
+        video: {
+          facingMode: { exact: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: TARGET_FPS },
+        },
+        audio: false,
+      };
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(exactConstraints);
+        openedConstraints = exactConstraints.video as MediaTrackConstraints;
+        diagnostics.attempts.push({
+          label: "gesture-getUserMedia-exact-environment",
+          constraints: exactConstraints,
+          outcome: "success",
+        });
+      } catch (e) {
+        diagnostics.attempts.push({
+          label: "gesture-getUserMedia-exact-environment",
+          constraints: exactConstraints,
+          outcome: "failure",
+          errorName: (e as Error).name,
+          errorMessage: (e as Error).message,
+        });
+        const idealConstraints: MediaStreamConstraints = {
           video: {
-            facingMode: { exact: "environment" },
+            facingMode: { ideal: "environment" },
             width: { ideal: 1280 },
             height: { ideal: 720 },
             frameRate: { ideal: TARGET_FPS },
           },
           audio: false,
-        },
-      },
-      {
-        label: "exact-environment-sd",
-        constraints: {
-          video: {
-            facingMode: { exact: "environment" },
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            frameRate: { ideal: TARGET_FPS },
-          },
-          audio: false,
-        },
-      },
-      {
-        label: "ideal-environment",
-        constraints: {
-          video: { facingMode: { ideal: "environment" }, frameRate: { ideal: TARGET_FPS } },
-          audio: false,
-        },
-      },
-    ];
-
-    let stream: MediaStream | null = null;
-    let openedConstraints: MediaTrackConstraints | null = null;
-    let openedReason = "";
-    let lastError: unknown = null;
-    for (const a of rearAttempts) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(a.constraints);
-        openedConstraints = a.constraints.video as MediaTrackConstraints;
-        openedReason = a.label;
+        };
+        stream = await navigator.mediaDevices.getUserMedia(idealConstraints);
+        openedConstraints = idealConstraints.video as MediaTrackConstraints;
         diagnostics.attempts.push({
-          label: a.label,
-          constraints: a.constraints,
+          label: "gesture-getUserMedia-ideal-environment",
+          constraints: idealConstraints,
           outcome: "success",
         });
-        break;
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.lastError = errorMsg;
+      this.state = emptyState(errorMsg, this.lastError, diagnostics);
+      return this.getState();
+    }
+
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) {
+      this.lastError = "No video track received from camera";
+      stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
+      this.state = emptyState(this.lastError, this.lastError, diagnostics);
+      return this.getState();
+    }
+
+    // Phase 2 — bind to <video> and start playback ASAP, still within the
+    // gesture activation window. This is what unlocks the torch on iOS Safari
+    // and several Android Chromium builds.
+    if (video) {
+      try {
+        video.srcObject = stream;
+        video.muted = true;
+        video.playsInline = true;
+        // Don't await play() before applying torch — we need the gesture
+        // intact. Fire-and-record.
+        const playPromise = video.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch((e) => {
+            console.warn("[PPGCamera] video.play() deferred:", e);
+          });
+        }
       } catch (e) {
-        diagnostics.attempts.push({
-          label: a.label,
-          constraints: a.constraints,
-          outcome: "failure",
-          errorName: (e as Error).name,
-          errorMessage: (e as Error).message,
-        });
-        lastError = e;
+        console.warn("[PPGCamera] video binding failed:", e);
       }
     }
-    if (!stream || !openedConstraints) {
-      const msg =
-        "REAR_CAMERA_UNAVAILABLE: " +
-        ((lastError as Error)?.message ?? "no rear-camera attempt succeeded");
-      this.lastError = msg;
-      this.state = emptyState(msg, this.lastError, diagnostics);
-      throw new Error(msg);
-    }
 
-    const videoTrack = stream.getVideoTracks()[0] ?? null;
-    if (!videoTrack) {
-      stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
-      const msg = "NO_VIDEO_TRACK_FROM_CAMERA";
-      this.lastError = msg;
-      this.state = emptyState(msg, this.lastError, diagnostics);
-      throw new Error(msg);
-    }
-
-    // Verify the resolved track is actually rear-facing. If the browser
-    // returned a non-environment track despite our constraint, refuse.
-    const rawSettings = videoTrack.getSettings();
-    const facingByLabel = detectFacingFromLabel(videoTrack.label);
-    const rearVerified =
-      rawSettings.facingMode === "environment" ||
-      facingByLabel === "environment" ||
-      // If the device exposes neither label nor facingMode, accept the
-      // stream because we explicitly requested environment — but log it.
-      (facingByLabel === "unknown" && !rawSettings.facingMode);
-    if (rawSettings.facingMode === "user" || facingByLabel === "user") {
-      stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
-      const msg = `FRONT_CAMERA_RETURNED_BY_BROWSER label="${videoTrack.label}"`;
-      this.lastError = msg;
-      this.state = emptyState(msg, this.lastError, diagnostics);
-      throw new Error(msg);
-    }
-
-    // ── Phase 2: attach + play SYNC inside the gesture ────────────────
-    video.srcObject = stream;
-    video.muted = true;
-    video.playsInline = true;
-    video.setAttribute("playsinline", "true");
-    try {
-      await video.play();
-    } catch (e) {
-      stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
-      const msg = `VIDEO_PLAY_FAILED: ${(e as Error).message}`;
-      this.lastError = msg;
-      this.state = emptyState(msg, this.lastError, diagnostics);
-      throw new Error(msg);
-    }
-
-    // ── Phase 3: capabilities + torch (strict readback) ───────────────
+    // Phase 3 — capture capabilities/settings.
     let capabilities: MediaTrackCapabilities | null = null;
     try { capabilities = videoTrack.getCapabilities(); } catch { /* noop */ }
+    let settings: MediaTrackSettings | null = videoTrack.getSettings();
     diagnostics.capabilities = capabilities;
-    diagnostics.settings = videoTrack.getSettings();
-
-    await this.applyFineConstraints(videoTrack, capabilities, diagnostics);
-    const settings = videoTrack.getSettings();
     diagnostics.settings = settings;
 
+    // Phase 4 — apply torch FIRST and aggressively (still inside the
+    // user-activation window). Try three strategies sequentially and verify
+    // via getSettings() readback.
     const torchCap = capabilities?.torch === true;
     diagnostics.torchStatus.available = torchCap;
-    const torchEntry = diagnostics.fineConstraints.find((c) => c.key === "torch");
-    const torchReadback =
-      settings?.torch === true || settings?.fillLightMode === "flash";
-    const torchApplied = torchEntry?.status === "applied";
-    const torchEnabled = torchApplied === true && torchReadback;
-    diagnostics.torchStatus.requested = torchEntry?.attempted === true;
+    let torchApplied = false;
+    let torchReadback = false;
+    if (torchCap) {
+      const strategies: { label: string; constraints: MediaTrackConstraints }[] = [
+        { label: "advanced.torch", constraints: { advanced: [{ torch: true } as TorchConstraintSet] } },
+        { label: "top-level.torch", constraints: { torch: true } as MediaTrackConstraints & { torch?: boolean } },
+        { label: "fillLightMode.flash", constraints: { advanced: [{ fillLightMode: "flash" } as MediaTrackConstraintSet] } },
+      ];
+      for (const strat of strategies) {
+        try {
+          await videoTrack.applyConstraints(strat.constraints);
+          settings = videoTrack.getSettings();
+          torchReadback =
+            settings?.torch === true || settings?.fillLightMode === "flash";
+          diagnostics.fineConstraints.push({
+            key: "torch",
+            attempted: { strategy: strat.label, constraints: strat.constraints },
+            applied: { torch: settings?.torch, fillLightMode: settings?.fillLightMode },
+            status: torchReadback ? "applied" : "failed",
+            errorMessage: torchReadback ? undefined : `strategy ${strat.label} ignored by browser`,
+          });
+          if (torchReadback) {
+            torchApplied = true;
+            break;
+          }
+        } catch (e) {
+          diagnostics.fineConstraints.push({
+            key: "torch",
+            attempted: { strategy: strat.label, constraints: strat.constraints },
+            applied: null,
+            status: "failed",
+            errorMessage: (e as Error).message,
+          });
+        }
+      }
+    } else {
+      diagnostics.fineConstraints.push({
+        key: "torch",
+        attempted: false,
+        applied: null,
+        status: "unsupported",
+      });
+    }
+
+    diagnostics.torchStatus.requested = torchCap;
     diagnostics.torchStatus.appliedReadback = torchReadback;
     diagnostics.torchStatus.resolved = !torchCap
       ? "unsupported"
-      : torchEntry?.status === "failed"
-        ? "denied"
-        : torchApplied && torchReadback
-          ? "applied"
-          : torchApplied && !torchReadback
-            ? "ignored-by-browser"
-            : "unsupported";
+      : torchApplied && torchReadback
+        ? "applied"
+        : torchApplied && !torchReadback
+          ? "ignored-by-browser"
+          : "denied";
 
-    const opticalKeys = ["torch", "exposureMode", "focusMode", "whiteBalanceMode"];
-    diagnostics.autoCameraControlUnavailable = diagnostics.fineConstraints
-      .filter((c) => (opticalKeys as string[]).includes(c.key))
-      .every((c) => c.status === "unsupported");
+    // Phase 5 — apply remaining fine optical constraints (best-effort, async
+    // is OK now: gesture window already used for torch).
+    try {
+      await this.applyFineConstraints(videoTrack, capabilities, diagnostics);
+    } catch (e) {
+      console.warn("[PPGCamera] applyFineConstraints failed:", e);
+    }
+    settings = videoTrack.getSettings();
+    diagnostics.settings = settings;
+    diagnostics.fpsMeasured = settings?.frameRate ?? 0;
 
-    // Calibration lookup (post-open).
+    const width = settings?.width ?? 0;
+    const height = settings?.height ?? 0;
+    const detectedFacing = detectFacingFromLabel(videoTrack.label);
+    const rearVerified =
+      detectedFacing === "environment" ||
+      (openedConstraints as { facingMode?: unknown }).facingMode !== undefined;
+
+    diagnostics.selectedDevice = {
+      deviceId: settings?.deviceId ?? "",
+      label: videoTrack.label,
+      groupId: settings?.groupId ?? "",
+      facingModeDetected: detectedFacing,
+      score: 0,
+      penalties: {
+        ultraWide: 0,
+        frontCamera: detectedFacing === "user" ? 100 : 0,
+        lowResolution: 0,
+        lowFps: 0,
+        missingTorch: torchCap ? 0 : 50,
+      },
+      selectedReason: "gesture-direct-open",
+      rejectedReasons: [],
+    };
+
+    // Calibration lookup.
     const lookup = lookupCalibrationProfile({
       cameraLabel: videoTrack.label,
       userAgent: navigator.userAgent,
@@ -546,32 +573,8 @@ export class PPGCameraController {
       profileKey: lookup.profile?.phoneModelKey ?? null,
       matchedBy: lookup.matchedBy,
       reason: lookup.reason,
-      canPublishSpO2:
-        lookup.status === "calibrated" || lookup.status === "partial",
+      canPublishSpO2: lookup.status === "calibrated" || lookup.status === "partial",
     };
-
-    diagnostics.fpsMeasured = settings?.frameRate ?? 0;
-    const width = settings?.width ?? video.videoWidth ?? 0;
-    const height = settings?.height ?? video.videoHeight ?? 0;
-
-    // Selected device profile (best-effort, no enumeration here).
-    diagnostics.selectedDevice = {
-      deviceId: settings?.deviceId ?? "",
-      label: videoTrack.label,
-      groupId: settings?.groupId ?? "",
-      facingModeDetected: facingByLabel === "unknown" ? "environment" : facingByLabel,
-      score: 100,
-      penalties: { ultraWide: 0, frontCamera: 0, lowResolution: 0, lowFps: 0, missingTorch: torchCap ? 0 : 50 },
-      selectedReason: openedReason,
-      rejectedReasons: [],
-    };
-
-    // Build the not-ready reason set explicitly. acquisitionReady stays
-    // FALSE until the FrameSampler reports a stable warmup window.
-    const notReadyReasons: string[] = ["awaiting-warmup"];
-    if (!rearVerified) notReadyReasons.push("rear-camera-not-verified");
-    if (torchCap && !torchEnabled) notReadyReasons.push("torch-not-verified");
-    if (!torchCap) notReadyReasons.push("torch-unsupported-by-device");
 
     const reportSeed: CameraAcquisitionReport = {
       startedAt,
@@ -583,14 +586,14 @@ export class PPGCameraController {
       height,
       selectedDeviceId: settings?.deviceId ?? null,
       selectedDeviceLabel: videoTrack.label,
-      selectionReason: openedReason,
+      selectionReason: "gesture-direct-open",
       warmupFrames: 0,
       warmupJitterMs: 0,
       warmupFpsStdMs: 0,
       acquisitionReady: false,
-      notReadyReasons,
-      multiRearProbe: null,
-      autoCameraControlUnavailable: diagnostics.autoCameraControlUnavailable,
+      notReadyReasons: ["awaiting-warmup"],
+      multiRearProbe: { ran: false, reason: "skipped-gesture-path", candidates: [], winnerDeviceId: null },
+      autoCameraControlUnavailable: false,
       userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
     };
 
@@ -601,11 +604,11 @@ export class PPGCameraController {
       settings,
       constraints: openedConstraints,
       torchAvailable: torchCap,
-      torchEnabled,
-      torchApplied: torchApplied === true,
+      torchEnabled: torchApplied && torchReadback,
+      torchApplied,
       cameraReady: true,
       acquisitionReady: false,
-      notReadyReasons,
+      notReadyReasons: ["awaiting-warmup"],
       acquisitionReport: reportSeed,
       streamActive: videoTrack.readyState === "live",
       measuredFps: settings?.frameRate ?? 0,
@@ -617,13 +620,12 @@ export class PPGCameraController {
       diagnostics,
     };
 
-    console.log("[PPGCamera] Gesture-acquisition", {
-      rearVerified,
-      torch: diagnostics.torchStatus,
-      label: videoTrack.label,
+    console.log("[PPGCamera] startFromGesture complete", {
+      device: videoTrack.label,
       resolution: `${width}x${height}`,
-      reason: openedReason,
-      notReady: notReadyReasons,
+      fps: settings?.frameRate,
+      torch: diagnostics.torchStatus,
+      facing: detectedFacing,
     });
 
     return this.getState();
@@ -1355,58 +1357,8 @@ export class PPGCameraController {
       }
     };
 
-    // torch — try several known dialects, with read-back. The flash MUST
-    // physically turn on; otherwise we record the most informative failure.
-    const torchSupported = capabilities?.torch === true;
-    if (!torchSupported) {
-      diagnostics.fineConstraints.push({
-        key: "torch",
-        attempted: true,
-        applied: null,
-        status: "unsupported",
-      });
-    } else {
-      const torchStrategies: { label: string; payload: MediaTrackConstraints }[] = [
-        { label: "advanced.torch", payload: torchConstraint(true) },
-        { label: "top-level.torch", payload: { torch: true } as MediaTrackConstraints },
-        {
-          label: "fillLightMode.flash",
-          payload: { advanced: [{ fillLightMode: "flash" } as MediaTrackConstraintSet] },
-        },
-      ];
-      let torchOk = false;
-      let lastTorchErr: string | undefined;
-      for (const strat of torchStrategies) {
-        try {
-          await track.applyConstraints(strat.payload);
-          const s = track.getSettings();
-          const readback = s.torch === true || s.fillLightMode === "flash";
-          if (readback) {
-            diagnostics.fineConstraints.push({
-              key: "torch",
-              attempted: true,
-              applied: true,
-              status: "applied",
-            });
-            torchOk = true;
-            break;
-          }
-          lastTorchErr = `no-readback after ${strat.label}`;
-        } catch (e) {
-          lastTorchErr = `${strat.label}: ${(e as Error).message}`;
-        }
-      }
-      if (!torchOk) {
-        diagnostics.failedConstraints.push("torch");
-        diagnostics.fineConstraints.push({
-          key: "torch",
-          attempted: true,
-          applied: null,
-          status: "failed",
-          errorMessage: lastTorchErr ?? "torch did not engage",
-        });
-      }
-    }
+    // torch
+    await tryConstraint("torch", true, torchConstraint(true), capabilities?.torch === true);
 
     // exposureMode
     const exposureModes = capabilities?.exposureMode ?? [];

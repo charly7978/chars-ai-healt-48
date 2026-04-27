@@ -77,55 +77,6 @@ export interface PublishedPPGMeasurement {
   lastValidBpm: number | null;
   staleSinceMs: number;
   staleBadge: "fresh" | "stale" | "expired" | "never";
-  /**
-   * Forensic decision log. Captures every gate input + outcome for the
-   * current window so the UI / exported audit JSON can answer
-   * "WHY did/didn't this window publish?" without re-deriving anything.
-   *
-   * `passed[]` lists the checks that succeeded; `blocked[]` lists the
-   * specific reasons that prevented publication; `metrics` snapshots the
-   * exact thresholds applied. `lastSelectedChannel` ties the decision to
-   * the channel chosen by PPGChannelFusion at this exact window — this
-   * is what makes "perfusion-too-low because RED was selected and red is
-   * saturated" debuggable end-to-end.
-   */
-  publicationDecisionLog: {
-    decision: "PUBLISH" | "BLOCK";
-    passed: string[];
-    blocked: string[];
-    metrics: {
-      totalScore: number;
-      bandPowerRatio: number;
-      perfusionIndex: number;
-      saturationPenalty: number;
-      rrConsistency: number;
-      beatConfidence: number;
-      estimatorAgreementBpm: number;
-      estimatorsAvailable: number;
-      goodWindowStreak: number;
-      fpsQuality: number;
-      bufferMs: number;
-      usableTileCount: number;
-      tileCount: number;
-    };
-    thresholds: {
-      totalScoreMin: 60;
-      bandPowerRatioMin: 0.30;
-      perfusionMin: 0.02;
-      saturationMax: 0.55;
-      rrConsistencyMin: 0.4;
-      beatConfidenceMin: 0.45;
-      agreementMaxBpm: 8;
-      goodWindowStreakMin: 2;
-      fpsQualityMin: 40;
-      bufferMsMin: 6000;
-      usableTilesMin: 6;
-    };
-    /** Active channel picked by PPGChannelFusion this window. */
-    lastSelectedChannel: string;
-    /** Reason string emitted by PPGChannelFusion (score breakdown). */
-    channelSelectionReason: string;
-  };
 }
 
 const NO_SIGNAL_MESSAGE = "SIN SENAL PPG VERIFICABLE";
@@ -226,30 +177,6 @@ export function createEmptyPublishedPPGMeasurement(
     lastValidBpm: null,
     staleSinceMs: 0,
     staleBadge: "never",
-    publicationDecisionLog: emptyDecisionLog(),
-  };
-}
-
-function emptyDecisionLog(): PublishedPPGMeasurement["publicationDecisionLog"] {
-  return {
-    decision: "BLOCK",
-    passed: [],
-    blocked: ["NO_PPG_PUBLICATION"],
-    metrics: {
-      totalScore: 0, bandPowerRatio: 0, perfusionIndex: 0,
-      saturationPenalty: 1, rrConsistency: 0, beatConfidence: 0,
-      estimatorAgreementBpm: 999, estimatorsAvailable: 0,
-      goodWindowStreak: 0, fpsQuality: 0, bufferMs: 0,
-      usableTileCount: 0, tileCount: 0,
-    },
-    thresholds: {
-      totalScoreMin: 60, bandPowerRatioMin: 0.30, perfusionMin: 0.02,
-      saturationMax: 0.55, rrConsistencyMin: 0.4, beatConfidenceMin: 0.45,
-      agreementMaxBpm: 8, goodWindowStreakMin: 2, fpsQualityMin: 40,
-      bufferMsMin: 6000, usableTilesMin: 6,
-    },
-    lastSelectedChannel: "GREEN_OD",
-    channelSelectionReason: "NO_CHANNELS",
   };
 }
 
@@ -296,10 +223,7 @@ export class PPGPublicationGate {
     const bradycardiaWindowAllowed =
       beats.bpm !== null && beats.bpm < 45 && bufferMs >= 14000 && validBeats.length >= 4;
     const enoughBeats = validBeats.length >= 5 || bradycardiaWindowAllowed;
-    // Forensic: torch MUST be engaged when the device exposes a torch
-    // capability. Devices without torch capability cannot publish PPG-by-finger.
-    const torchCondition = camera.torchAvailable && camera.torchEnabled;
-    const acquisitionReady = camera.acquisitionReady === true;
+    const torchCondition = !camera.torchAvailable || camera.torchEnabled;
     const saturationOk = quality.saturationPenalty <= 0.55;
     const perfusionOk = quality.acDcPerfusionIndex >= 0.02;
     // Multi-estimator agreement (informative, not a hard binary lock)
@@ -341,9 +265,7 @@ export class PPGPublicationGate {
       contactStateOk;
 
     if (!camera.cameraReady) reasons.add("CAMERA_NOT_READY");
-    if (!acquisitionReady) reasons.add("ACQUISITION_NOT_READY");
-    if (!camera.torchAvailable) reasons.add("TORCH_REQUIRED_NOT_AVAILABLE");
-    if (camera.torchAvailable && !camera.torchEnabled) reasons.add("TORCH_NOT_ENABLED");
+    if (!torchCondition) reasons.add("TORCH_NOT_ENABLED");
     if (bufferMs < 6000 || selectedDurationMs < 6000) reasons.add("BUFFER_LT_6S");
     if (bufferMs < 10000) reasons.add("BUFFER_LT_10S_PREFERRED");
     if (!enoughBeats) reasons.add("NOT_ENOUGH_VALID_BEATS");
@@ -459,60 +381,6 @@ export class PPGPublicationGate {
       }
     }
 
-    // ---------- Forensic decision log ----------
-    // Reverse-engineer "passed" vs "blocked" from the same booleans the
-    // gate already uses. This keeps the log in 1-to-1 sync with the real
-    // decision logic — there is no second copy to drift.
-    const passed: string[] = [];
-    const blocked: string[] = [];
-    const rec = (label: string, ok: boolean) => (ok ? passed : blocked).push(label);
-    rec("CAMERA_READY", camera.cameraReady);
-    rec("TORCH_OK", torchCondition);
-    rec("BUFFER_GTE_6S", bufferMs >= 6000 && selectedDurationMs >= 6000);
-    rec("ENOUGH_BEATS", enoughBeats);
-    rec("ESTIMATORS_AGREE", agreementOk);
-    rec("SATURATION_OK", saturationOk);
-    rec("PERFUSION_OK", perfusionOk);
-    rec("RR_CONSISTENT", quality.rrConsistency >= 0.4);
-    rec("BEAT_CONFIDENCE_OK", beats.confidence >= 0.45);
-    rec("FPS_QUALITY_OK", fpsQualityOk);
-    rec("TILE_GATE_OK", tileGateOk);
-    rec("CONTACT_STATE_OK", contactStateOk);
-    rec("TOTAL_SCORE_GTE_60", quality.totalScore >= 60);
-    rec("BAND_POWER_GTE_30", quality.bandPowerRatio >= 0.30);
-    rec("CONTACT_SCORE_GTE_45", roi.contactScore >= 0.45);
-    rec("HYSTERESIS_STREAK_GTE_2", this.goodWindowStreak >= 2);
-    rec("BPM_NON_NULL", beats.bpm !== null);
-
-    const publicationDecisionLog: PublishedPPGMeasurement["publicationDecisionLog"] = {
-      decision: canPublishVitals ? "PUBLISH" : "BLOCK",
-      passed,
-      blocked,
-      metrics: {
-        totalScore: quality.totalScore,
-        bandPowerRatio: quality.bandPowerRatio,
-        perfusionIndex: quality.acDcPerfusionIndex,
-        saturationPenalty: quality.saturationPenalty,
-        rrConsistency: quality.rrConsistency,
-        beatConfidence: beats.confidence,
-        estimatorAgreementBpm,
-        estimatorsAvailable,
-        goodWindowStreak: this.goodWindowStreak,
-        fpsQuality,
-        bufferMs,
-        usableTileCount: roi.usableTileCount,
-        tileCount: roi.tileCount,
-      },
-      thresholds: {
-        totalScoreMin: 60, bandPowerRatioMin: 0.30, perfusionMin: 0.02,
-        saturationMax: 0.55, rrConsistencyMin: 0.4, beatConfidenceMin: 0.45,
-        agreementMaxBpm: 8, goodWindowStreakMin: 2, fpsQualityMin: 40,
-        bufferMsMin: 6000, usableTilesMin: 6,
-      },
-      lastSelectedChannel: channels.selectedName,
-      channelSelectionReason: channels.selectionReason,
-    };
-
     return {
       state,
       canPublishVitals,
@@ -553,7 +421,6 @@ export class PPGPublicationGate {
       lastValidBpm: this.lastValidBpm,
       staleSinceMs,
       staleBadge,
-      publicationDecisionLog,
     };
   }
 }

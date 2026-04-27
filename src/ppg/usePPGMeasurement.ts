@@ -229,7 +229,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       if (!activeRef.current) return;
       frameStatsRef.current = frameSamplerRef.current.getStats();
 
-      // Track processing FPS (cheap, runs every frame even when gated).
+      // Track processing FPS
       const now = performance.now();
       processCountRef.current++;
       if (now - lastProcessTimeRef.current >= 1000) {
@@ -243,53 +243,18 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         }));
       }
 
-      // ── HARD ACQUISITION GATE ───────────────────────────────────────
-      // No biometric processing, no PPG sampling, no fusion, no beats,
-      // no publication while the camera is not verified ready. This is
-      // what prevents "measuring something with no finger / no flash".
-      const camNow = cameraControllerRef.current.getState();
-      cameraRef.current = camNow;
-      const torchRequiredButMissing =
-        camNow.torchAvailable && !camNow.torchEnabled;
-      if (
-        !camNow.cameraReady ||
-        !camNow.streamActive ||
-        !camNow.acquisitionReady ||
-        torchRequiredButMissing
-      ) {
-        const reasons = [...camNow.notReadyReasons];
-        if (torchRequiredButMissing) reasons.push("torch-not-engaged");
-        const prev = publishedRef.current;
-        publishedRef.current = {
-          ...prev,
-          state: camNow.error ? "ERROR" : "CAMERA_STARTING",
-          canPublishVitals: false,
-          canVibrateBeat: false,
-          bpm: null,
-          bpmConfidence: 0,
-          waveformSource: "NONE",
-          beatMarkers: [],
-          message:
-            "ADQUISICION NO LISTA: " +
-            (reasons.join(" | ") || "esperando-camara"),
-          evidence: { ...prev.evidence, camera: camNow },
-        };
-        publishUiSnapshot();
-        return;
-      }
-
       const sample = extractorRef.current.processFrame(frame);
+
+      // Always refresh ROI evidence for diagnostics, even if frame rejected.
       const lastEvidence = extractorRef.current.getLastEvidence();
       const lastRejectionMsg = extractorRef.current.getLastRejectionMessage();
 
       if (!sample) {
+        // Refresh published.evidence.roi so HUD reflects current camera state
         if (lastEvidence) {
           const prev = publishedRef.current;
           publishedRef.current = {
             ...prev,
-            canPublishVitals: false,
-            bpm: null,
-            beatMarkers: [],
             evidence: {
               ...prev.evidence,
               camera: cameraRef.current,
@@ -352,60 +317,67 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   }, [publishUiSnapshot]);
 
   const start = useCallback(async () => {
-    if (activeRef.current) return;
+    if (activeRef.current) {
+      return;
+    }
     activeRef.current = true;
     resetProcessors();
     publishUiSnapshot(true);
 
     const video = videoRef.current;
     if (!video) {
-      activeRef.current = false;
-      console.error("[usePPGMeasurement] videoRef.current is null at start()");
-      return;
-    }
-
-    // Gesture-safe atomic acquisition. MUST be the first awaited op
-    // inside the click handler chain — getUserMedia + torch require
-    // direct user-gesture context on mobile browsers.
-    let cameraState: PPGCameraState;
-    try {
-      cameraState = await cameraControllerRef.current.startFromGesture(video);
-    } catch (e) {
-      console.error("[usePPGMeasurement] startFromGesture failed:", e);
-      cameraRef.current = cameraControllerRef.current.getState();
-      publishedRef.current = createEmptyPublishedPPGMeasurement(cameraRef.current);
-      publishedRef.current = {
-        ...publishedRef.current,
-        state: "ERROR",
-        message: `CAMARA NO INICIADA: ${(e as Error).message}`,
-      };
+      console.error("[usePPGMeasurement] videoRef.current is null");
       activeRef.current = false;
       publishUiSnapshot(true);
       return;
     }
+
+    let cameraState;
+    try {
+      // Forensic: open camera + torch SYNCHRONOUSLY from the user gesture so
+      // the browser preserves user-activation needed to enable the flashlight.
+      cameraState = await cameraControllerRef.current.startFromGesture(video);
+    } catch (e) {
+      console.error("[usePPGMeasurement] startFromGesture failed:", e);
+      activeRef.current = false;
+      publishUiSnapshot(true);
+      return;
+    }
+
     cameraRef.current = cameraState;
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraState);
     publishUiSnapshot(true);
 
-    // Wire FrameSampler → controller readiness so acquisitionReady flips
-    // exactly when warmup completes / regresses.
-    frameSamplerRef.current.setReadinessCallback((ready, reasons, report) => {
-      if (ready) {
-        cameraControllerRef.current.markAcquisitionReady(report);
-      } else {
-        cameraControllerRef.current.clearAcquisitionReady(reasons);
-      }
-      cameraRef.current = cameraControllerRef.current.getState();
+    if (!cameraState.stream) {
+      console.error("[usePPGMeasurement] No stream from camera");
+      activeRef.current = false;
       publishUiSnapshot(true);
-    });
+      return;
+    }
 
-    if (!activeRef.current) return;
+    // Wait until the bound video element is decoding frames.
+    if (video.readyState < 2) {
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (video.readyState >= 2 || !activeRef.current) {
+            resolve();
+          } else {
+            requestAnimationFrame(check);
+          }
+        };
+        check();
+      });
+    }
+
+    if (!activeRef.current) {
+      return;
+    }
+
     frameSamplerRef.current.start(video, processFrame());
   }, [processFrame, publishUiSnapshot, resetProcessors]);
 
   const stop = useCallback(async () => {
     activeRef.current = false;
-    frameSamplerRef.current.setReadinessCallback(null);
     frameSamplerRef.current.stop();
     await cameraControllerRef.current.stop();
     if (videoRef.current) {
