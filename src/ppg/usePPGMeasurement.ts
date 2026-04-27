@@ -247,7 +247,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
 
       // Always refresh ROI evidence for diagnostics, even if frame rejected.
       const lastEvidence = extractorRef.current.getLastEvidence();
-      const lastRejection = extractorRef.current.getLastRejection();
+      const lastRejectionMsg = extractorRef.current.getLastRejectionMessage();
 
       if (!sample) {
         // Refresh published.evidence.roi so HUD reflects current camera state
@@ -260,8 +260,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
               camera: cameraRef.current,
               roi: lastEvidence,
             },
-            message: lastRejection
-              ? `SIN MUESTRA PPG: ${lastRejection}`
+            message: lastRejectionMsg
+              ? `SIN MUESTRA PPG: ${lastRejectionMsg}`
               : prev.message,
           };
         }
