@@ -367,7 +367,13 @@ export class FrameSampler {
       // which caused coordinate misalignment in consumers.
       const imageData = this.context.getImageData(0, 0, fullWidth, fullHeight);
 
-      const timestampMs = performance.now();
+      // Prefer the rVFC `now` (presentation time) over performance.now()
+      // when available — it ties the timestamp to the actual frame the
+      // browser delivered, eliminating one source of jitter.
+      const timestampMs =
+        this.acquisitionMethod === "requestVideoFrameCallback" && _now > 0
+          ? _now
+          : performance.now();
       const dt = this.lastTimestampMs > 0 ? timestampMs - this.lastTimestampMs : 0;
       if (dt > 0) this.pushDt(dt);
 
