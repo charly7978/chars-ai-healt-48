@@ -141,6 +141,47 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
     URL.revokeObjectURL(url);
   };
 
+  const exportCameraEvidence = () => {
+    const diag = camera.diagnostics;
+    const evidencePayload = {
+      timestamp: new Date().toISOString(),
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      cameraDiagnostics: diag ?? null,
+      cameraStateSummary: {
+        cameraReady: camera.cameraReady,
+        streamActive: camera.streamActive,
+        selectedDeviceId: camera.selectedDeviceId,
+        torchAvailable: camera.torchAvailable,
+        torchEnabled: camera.torchEnabled,
+        torchApplied: camera.torchApplied,
+        measuredFps: camera.measuredFps,
+        width: camera.width,
+        height: camera.height,
+        error: camera.error,
+        lastError: camera.lastError,
+      },
+      spo2: {
+        calibrationBadge: oxygen.calibrationBadge,
+        canPublish: oxygen.canPublish,
+        spo2: oxygen.spo2,
+        confidence: oxygen.confidence,
+        method: oxygen.method,
+        reasons: oxygen.reasons,
+        calibrationProfile: diag?.calibration ?? null,
+      },
+      evidenceSchemaVersion: 1,
+    };
+    const blob = new Blob([JSON.stringify(evidencePayload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ppg-camera-evidence-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Determine status color
   const isAccepted = roi.accepted;
   const statusColor = isAccepted ? "text-emerald-400" : "text-amber-400";
