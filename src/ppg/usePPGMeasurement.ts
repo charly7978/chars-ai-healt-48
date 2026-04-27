@@ -241,6 +241,19 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       if (!activeRef.current) return;
       frameStatsRef.current = frameSamplerRef.current.getStats();
 
+      // Feed real telemetry into the adaptive threshold engine. Pure
+      // observation — never substitutes or fabricates samples.
+      adaptiveThresholdsRef.current.observeFrame({
+        measuredFps: frameStatsRef.current.measuredFps,
+        jitterMs: frameStatsRef.current.jitterMs,
+        fpsQuality: frameStatsRef.current.fpsQuality,
+        droppedFrameEstimate: frameStatsRef.current.droppedFrameEstimate,
+        frameCount: frameStatsRef.current.frameCount,
+        acquisitionMethod: frameStatsRef.current.acquisitionMethod === "none"
+          ? "requestVideoFrameCallback"
+          : frameStatsRef.current.acquisitionMethod,
+      });
+
       // Track processing FPS
       const now = performance.now();
       processCountRef.current++;
@@ -256,26 +269,41 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       }
 
       // ============================================================
-      // FORENSIC HARD GATE: block ROI/PPG/publication unless every
-      // hardware precondition is satisfied. No soft fallbacks.
+      // FORENSIC HARD GATE — adaptive per-device thresholds.
+      // Block ROI/PPG/publication unless every hardware precondition
+      // (calibrated against THIS device's measured cadence + torch
+      // readback + sensor noise) is satisfied. No soft fallbacks.
       // ============================================================
       const cam = cameraRef.current;
       const samplerStats = frameStatsRef.current;
       const video = videoRef.current;
+      const thr = adaptiveThresholdsRef.current.getThresholds();
       const videoReady = video !== null && video.readyState >= 2 &&
         video.videoWidth > 0 && video.videoHeight > 0;
       const decodedFramesOk = samplerStats.frameCount >= 30;
-      const fpsOk = samplerStats.fpsQuality >= 50 && samplerStats.measuredFps >= 18;
-      const jitterOk = samplerStats.jitterMs <= 14;
+      const fpsOk = samplerStats.fpsQuality >= thr.minFpsQuality &&
+        samplerStats.measuredFps >= thr.minMeasuredFps;
+      const jitterOk = samplerStats.jitterMs <= thr.maxJitterMs;
+      const droppedRatio = samplerStats.frameCount > 0
+        ? samplerStats.droppedFrameEstimate / samplerStats.frameCount
+        : 0;
+      const droppedOk = droppedRatio <= thr.maxDroppedRatio;
       const torchRequested = cam.torchAvailable === true;
       const torchOk = !torchRequested || cam.torchEnabled === true;
       const streamOk = cam.streamActive === true && cam.cameraReady === true;
 
+      // Inform the adaptive engine about torch readback so it can raise the
+      // perfusion floor when the flashlight could not be physically applied.
+      if (torchRequested) {
+        adaptiveThresholdsRef.current.setTorchReadback(cam.torchEnabled === true);
+      }
+
       const gateReasons: string[] = [];
       if (!videoReady) gateReasons.push("video-not-decoding");
       if (!decodedFramesOk) gateReasons.push(`warmup-frames<30 (${samplerStats.frameCount})`);
-      if (!fpsOk) gateReasons.push(`fps-quality<50 (q=${samplerStats.fpsQuality},fps=${samplerStats.measuredFps.toFixed(1)})`);
-      if (!jitterOk) gateReasons.push(`jitter>14ms (${samplerStats.jitterMs.toFixed(1)})`);
+      if (!fpsOk) gateReasons.push(`fps-below-adaptive (q=${samplerStats.fpsQuality}/${thr.minFpsQuality},fps=${samplerStats.measuredFps.toFixed(1)}/${thr.minMeasuredFps})`);
+      if (!jitterOk) gateReasons.push(`jitter>${thr.maxJitterMs.toFixed(1)}ms (${samplerStats.jitterMs.toFixed(1)})`);
+      if (!droppedOk) gateReasons.push(`dropped-ratio>${(thr.maxDroppedRatio * 100).toFixed(0)}% (${(droppedRatio * 100).toFixed(0)}%)`);
       if (!streamOk) gateReasons.push("stream-not-live");
       if (!torchOk) gateReasons.push("torch-requested-but-not-applied");
 
