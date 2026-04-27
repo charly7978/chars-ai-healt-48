@@ -10,10 +10,10 @@
  */
 
 import { useEffect, useRef } from "react";
-import type { PpgEngineState } from "../hooks/usePpgEngine";
+import type { PpgEngineState as EngineState } from "../hooks/usePpgEngine";
 
 interface CardiacMonitorCanvasProps {
-  state: PpgEngineState;
+  state: EngineState;
 }
 
 export function CardiacMonitorCanvas({ state }: CardiacMonitorCanvasProps) {
