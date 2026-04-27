@@ -123,7 +123,7 @@ export class RadiometricPPGExtractor {
   }
 
   processFrame(frame: RealFrame): PPGOpticalSample | null {
-    if (!frame.imageData || frame.width <= 0 || frame.height <= 0) {
+    if (!frame.imageData || frame.imageWidth <= 0 || frame.imageHeight <= 0) {
       this.lastRejection = "NO_IMAGE_DATA";
       return null;
     }
