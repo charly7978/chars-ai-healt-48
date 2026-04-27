@@ -485,6 +485,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
           staleSinceMs,
           staleBadge: prev.lastValidTimestamp === null ? "never" : staleSinceMs <= 6000 ? "stale" : "expired",
         };
+        // Acquisition not ready → no contact yet. Track for reposition prompt.
+        updateRepositionPrompt("absent", frame.timestampMs, "");
         publishUiSnapshot();
         return;
       }
