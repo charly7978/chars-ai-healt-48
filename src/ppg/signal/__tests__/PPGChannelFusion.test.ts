@@ -40,6 +40,7 @@ function buildSamples(opts: BuildOpts): PPGOpticalSample[] {
     const mask = maskAt(i, n);
     out.push({
       t,
+      dt: 1000 / fps,
       fps,
       baselineValid: true,
       raw: { r: 180, g: 120, b: 60 },
@@ -55,6 +56,7 @@ function buildSamples(opts: BuildOpts): PPGOpticalSample[] {
       ac: { r: ac, g: ac, b: ac * 0.5 },
       acRobust: { r: ac, g: ac, b: ac * 0.5 },
       perfusion: { r: 0.05, g: 0.05, b: 0.04 },
+      acdc: { r: 0.05, g: 0.05, b: 0.04 },
       saturation: { rHigh: 0.04, gHigh: 0.04, bHigh: 0.04, rLow: 0, gLow: 0, bLow: 0 },
       channelMask: mask,
       rejection: [],
