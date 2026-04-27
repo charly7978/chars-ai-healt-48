@@ -538,15 +538,57 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
       <div className="mb-3 border-l-2 border-blue-500/50 pl-2">
         <div className="mb-1 text-[10px] uppercase tracking-wider text-blue-300">Sampler</div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-          <span className="text-white/55">measured FPS</span>
-          <span>{fmt(frameStats.measuredFps, 1)} fps</span>
+          <span className="text-white/55">acquisition method</span>
+          <span
+            className={
+              frameStats.acquisitionMethod === "requestVideoFrameCallback"
+                ? "text-emerald-400"
+                : frameStats.acquisitionMethod === "requestAnimationFrame"
+                  ? "text-amber-300"
+                  : "text-red-400"
+            }
+            title="rVFC = decoupled from render; rAF = coupled; intervalFallback = degraded"
+          >
+            {frameStats.acquisitionMethod}
+          </span>
+          <span className="text-white/55">target / measured / median fps</span>
+          <span>
+            {frameStats.targetFps} / {fmt(frameStats.measuredFps, 1)} / {fmt(frameStats.fpsMedian, 1)}
+          </span>
+          <span className="text-white/55">fps instant</span>
+          <span>{fmt(frameStats.fpsInstant, 1)}</span>
+          <span className="text-white/55">fps quality</span>
+          <span
+            className={
+              frameStats.fpsQuality >= 70
+                ? "text-emerald-400"
+                : frameStats.fpsQuality >= 40
+                  ? "text-amber-300"
+                  : "text-red-400"
+            }
+            title="0..100. <40 blocks BPM publication."
+          >
+            {frameStats.fpsQuality}
+          </span>
+          <span className="text-white/55">jitter (MAD)</span>
+          <span
+            className={
+              frameStats.jitterMs < 4 ? "text-emerald-400" : frameStats.jitterMs < 10 ? "text-amber-300" : "text-red-400"
+            }
+          >
+            {fmt(frameStats.jitterMs, 2)} ms
+          </span>
           <span className="text-white/55">frame interval</span>
           <span>
             {fmt(debug.frameIntervalMs, 1)} ± {fmt(debug.frameIntervalStdMs, 1)} ms
           </span>
-          <span className="text-white/55">frames / dropped</span>
+          <span className="text-white/55">frames / dropped (total)</span>
           <span>
             {frameStats.frameCount} / {frameStats.droppedFrames}
+          </span>
+          <span className="text-white/55">dropped this frame</span>
+          <span className={frameStats.droppedFrameEstimate > 0 ? "text-red-400" : ""}>
+            {frameStats.droppedFrameEstimate}
           </span>
           <span className="text-white/55">analysis resolution</span>
           <span>
