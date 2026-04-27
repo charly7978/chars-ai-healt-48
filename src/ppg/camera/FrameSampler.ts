@@ -118,6 +118,19 @@ function medianAbsoluteDeviation(values: number[], med: number): number {
   return median(deviations);
 }
 
+export interface ReadinessReport {
+  warmupFrames: number;
+  warmupJitterMs: number;
+  warmupFpsStdMs: number;
+  fpsReal: number;
+}
+
+export type ReadinessCallback = (
+  ready: boolean,
+  reasons: string[],
+  report: ReadinessReport,
+) => void;
+
 export class FrameSampler {
   private running = false;
   private video: HTMLVideoElement | null = null;
@@ -145,11 +158,24 @@ export class FrameSampler {
 
   private stats: FrameSamplerStats = this.createEmptyStats();
 
+  // Readiness tracking — fires the callback at every transition so the
+  // camera controller can flip acquisitionReady without polling.
+  private readinessCallback: ReadinessCallback | null = null;
+  private readinessAchieved = false;
+  private readonly readinessFramesRequired = 45; // ~1.5s @ 30fps
+  private readonly readinessMaxJitterMs = 12;
+  private readonly readinessMinFps = 18;
+
   constructor(
     private readonly maxAnalysisWidth = 640,
     private readonly reducedRoiRatio = 0.4,
     private readonly targetFps = 30,
   ) {}
+
+  setReadinessCallback(cb: ReadinessCallback | null): void {
+    this.readinessCallback = cb;
+    this.readinessAchieved = false;
+  }
 
   private createEmptyStats(): FrameSamplerStats {
     return {
