@@ -151,6 +151,7 @@ function emptyResult(sampleRateHz = 30): BeatDetectionResult {
     sampleRateHz,
     irregularityFlag: false,
     ibiStdMs: 0,
+    publicationException: "NO_BEATS_DETECTED",
   };
 }
 
