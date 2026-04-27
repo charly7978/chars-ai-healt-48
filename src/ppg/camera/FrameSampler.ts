@@ -182,6 +182,11 @@ export class FrameSampler {
     const videoWidth = this.video.videoWidth;
     const videoHeight = this.video.videoHeight;
 
+    // Log once per second to avoid spam
+    if (this.stats.frameCount % 30 === 0) {
+      console.log("[FrameSampler] handleFrame called, videoWidth:", videoWidth, "videoHeight:", videoHeight, "readyState:", this.video.readyState, "frameCount:", this.stats.frameCount);
+    }
+
     // Validate video dimensions
     if (videoWidth === 0 || videoHeight === 0) {
       console.warn("[FrameSampler] Invalid video dimensions, skipping frame");
@@ -190,6 +195,9 @@ export class FrameSampler {
     }
 
     if (this.video.readyState < 2) {
+      if (this.stats.frameCount % 30 === 0) {
+        console.log("[FrameSampler] readyState < 2, skipping");
+      }
       this.scheduleNext();
       return;
     }
