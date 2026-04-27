@@ -36,6 +36,15 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
   const debug = measurement.debug;
   const reasons = measurement.published.quality.reasons;
   const frameStats = measurement.frameStats;
+  const beats = measurement.beats ?? {
+    bpm: null,
+    fftBpm: null,
+    autocorrBpm: null,
+    estimatorAgreementBpm: undefined as number | undefined,
+    beats: [] as unknown[],
+    rejectedCandidates: 0,
+    rrIntervalsMs: [] as number[],
+  };
 
   const exportJson = () => {
     const auditData = {
@@ -57,13 +66,13 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         saturationPenalty: quality.saturationPenalty,
       },
       beats: {
-        bpm: measurement.beats.bpm,
-        fftBpm: measurement.beats.fftBpm,
-        autocorrBpm: measurement.beats.autocorrBpm,
-        estimatorAgreementBpm: measurement.beats.estimatorAgreementBpm,
-        acceptedCount: measurement.beats.beats.length,
-        rejectedCount: measurement.beats.rejectedCandidates,
-        rrIntervalsMs: measurement.beats.rrIntervalsMs.slice(-10),
+        bpm: beats.bpm,
+        fftBpm: beats.fftBpm,
+        autocorrBpm: beats.autocorrBpm,
+        estimatorAgreementBpm: beats.estimatorAgreementBpm,
+        acceptedCount: beats.beats.length,
+        rejectedCount: beats.rejectedCandidates,
+        rrIntervalsMs: beats.rrIntervalsMs.slice(-10),
       },
       quality: {
         totalScore: quality.totalScore,
@@ -280,29 +289,29 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
           <span className="text-white/55">beats accepted / rejected</span>
           <span>
-            {measurement.beats.beats.length} / {measurement.beats.rejectedCandidates}
+            {beats.beats.length} / {beats.rejectedCandidates}
           </span>
           <span className="text-white/55">BPM (peaks)</span>
-          <span className={measurement.beats.bpm !== null ? "text-emerald-400" : "text-red-400"}>
-            {fmt(measurement.beats.bpm, 1)}
+          <span className={beats.bpm !== null ? "text-emerald-400" : "text-red-400"}>
+            {fmt(beats.bpm, 1)}
           </span>
           <span className="text-white/55">BPM (FFT)</span>
-          <span className={measurement.beats.fftBpm !== null ? "text-emerald-400" : "text-red-400"}>
-            {fmt(measurement.beats.fftBpm, 1)}
+          <span className={beats.fftBpm !== null ? "text-emerald-400" : "text-red-400"}>
+            {fmt(beats.fftBpm, 1)}
           </span>
           <span className="text-white/55">BPM (autocorr)</span>
-          <span className={measurement.beats.autocorrBpm !== null ? "text-emerald-400" : "text-red-400"}>
-            {fmt(measurement.beats.autocorrBpm, 1)}
+          <span className={beats.autocorrBpm !== null ? "text-emerald-400" : "text-red-400"}>
+            {fmt(beats.autocorrBpm, 1)}
           </span>
           <span className="text-white/55">estimator agreement</span>
-          <span className={measurement.beats.estimatorAgreementBpm !== undefined && measurement.beats.estimatorAgreementBpm <= 5 ? "text-emerald-400" : "text-red-400"}>
-            {fmt(measurement.beats.estimatorAgreementBpm, 1)} BPM
+          <span className={beats.estimatorAgreementBpm !== undefined && beats.estimatorAgreementBpm <= 5 ? "text-emerald-400" : "text-red-400"}>
+            {fmt(beats.estimatorAgreementBpm, 1)} BPM
           </span>
           <span className="text-white/55">RR consistency</span>
           <span>{fmt(quality.rrConsistency, 2)}</span>
           <span className="text-white/55">RR intervals (last 5)</span>
           <span className="text-[9px]">
-            {measurement.beats.rrIntervalsMs.slice(-5).map((rr, i) => `${fmt(rr, 0)}ms`).join(", ") || "--"}
+            {beats.rrIntervalsMs.slice(-5).map((rr, i) => `${fmt(rr, 0)}ms`).join(", ") || "--"}
           </span>
         </div>
       </div>
