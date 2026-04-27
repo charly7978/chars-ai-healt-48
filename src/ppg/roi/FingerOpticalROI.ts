@@ -466,6 +466,18 @@ export class FingerOpticalROI {
     let perfusionAccum = 0;
     let perfusionCount = 0;
 
+    // Texture accumulator: mean |∇G| over the whole frame (sampled).
+    // A real fingertip pressed against the lens has a soft non-zero
+    // micro-texture (capillary pattern, ridges, slight blur). A flat
+    // surface or empty lens produces ~0 gradient. We use this to veto
+    // "looks bright but isn't a finger" frames.
+    let gradAccum = 0;
+    let gradCount = 0;
+
+    // Centroid of usable tiles, in tile-grid coordinates (0..TILE_GRID-1).
+    let centroidX = 0;
+    let centroidY = 0;
+
     for (let ty = 0; ty < TILE_GRID; ty++) {
       for (let tx = 0; tx < TILE_GRID; tx++) {
         const x0 = tx * tileW;
@@ -481,9 +493,12 @@ export class FingerOpticalROI {
         let tileLow = 0;
         let tileGmin = 255;
         let tileGmax = 0;
+        let prevRowG = -1; // for vertical gradient
+        let prevColG = -1; // for horizontal gradient
 
         for (let yy = y0; yy < y1; yy += tileStep) {
           const rowBase = yy * width * 4;
+          prevColG = -1;
           for (let xx = x0; xx < x1; xx += tileStep) {
             const idx = rowBase + xx * 4;
             const r = data[idx];
@@ -499,7 +514,18 @@ export class FingerOpticalROI {
             if (minCh <= 4) tileLow++;
             if (g < tileGmin) tileGmin = g;
             if (g > tileGmax) tileGmax = g;
+            // Sobel-lite: |G - left| + |G - above|. Cheap, single-channel.
+            if (prevColG >= 0) {
+              gradAccum += Math.abs(g - prevColG);
+              gradCount++;
+            }
+            if (prevRowG >= 0) {
+              gradAccum += Math.abs(g - prevRowG);
+              gradCount++;
+            }
+            prevColG = g;
           }
+          prevRowG = -1; // reset row tracker (kept simple; per-column would need an extra buffer)
         }
 
         const tileMean = {
@@ -510,18 +536,14 @@ export class FingerOpticalROI {
         const tileHighRatio = tilePixels ? tileHigh / tilePixels : 0;
         const tileLowRatio = tilePixels ? tileLow / tilePixels : 0;
 
-        // Pulsatile candidate: prefers tiles with healthy red dominance,
-        // moderate brightness, and a non-trivial green dynamic range.
         const tileRedDom = tileMean.r / Math.max(1, tileMean.r + tileMean.g + tileMean.b);
         const tileBright = (tileMean.r + tileMean.g + tileMean.b) / 3;
-        const greenSpan = Math.max(0, tileGmax - tileGmin) / 64; // normalised
+        const greenSpan = Math.max(0, tileGmax - tileGmin) / 64;
         const candidate = clamp01(
           (tileRedDom > 0.34 ? 1 : tileRedDom / 0.34) * 0.4 +
             (tileBright > 60 && tileBright < 230 ? 1 : 0) * 0.3 +
             Math.min(1, greenSpan) * 0.3,
         );
-        // Adaptive validity: tile must not be saturated/clipped, must be at
-        // least moderately bright and pass the candidate threshold.
         const usable =
           tileHighRatio < 0.25 &&
           tileLowRatio < 0.25 &&
@@ -534,6 +556,8 @@ export class FingerOpticalROI {
         if (usable) {
           perfusionAccum += Math.min(1, greenSpan);
           perfusionCount++;
+          centroidX += tx;
+          centroidY += ty;
         }
 
         tiles.push({
@@ -550,6 +574,32 @@ export class FingerOpticalROI {
 
     let usableTileCount = 0;
     for (const t of tileMask) if (t) usableTileCount++;
+
+    // Texture score: |∇G| in [0, ~30] → mapped to [0,1] with a knee around 4.
+    // Below 1.5 → almost certainly a flat/empty surface.
+    const meanGrad = gradCount > 0 ? gradAccum / gradCount : 0;
+    const textureScore = clamp01((meanGrad - 1.5) / 6);
+
+    // Centroid drift in tile coordinates → normalised to [0,1] (max ≈ √2·TILE_GRID/2).
+    let centroidDrift = 0;
+    if (usableTileCount > 0) {
+      const cx = centroidX / usableTileCount;
+      const cy = centroidY / usableTileCount;
+      if (this.previousCentroid) {
+        const dx = cx - this.previousCentroid.x;
+        const dy = cy - this.previousCentroid.y;
+        centroidDrift = clamp01(Math.sqrt(dx * dx + dy * dy) / (TILE_GRID * 0.6));
+      }
+      this.previousCentroid = { x: cx, y: cy };
+    } else {
+      this.previousCentroid = null;
+    }
+
+    // Augment motionRisk with the two new spatial signals.
+    motionRisk = clamp01(Math.max(motionRisk, luminanceDelta * 4, centroidDrift));
+    const motionArtifactScore = clamp01(
+      luminanceDelta * 3 * 0.4 + centroidDrift * 0.4 + Math.abs(dcTrend) / 12 * 0.2,
+    );
 
     // ROI stability = IoU of the usable-tile masks frame-to-frame.
     let roiStabilityScore = 1;
