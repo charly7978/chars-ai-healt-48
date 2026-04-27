@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { UsePPGMeasurementResult } from "@/ppg/usePPGMeasurement";
 
 interface ForensicPPGDebugPanelProps {
