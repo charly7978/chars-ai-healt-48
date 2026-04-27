@@ -243,6 +243,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     beatDetectorRef.current.reset();
     publicationGateRef.current.reset();
     adaptiveThresholdsRef.current.reset();
+    noFingerSelfTestRef.current.reset();
     rawSamplesRef.current = [];
     channelsRef.current = [];
     qualityRef.current = createEmptySignalQuality();
