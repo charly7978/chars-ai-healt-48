@@ -444,7 +444,20 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
               {beats.beats.length >= 2 && rrCount < beats.beats.length - 1 && (
                 <div className="col-span-2 mt-1 rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-1 text-[10px] text-amber-300">
                   ⚠ beat/RR mismatch: {beats.beats.length} beats but only {rrCount} RR interval{rrCount === 1 ? "" : "s"}{" "}
-                  (expected {beats.beats.length - 1}). Some beats were dropped from the RR series — RR consistency is waiting for a contiguous run.
+                  (expected {beats.beats.length - 1}). Some beats were dropped from the RR series — RR consistency is waiting for a contiguous run.{" "}
+                  <button
+                    type="button"
+                    onClick={() => setRrExplanationOpen((v) => !v)}
+                    className="ml-1 underline decoration-dotted underline-offset-2 hover:text-amber-200"
+                    aria-expanded={rrExplanationOpen}
+                  >
+                    {rrExplanationOpen ? "Hide details" : "Why am I waiting?"}
+                  </button>
+                </div>
+              )}
+              {rrExplanationOpen && (
+                <div className="col-span-2 mt-1 animate-fade-in whitespace-pre-wrap rounded border border-emerald-400/30 bg-emerald-400/5 px-1.5 py-1 text-[10px] text-emerald-100">
+                  {rrConsistencyExplanation}
                 </div>
               )}
               </div>
