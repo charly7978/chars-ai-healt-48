@@ -32,6 +32,10 @@ import {
   RadiometricPPGExtractor,
   type PPGOpticalSample,
 } from "./signal/RadiometricPPGExtractor";
+import {
+  AdaptiveAcquisitionThresholds,
+  type AdaptiveProfileSnapshot,
+} from "./camera/AdaptiveAcquisitionThresholds";
 
 export interface UsePPGMeasurementResult {
   videoRef: RefObject<HTMLVideoElement>;
