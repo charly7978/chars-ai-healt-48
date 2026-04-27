@@ -154,6 +154,8 @@ export class PPGPublicationGate {
     beats: BeatDetectionResult;
     opticalSamples: PPGOpticalSample[];
     selectedSeries: TimeSample[];
+    /** 0..100 — sampler cadence quality (rVFC jitter / dropped frames). */
+    fpsQuality?: number;
   }): PublishedPPGMeasurement {
     const {
       camera,
@@ -163,6 +165,7 @@ export class PPGPublicationGate {
       beats,
       opticalSamples,
       selectedSeries,
+      fpsQuality = 100,
     } = params;
     const reasons = new Set<string>(quality.reasons);
     const bufferMs = opticalSamples.length >= 2 ? opticalSamples[opticalSamples.length - 1].t - opticalSamples[0].t : 0;
