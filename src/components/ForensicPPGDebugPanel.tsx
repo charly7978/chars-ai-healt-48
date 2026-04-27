@@ -178,12 +178,51 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
     URL.revokeObjectURL(url);
   };
 
-  const exportCameraEvidence = () => {
+  const exportCameraEvidence = (opts: { force?: boolean } = {}) => {
     const diag = camera.diagnostics;
+    const exportedAtMs = Date.now();
+    const exportedAtIso = new Date(exportedAtMs).toISOString();
+
+    // Annotate every applied/attempted setting with its timestamp so the consumer can
+    // correlate exactly when each constraint, torch readback or fps measurement happened.
+    // We preserve any pre-existing `timestamp`/`appliedAt` on the source records and
+    // fall back to the export timestamp only when the upstream did not record one.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const annotateTs = (item: any) => {
+      if (!item || typeof item !== "object") return item;
+      const ts = item.timestamp ?? item.appliedAt ?? item.at ?? exportedAtMs;
+      const tsIso = (() => {
+        try {
+          return new Date(ts).toISOString();
+        } catch {
+          return exportedAtIso;
+        }
+      })();
+      return { ...item, timestamp: ts, timestampIso: tsIso };
+    };
+
+    const annotatedDiag = diag
+      ? {
+          ...diag,
+          attempts: Array.isArray(diag.attempts) ? diag.attempts.map(annotateTs) : diag.attempts,
+          fineConstraints: Array.isArray(diag.fineConstraints)
+            ? diag.fineConstraints.map(annotateTs)
+            : diag.fineConstraints,
+          torchStatus: annotateTs(diag.torchStatus),
+          fpsSample: {
+            target: diag.fpsTarget,
+            measured: diag.fpsMeasured,
+            timestamp: exportedAtMs,
+            timestampIso: exportedAtIso,
+          },
+        }
+      : null;
+
     const evidencePayload = {
-      timestamp: new Date().toISOString(),
+      timestamp: exportedAtIso,
+      exportedAtMs,
       userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
-      cameraDiagnostics: diag ?? null,
+      cameraDiagnostics: annotatedDiag,
       cameraStateSummary: {
         cameraReady: camera.cameraReady,
         streamActive: camera.streamActive,
@@ -192,6 +231,8 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         torchEnabled: camera.torchEnabled,
         torchApplied: camera.torchApplied,
         measuredFps: camera.measuredFps,
+        measuredFpsAt: exportedAtMs,
+        measuredFpsAtIso: exportedAtIso,
         width: camera.width,
         height: camera.height,
         error: camera.error,
@@ -206,17 +247,51 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         reasons: oxygen.reasons,
         calibrationProfile: diag?.calibration ?? null,
       },
-      evidenceSchemaVersion: 1,
+      evidenceSchemaVersion: 2,
     };
+
+    const warnings = validateEvidencePayload(evidencePayload);
+    setExportWarnings(warnings);
+    if (warnings.length > 0 && !opts.force) {
+      // Block the download until the user confirms via the "Download anyway" button.
+      return;
+    }
+
     const blob = new Blob([JSON.stringify(evidencePayload, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `ppg-camera-evidence-${Date.now()}.json`;
+    a.download = `ppg-camera-evidence-${exportedAtMs}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleImportEvidenceClick = () => {
+    setImportError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleImportEvidenceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("File is not a JSON object");
+      }
+      if (!("cameraDiagnostics" in parsed) && !("spo2" in parsed)) {
+        throw new Error("Missing cameraDiagnostics/spo2 — not a PPG evidence file");
+      }
+      setImportedEvidence(parsed);
+      setImportError(null);
+    } catch (err) {
+      setImportedEvidence(null);
+      setImportError(err instanceof Error ? err.message : "Failed to parse file");
+    }
   };
 
   // Determine status color
