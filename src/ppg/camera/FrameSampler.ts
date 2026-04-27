@@ -193,7 +193,7 @@ export class FrameSampler {
 
     // Use reduced ROI initially, expand if needed based on external signal
     const isReducedMode = this.fullFrameAnalysisCount < 3;
-    let roiWidth = isReducedMode ? Math.floor(fullWidth * this.reducedRoiRatio) : fullWidth;
+    const roiWidth = isReducedMode ? Math.floor(fullWidth * this.reducedRoiRatio) : fullWidth;
     let roiHeight = isReducedMode ? Math.floor(fullHeight * this.reducedRoiRatio) : fullHeight;
 
     // Center the ROI

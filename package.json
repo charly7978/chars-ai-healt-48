@@ -9,7 +9,10 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "audit:no-simulation": "node scripts/audit-no-simulation.mjs",
+    "audit:graph": "node scripts/audit-import-graph.mjs",
+    "verify": "npm run lint && npm run audit:no-simulation && npm run audit:graph && npm run build"
   },
   "dependencies": {
     "lucide-react": "^0.462.0",

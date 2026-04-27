@@ -97,6 +97,25 @@ for config_dir in "${config_files[@]}"; do
     fi
 done
 
+# Run comprehensive audit scripts
+echo ""
+echo "🔍 Ejecutando auditorías de código..."
+
+# Audit: No simulation patterns
+echo "   → Audit: No simulation patterns"
+if ! node scripts/audit-no-simulation.mjs; then
+    echo "❌ AUDIT NO-SIMULATION FALLÓ"
+    critical_violations=$((critical_violations + 1))
+fi
+
+# Audit: Import graph (only on full commits, not quick fixes)
+if [ -z "$SKIP_GRAPH_AUDIT" ]; then
+    echo "   → Audit: Import graph"
+    if ! node scripts/audit-import-graph.mjs 2>/dev/null; then
+        echo "⚠️  ADVERTENCIA: Hay archivos no alcanzables (use SKIP_GRAPH_AUDIT=1 para omitir)"
+    fi
+fi
+
 # Generar reporte final
 echo ""
 echo "📊 REPORTE DE VALIDACIÓN MÉDICA"

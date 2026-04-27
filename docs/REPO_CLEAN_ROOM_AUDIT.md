@@ -243,4 +243,75 @@ En `PPGPublicationGate.ts`:
 
 ---
 
+## 9. QA Verification Layer (Nuevo)
+
+### 9.1 Scripts de Auditoría Automática
+
+| Script | Propósito | Falla Si |
+|--------|-----------|----------|
+| `scripts/audit-no-simulation.mjs` | Detecta simulaciones en pipeline biométrico | Math.random(), fake/mock/dummy/simulated, valores hardcodeados, archivos binarios prohibidos |
+| `scripts/audit-import-graph.mjs` | Detecta código muerto/huérfano | Archivos no alcanzables desde entry points |
+| `.githooks/pre-commit` | Previene commits con simulaciones | Mismos criterios que audit-no-simulation + rangos fisiológicos |
+
+### 9.2 Comandos NPM
+
+```bash
+# Verificación completa (CI/CD)
+npm run verify
+
+# Pasos individuales
+npm run lint                    # ESLint
+npm run audit:no-simulation     # Detección de simulaciones
+npm run audit:graph             # Grafo de imports
+npm run build                   # Build Vite
+```
+
+### 9.3 Criterios de Rechazo Automático
+
+**CRÍTICO (Fallan el build):**
+- `Math.random()` en código biométrico
+- Keywords: fake, mock, dummy, simulated
+- BPM/SpO2 hardcodeados (bpm=75, spo2=98)
+- Rangos no fisiológicos (BPM <30 o >200, SpO2 <70 o >100)
+- Archivos binarios (.cmd, .exe, .zip)
+
+**WARNING (Revisión manual):**
+- Archivos no alcanzables (código muerto)
+- Componentes obsoletos (HeartRateDisplay)
+- Módulos biométricos sin CalibrationProfile
+
+### 9.4 Bypass Controlado
+
+```bash
+# Para commits urgentes (evita graph audit)
+SKIP_GRAPH_AUDIT=1 git commit -m "fix: ..."
+
+# Para documentación (evita hooks)
+git commit --no-verify -m "docs: ..."
+```
+
+**⚠️ ADVERTENCIA:** El bypass `--no-verify` debe ser usado solo para documentación pura, nunca para código biométrico.
+
+---
+
+## 10. Referencias Rápidas
+
+### Documentación de Aceptación
+- `docs/PPG_ACCEPTANCE_TESTS.md` - Casos de prueba A-J con templates de evidencia
+
+### Scripts de Verificación
+- `scripts/audit-no-simulation.mjs` - Anti-simulation scanner
+- `scripts/audit-import-graph.mjs` - Dead code detector
+- `.githooks/pre-commit` - Git hook de validación
+
+### Comandos de QA
+```bash
+npm run verify          # Verificación completa
+npm run audit:graph     # Solo grafo de imports
+npm run audit:no-sim    # Solo anti-simulación
+```
+
+---
+
 **Firma:** Auditoría completada. Pipeline PPG forense limpio y trazable.
+**QA Layer:** Verificación anti-simulación y anti-código-muerto implementada.
