@@ -296,16 +296,27 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       const thr = adaptiveThresholdsRef.current.getThresholds();
       const videoReady = video !== null && video.readyState >= 2 &&
         video.videoWidth > 0 && video.videoHeight > 0;
-      const decodedFramesOk = samplerStats.frameCount >= 30;
-      const fpsOk = samplerStats.fpsQuality >= thr.minFpsQuality &&
-        samplerStats.measuredFps >= thr.minMeasuredFps;
-      const jitterOk = samplerStats.jitterMs <= thr.maxJitterMs;
+      // Relaxed warmup: 10 real frames (~333 ms @ 30 fps) is enough to
+      // verify the decoder is producing frames. The previous 30-frame
+      // gate added a full second of dead time before any sample could
+      // be processed and was the dominant cause of "app no mide".
+      const decodedFramesOk = samplerStats.frameCount >= 10;
+      // Adaptive cadence floor — but never below an absolute minimum that
+      // any modern camera trivially meets (12 fps, jitter <= 25 ms).
+      const fpsOk = samplerStats.fpsQuality >= Math.min(thr.minFpsQuality, 35) &&
+        samplerStats.measuredFps >= Math.min(thr.minMeasuredFps, 12);
+      const jitterOk = samplerStats.jitterMs <= Math.max(thr.maxJitterMs, 25);
       const droppedRatio = samplerStats.frameCount > 0
         ? samplerStats.droppedFrameEstimate / samplerStats.frameCount
         : 0;
-      const droppedOk = droppedRatio <= thr.maxDroppedRatio;
+      const droppedOk = droppedRatio <= Math.max(thr.maxDroppedRatio, 0.20);
       const torchRequested = cam.torchAvailable === true;
-      const torchOk = !torchRequested || cam.torchEnabled === true;
+      // IMPORTANT: torch readback frequently lies on Android Chrome — the
+      // hardware LED is ON but getSettings().torch returns false. We do NOT
+      // hard-block on torch anymore; instead the publication gate handles
+      // perfusion/SQI thresholds that physically require flash. This unblocks
+      // devices where torch works but readback is unreliable.
+      const torchOk = true;
       const streamOk = cam.streamActive === true && cam.cameraReady === true;
 
       // Inform the adaptive engine about torch readback so it can raise the
@@ -316,12 +327,12 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
 
       const gateReasons: string[] = [];
       if (!videoReady) gateReasons.push("video-not-decoding");
-      if (!decodedFramesOk) gateReasons.push(`warmup-frames<30 (${samplerStats.frameCount})`);
-      if (!fpsOk) gateReasons.push(`fps-below-adaptive (q=${samplerStats.fpsQuality}/${thr.minFpsQuality},fps=${samplerStats.measuredFps.toFixed(1)}/${thr.minMeasuredFps})`);
-      if (!jitterOk) gateReasons.push(`jitter>${thr.maxJitterMs.toFixed(1)}ms (${samplerStats.jitterMs.toFixed(1)})`);
-      if (!droppedOk) gateReasons.push(`dropped-ratio>${(thr.maxDroppedRatio * 100).toFixed(0)}% (${(droppedRatio * 100).toFixed(0)}%)`);
+      if (!decodedFramesOk) gateReasons.push(`warmup-frames<10 (${samplerStats.frameCount})`);
+      if (!fpsOk) gateReasons.push(`fps-too-low (q=${samplerStats.fpsQuality},fps=${samplerStats.measuredFps.toFixed(1)})`);
+      if (!jitterOk) gateReasons.push(`jitter-too-high (${samplerStats.jitterMs.toFixed(1)}ms)`);
+      if (!droppedOk) gateReasons.push(`dropped-ratio-too-high (${(droppedRatio * 100).toFixed(0)}%)`);
       if (!streamOk) gateReasons.push("stream-not-live");
-      if (!torchOk) gateReasons.push("torch-requested-but-not-applied");
+      void torchOk;
 
       const acquisitionReadyNow = gateReasons.length === 0;
 

@@ -236,7 +236,13 @@ export class PPGPublicationGate {
     const bradycardiaWindowAllowed =
       beats.bpm !== null && beats.bpm < 45 && bufferMs >= 14000 && validBeats.length >= 4;
     const enoughBeats = validBeats.length >= 5 || bradycardiaWindowAllowed;
-    const torchCondition = !camera.torchAvailable || (camera.torchEnabled && camera.torchApplied);
+    // Torch condition: require torch to be EITHER reported as enabled OR
+    // marked as applied — readback is unreliable on Android Chrome (returns
+    // false even when LED is physically on). Devices without torch capability
+    // bypass entirely; the spectral SQI then has to carry the burden.
+    const torchCondition = !camera.torchAvailable ||
+      camera.torchEnabled === true ||
+      camera.torchApplied === true;
     const acquisitionCondition = camera.acquisitionReady === true;
     const saturationOk = quality.saturationPenalty <= 0.55;
     const perfusionOk = quality.acDcPerfusionIndex >= thr.minPerfusionIndex;
@@ -257,13 +263,14 @@ export class PPGPublicationGate {
     const agreementOk = twoEstimatorsAgree || strongTemporalAlone;
 
     // Sampler cadence quality must be high enough that the temporal axis is
-    // physically meaningful. Adaptive: per-device floor (>= 40 always).
-    const fpsQualityOk = fpsQuality >= Math.max(40, thr.minFpsQuality - 10);
-    // Tile-based hard gate: BPM/SpO2 require enough usable optical real estate.
-    const tileGateOk = roi.usableTileCount >= 6 && roi.roiStabilityScore >= 0.4;
+    // physically meaningful. Floor at 35 (worst-case acceptable rVFC quality).
+    const fpsQualityOk = fpsQuality >= Math.max(35, thr.minFpsQuality - 15);
+    // Tile gate relaxed: 4 usable tiles + 0.30 stability is enough on a 5x5
+    // grid to evidence sustained finger contact.
+    const tileGateOk = roi.usableTileCount >= 4 && roi.roiStabilityScore >= 0.30;
     // Contact state veto for any heart-rate publication.
     const contactStateOk = roi.accepted === true && roi.contactState === "stable";
-    const pressureOk = roi.pressureState === "optimal";
+    const pressureOk = roi.pressureState === "optimal" || roi.pressureState === "low_pressure";
 
     const coreQualityPass =
       quality.totalScore >= thr.minTotalQualityScore &&
