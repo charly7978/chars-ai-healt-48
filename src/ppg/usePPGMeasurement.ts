@@ -92,6 +92,7 @@ export interface UsePPGMeasurementResult {
     channelSelectionReason: string;
     lastUpdateMs: number;
     adaptive: AdaptiveProfileSnapshot;
+    noFingerSelfTest: NoFingerSelfTestReport;
   };
 }
 
