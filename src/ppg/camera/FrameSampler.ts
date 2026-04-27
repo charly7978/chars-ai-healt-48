@@ -424,6 +424,32 @@ export class FrameSampler {
       this.stats.sampleIntervalStdMs = intervalStats.std;
       this.stats.lastFrameTimeMs = timestampMs;
 
+      // Readiness evaluation — fired exactly on transitions.
+      if (this.readinessCallback) {
+        const reasons: string[] = [];
+        if (this.stats.frameCount < this.readinessFramesRequired) {
+          reasons.push(
+            `warmup-frames-${this.stats.frameCount}/${this.readinessFramesRequired}`,
+          );
+        }
+        if (intervalStats.mad > this.readinessMaxJitterMs) {
+          reasons.push(`jitter-${intervalStats.mad.toFixed(1)}ms-too-high`);
+        }
+        if (measuredFps < this.readinessMinFps) {
+          reasons.push(`fps-${measuredFps.toFixed(1)}-too-low`);
+        }
+        const ready = reasons.length === 0;
+        if (ready !== this.readinessAchieved) {
+          this.readinessAchieved = ready;
+          this.readinessCallback(ready, reasons, {
+            warmupFrames: this.stats.frameCount,
+            warmupJitterMs: intervalStats.mad,
+            warmupFpsStdMs: intervalStats.std,
+            fpsReal: measuredFps,
+          });
+        }
+      }
+
       const videoTime =
         typeof metadata?.mediaTime === "number" ? metadata.mediaTime : this.video.currentTime;
 
