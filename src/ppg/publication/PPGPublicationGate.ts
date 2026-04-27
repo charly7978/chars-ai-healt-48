@@ -270,6 +270,7 @@ export class PPGPublicationGate {
       samples: opticalSamples,
       quality,
       canPublishVitals,
+      calibrationBadge: camera.diagnostics?.calibration.status ?? "uncalibrated",
     });
 
     let lastValidTimestamp: number | null = null;
