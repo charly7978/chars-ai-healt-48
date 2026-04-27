@@ -188,6 +188,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     selectedChannel: "--",
     channelSelectionReason: "--",
     lastUpdateMs: 0,
+    adaptive: adaptiveThresholdsRef.current.snapshot(),
   });
 
   const publishUiSnapshot = useCallback((force = false) => {
