@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-27T14:02:42.314Z",
+  "generatedAt": "2026-04-27T14:16:06.458Z",
   "entrypoints": {
     "html": [
       "index.html"
@@ -63,6 +63,10 @@
     "src/App.tsx": {
       "imports": [
         {
+          "specifier": "./pages/ComingSoon",
+          "resolved": "src/pages/ComingSoon.tsx"
+        },
+        {
           "specifier": "./pages/Index",
           "resolved": "src/pages/Index.tsx"
         },
@@ -90,6 +94,11 @@
       "external": [
         "react-dom/client"
       ],
+      "unresolved": []
+    },
+    "src/pages/ComingSoon.tsx": {
+      "imports": [],
+      "external": [],
       "unresolved": []
     },
     "src/pages/Index.tsx": {
@@ -487,6 +496,9 @@
       "default"
     ],
     "src/main.tsx": [],
+    "src/pages/ComingSoon.tsx": [
+      "default"
+    ],
     "src/pages/Index.tsx": [
       "default"
     ],
@@ -716,9 +728,11 @@
         "src/index.css"
       ],
       "src/App.tsx": [
+        "src/pages/ComingSoon.tsx",
         "src/pages/Index.tsx",
         "src/pages/NotFound.tsx"
       ],
+      "src/pages/ComingSoon.tsx": [],
       "src/pages/Index.tsx": [
         "src/ppg/index.ts"
       ],
@@ -823,6 +837,7 @@
     "src/App.tsx",
     "src/index.css",
     "src/main.tsx",
+    "src/pages/ComingSoon.tsx",
     "src/pages/Index.tsx",
     "src/pages/NotFound.tsx",
     "src/ppg/camera/FrameSampler.ts",
@@ -856,8 +871,8 @@
   "unresolvedImports": [],
   "duplicateGroups": [],
   "counts": {
-    "KEEP_DOC": 16,
-    "KEEP_PRODUCTION": 40,
+    "KEEP_DOC": 17,
+    "KEEP_PRODUCTION": 41,
     "KEEP_TEST": 4
   },
   "classification": {
@@ -888,6 +903,7 @@
     "src/App.tsx": "KEEP_PRODUCTION",
     "src/index.css": "KEEP_PRODUCTION",
     "src/main.tsx": "KEEP_PRODUCTION",
+    "src/pages/ComingSoon.tsx": "KEEP_PRODUCTION",
     "src/pages/Index.tsx": "KEEP_PRODUCTION",
     "src/pages/NotFound.tsx": "KEEP_PRODUCTION",
     "src/ppg/camera/FrameSampler.ts": "KEEP_PRODUCTION",
@@ -919,6 +935,7 @@
     "tsconfig.app.json": "KEEP_PRODUCTION",
     "tsconfig.json": "KEEP_PRODUCTION",
     "tsconfig.node.json": "KEEP_PRODUCTION",
+    "vercel.json": "KEEP_DOC",
     "vite.config.ts": "KEEP_PRODUCTION",
     "vitest.config.ts": "KEEP_PRODUCTION"
   }
