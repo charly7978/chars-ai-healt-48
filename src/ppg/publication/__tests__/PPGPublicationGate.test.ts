@@ -124,7 +124,18 @@ function opticalSamples(durationMs = 8000, fs = 30): PPGOpticalSample[] {
   const out: PPGOpticalSample[] = [];
   const n = Math.floor((durationMs * fs) / 1000);
   for (let i = 0; i < n; i += 1) {
-    out.push({ t: (i / fs) * 1000, fps: fs, baselineValid: true } as PPGOpticalSample);
+    // Tiny pulsatile component so robustAc/SNR don't go to zero.
+    const pulse = Math.sin(2 * Math.PI * 1.2 * (i / fs)) * 0.02;
+    out.push({
+      t: (i / fs) * 1000,
+      fps: fs,
+      baselineValid: true,
+      saturation: { rHigh: 0.05, gHigh: 0.05, bHigh: 0.05, rLow: 0, gLow: 0, bLow: 0 },
+      od: { r: 0.5 + pulse, g: 0.5 + pulse * 0.6, b: 0.5 + pulse * 0.4 },
+      dc: { r: 100, g: 100, b: 100 },
+      ac: { r: 1, g: 1, b: 1 },
+      perfusion: { r: 0.05, g: 0.05, b: 0.05 },
+    } as PPGOpticalSample);
   }
   return out;
 }
