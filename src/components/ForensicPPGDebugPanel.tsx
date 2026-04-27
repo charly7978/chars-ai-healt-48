@@ -313,14 +313,90 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           </button>
           <button
             type="button"
-            onClick={exportCameraEvidence}
+            onClick={() => exportCameraEvidence()}
             title="Download camera diagnostics + SpO2 calibration/badge as a single JSON evidence file"
             className="inline-flex items-center gap-1 rounded border border-fuchsia-500/30 bg-fuchsia-500/10 px-2 py-1 text-[10px] text-fuchsia-200 hover:bg-fuchsia-500/20"
           >
             EXPORT CAM EVIDENCE
           </button>
+          <button
+            type="button"
+            onClick={handleImportEvidenceClick}
+            title="Load a previously exported evidence JSON and render it in this panel"
+            className="inline-flex items-center gap-1 rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] text-sky-200 hover:bg-sky-500/20"
+          >
+            IMPORT EVIDENCE
+          </button>
+          {importedEvidence && (
+            <button
+              type="button"
+              onClick={() => {
+                setImportedEvidence(null);
+                setImportError(null);
+              }}
+              title="Stop showing imported snapshot and return to live diagnostics"
+              className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/5 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10"
+            >
+              CLEAR IMPORT
+            </button>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleImportEvidenceFile}
+          />
         </div>
       </div>
+
+      {(exportWarnings.length > 0 || importError || importedEvidence) && (
+        <div className="mb-3 space-y-1">
+          {exportWarnings.length > 0 && (
+            <div className="rounded border border-amber-400/40 bg-amber-500/10 p-2 text-[10px] text-amber-200">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="font-semibold uppercase tracking-wider">
+                  Export validation: {exportWarnings.length} warning{exportWarnings.length === 1 ? "" : "s"}
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => exportCameraEvidence({ force: true })}
+                    className="rounded border border-amber-300/40 bg-amber-400/10 px-1.5 py-0.5 hover:bg-amber-400/20"
+                  >
+                    Download anyway
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExportWarnings([])}
+                    className="rounded border border-white/20 bg-white/5 px-1.5 py-0.5 hover:bg-white/10"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+              <ul className="list-disc pl-4">
+                {exportWarnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {importError && (
+            <div className="rounded border border-red-400/40 bg-red-500/10 p-2 text-[10px] text-red-200">
+              Import error: {importError}
+            </div>
+          )}
+          {importedEvidence && (
+            <div className="rounded border border-sky-400/40 bg-sky-500/10 p-2 text-[10px] text-sky-200">
+              Showing IMPORTED evidence from{" "}
+              <span className="font-semibold">{importedEvidence.timestamp ?? "unknown time"}</span>{" "}
+              (schema v{importedEvidence.evidenceSchemaVersion ?? "?"}). Live diagnostics paused
+              below.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* CAMERA SECTION */}
       <div className="mb-3 border-l-2 border-cyan-500/50 pl-2">
