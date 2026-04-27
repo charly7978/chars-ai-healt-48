@@ -36,6 +36,15 @@ import {
   AdaptiveAcquisitionThresholds,
   type AdaptiveProfileSnapshot,
 } from "./camera/AdaptiveAcquisitionThresholds";
+import {
+  buildAdaptiveKey,
+  loadAdaptiveRecord,
+  saveAdaptiveRecord,
+} from "./camera/AdaptiveThresholdsStore";
+import {
+  NoFingerSelfTest,
+  type NoFingerSelfTestReport,
+} from "./diagnostics/NoFingerSelfTest";
 
 export interface UsePPGMeasurementResult {
   videoRef: RefObject<HTMLVideoElement>;
