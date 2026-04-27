@@ -135,8 +135,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const cameraRef = useRef<PPGCameraState>(createEmptyCameraState());
   const rawSamplesRef = useRef<PPGOpticalSample[]>([]);
   const channelsRef = useRef<FusedPPGChannels[]>([]);
-  const qualityRef = useRef<PPGSignalQuality | null>(null);
-  const beatsRef = useRef<BeatDetectionResult | null>(null);
+  const qualityRef = useRef<PPGSignalQuality>(createEmptySignalQuality());
+  const beatsRef = useRef<BeatDetectionResult>(emptyBeats());
   const publishedRef = useRef<PublishedPPGMeasurement>(
     createEmptyPublishedPPGMeasurement(cameraRef.current),
   );
