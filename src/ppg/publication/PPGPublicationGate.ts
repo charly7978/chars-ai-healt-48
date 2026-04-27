@@ -341,7 +341,9 @@ export class PPGPublicationGate {
       contactStateOk;
 
     if (!camera.cameraReady) reasons.add("CAMERA_NOT_READY");
-    if (!torchCondition) reasons.add("TORCH_NOT_ENABLED");
+    if (!acquisitionReady) reasons.add("ACQUISITION_NOT_READY");
+    if (!camera.torchAvailable) reasons.add("TORCH_REQUIRED_NOT_AVAILABLE");
+    if (camera.torchAvailable && !camera.torchEnabled) reasons.add("TORCH_NOT_ENABLED");
     if (bufferMs < 6000 || selectedDurationMs < 6000) reasons.add("BUFFER_LT_6S");
     if (bufferMs < 10000) reasons.add("BUFFER_LT_10S_PREFERRED");
     if (!enoughBeats) reasons.add("NOT_ENOUGH_VALID_BEATS");
