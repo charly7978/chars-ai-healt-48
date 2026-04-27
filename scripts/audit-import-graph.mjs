@@ -314,7 +314,6 @@ writeFileSync(
   join(OUT_DIR, "import-graph.json"),
   JSON.stringify(
     {
-      generatedAt: new Date().toISOString(),
       entrypoints: {
         html: ["index.html"],
         runtime: runtimeEntries,
