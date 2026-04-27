@@ -836,7 +836,64 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
             <span className={roi.channelUsable.g ? "text-emerald-400" : "text-red-400"}>G</span>{" "}
             <span className={roi.channelUsable.b ? "text-emerald-400" : "text-red-400"}>B</span>
           </span>
+          <span className="text-white/55">sat R/G/B</span>
+          <span className="font-mono">
+            {(roi.redSaturationRatio * 100).toFixed(0)}/
+            {(roi.greenSaturationRatio * 100).toFixed(0)}/
+            {(roi.blueSaturationRatio * 100).toFixed(0)}%
+          </span>
+          <span className="text-white/55">clipped (3-ch)</span>
+          <span className={roi.clippedPixelRatio < 0.05 ? "text-emerald-400" : "text-red-400"}>
+            {(roi.clippedPixelRatio * 100).toFixed(1)}%
+          </span>
+          <span className="text-white/55">texture</span>
+          <span className={roi.textureScore >= 0.2 ? "text-emerald-400" : roi.textureScore >= 0.1 ? "text-amber-300" : "text-red-400"}
+            title="Mean |∇G|. Low = surface plana / no es dedo real.">
+            {fmt(roi.textureScore, 2)}
+          </span>
+          <span className="text-white/55">uniformity</span>
+          <span>{fmt(roi.uniformityScore, 2)}</span>
+          <span className="text-white/55">luma Δ</span>
+          <span className={roi.luminanceDelta < 0.03 ? "text-emerald-400" : "text-amber-300"}>
+            {fmt(roi.luminanceDelta, 3)}
+          </span>
+          <span className="text-white/55">centroid drift</span>
+          <span className={roi.centroidDrift < 0.2 ? "text-emerald-400" : roi.centroidDrift < 0.35 ? "text-amber-300" : "text-red-400"}>
+            {fmt(roi.centroidDrift, 2)}
+          </span>
+          <span className="text-white/55">motion artifact</span>
+          <span className={roi.motionArtifactScore < 0.3 ? "text-emerald-400" : "text-red-400"}>
+            {fmt(roi.motionArtifactScore, 2)}
+          </span>
+          <span className="text-white/55">pressure state</span>
+          <span
+            className={
+              roi.pressureState === "optimal"
+                ? "text-emerald-400"
+                : roi.pressureState === "low_pressure" || roi.pressureState === "high_pressure"
+                  ? "text-amber-300"
+                  : "text-red-400"
+            }
+          >
+            {roi.pressureState.replace("_", " ").toUpperCase()}
+          </span>
         </div>
+        {roi.userGuidance && (
+          <div
+            className={`mt-2 rounded border px-2 py-1 text-[11px] ${
+              roi.contactState === "stable"
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-100"
+            }`}
+          >
+            👉 {roi.userGuidance}
+          </div>
+        )}
+        {roi.reason.length > 0 && (
+          <div className="mt-1 text-[10px] text-white/55">
+            reasons: <span className="text-amber-300">{roi.reason.join(" · ")}</span>
+          </div>
+        )}
         {/* Tile heatmap (5x5). Green = usable, amber = marginal, red = clipped. */}
         {roi.tiles.length > 0 && (
           <div className="mt-2">
