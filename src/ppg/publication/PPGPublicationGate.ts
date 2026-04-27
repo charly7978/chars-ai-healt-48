@@ -454,6 +454,60 @@ export class PPGPublicationGate {
       }
     }
 
+    // ---------- Forensic decision log ----------
+    // Reverse-engineer "passed" vs "blocked" from the same booleans the
+    // gate already uses. This keeps the log in 1-to-1 sync with the real
+    // decision logic — there is no second copy to drift.
+    const passed: string[] = [];
+    const blocked: string[] = [];
+    const rec = (label: string, ok: boolean) => (ok ? passed : blocked).push(label);
+    rec("CAMERA_READY", camera.cameraReady);
+    rec("TORCH_OK", torchCondition);
+    rec("BUFFER_GTE_6S", bufferMs >= 6000 && selectedDurationMs >= 6000);
+    rec("ENOUGH_BEATS", enoughBeats);
+    rec("ESTIMATORS_AGREE", agreementOk);
+    rec("SATURATION_OK", saturationOk);
+    rec("PERFUSION_OK", perfusionOk);
+    rec("RR_CONSISTENT", quality.rrConsistency >= 0.4);
+    rec("BEAT_CONFIDENCE_OK", beats.confidence >= 0.45);
+    rec("FPS_QUALITY_OK", fpsQualityOk);
+    rec("TILE_GATE_OK", tileGateOk);
+    rec("CONTACT_STATE_OK", contactStateOk);
+    rec("TOTAL_SCORE_GTE_60", quality.totalScore >= 60);
+    rec("BAND_POWER_GTE_30", quality.bandPowerRatio >= 0.30);
+    rec("CONTACT_SCORE_GTE_45", roi.contactScore >= 0.45);
+    rec("HYSTERESIS_STREAK_GTE_2", this.goodWindowStreak >= 2);
+    rec("BPM_NON_NULL", beats.bpm !== null);
+
+    const publicationDecisionLog: PublishedPPGMeasurement["publicationDecisionLog"] = {
+      decision: canPublishVitals ? "PUBLISH" : "BLOCK",
+      passed,
+      blocked,
+      metrics: {
+        totalScore: quality.totalScore,
+        bandPowerRatio: quality.bandPowerRatio,
+        perfusionIndex: quality.acDcPerfusionIndex,
+        saturationPenalty: quality.saturationPenalty,
+        rrConsistency: quality.rrConsistency,
+        beatConfidence: beats.confidence,
+        estimatorAgreementBpm,
+        estimatorsAvailable,
+        goodWindowStreak: this.goodWindowStreak,
+        fpsQuality,
+        bufferMs,
+        usableTileCount: roi.usableTileCount,
+        tileCount: roi.tileCount,
+      },
+      thresholds: {
+        totalScoreMin: 60, bandPowerRatioMin: 0.30, perfusionMin: 0.02,
+        saturationMax: 0.55, rrConsistencyMin: 0.4, beatConfidenceMin: 0.45,
+        agreementMaxBpm: 8, goodWindowStreakMin: 2, fpsQualityMin: 40,
+        bufferMsMin: 6000, usableTilesMin: 6,
+      },
+      lastSelectedChannel: channels.selectedName,
+      channelSelectionReason: channels.selectionReason,
+    };
+
     return {
       state,
       canPublishVitals,
@@ -494,6 +548,7 @@ export class PPGPublicationGate {
       lastValidBpm: this.lastValidBpm,
       staleSinceMs,
       staleBadge,
+      publicationDecisionLog,
     };
   }
 }
