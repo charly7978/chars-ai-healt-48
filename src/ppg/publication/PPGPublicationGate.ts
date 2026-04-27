@@ -209,6 +209,13 @@ export class PPGPublicationGate {
     selectedSeries: TimeSample[];
     /** 0..100 — sampler cadence quality (rVFC jitter / dropped frames). */
     fpsQuality?: number;
+    /**
+     * Adaptive per-device thresholds learned from real telemetry. When
+     * omitted, the safety floor (legacy fixed thresholds) is used. The
+     * adaptive engine guarantees thresholds NEVER drop below this floor,
+     * so passing it can only TIGHTEN publication — never relax it.
+     */
+    adaptiveThresholds?: AdaptiveThresholds;
   }): PublishedPPGMeasurement {
     const {
       camera,
@@ -219,7 +226,9 @@ export class PPGPublicationGate {
       opticalSamples,
       selectedSeries,
       fpsQuality = 100,
+      adaptiveThresholds,
     } = params;
+    const thr = adaptiveThresholds ?? ADAPTIVE_SAFETY_FLOOR;
     const reasons = new Set<string>(quality.reasons);
     const bufferMs = opticalSamples.length >= 2 ? opticalSamples[opticalSamples.length - 1].t - opticalSamples[0].t : 0;
     const selectedDurationMs = durationMs(selectedSeries);
