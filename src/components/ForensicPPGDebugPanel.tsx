@@ -285,13 +285,41 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
             beats.bpm === null &&
             (beats.fftBpm ?? null) === null &&
             (beats.autocorrBpm ?? null) === null;
+
+          // Diagnose why the detector hasn't produced beats yet.
+          const sampleCount = measurement.channels.length;
+          const fps = frameStats.measuredFps || 0;
+          const windowSec = fps > 0 ? sampleCount / fps : 0;
+          const reasons: string[] = [];
+          if (!camera.streamActive) reasons.push("camera not streaming");
+          else if (!roi.accepted) reasons.push(`ROI rejected (${roi.reason[0] ?? "no contact"})`);
+          else if (sampleCount < 40) reasons.push(`window not filled (${sampleCount}/40 samples)`);
+          else if (windowSec < 3.5) reasons.push(`window too short (${windowSec.toFixed(1)}s/3.5s)`);
+          else if (Number.isFinite(quality.snrDb) && quality.snrDb < 0) reasons.push(`SNR too low (${quality.snrDb.toFixed(1)} dB)`);
+          else if (quality.bandPowerRatio < 0.15) reasons.push(`band power weak (${quality.bandPowerRatio.toFixed(2)})`);
+          else if (quality.totalScore < 30) reasons.push(`SQI below threshold (${quality.totalScore.toFixed(0)})`);
+          else reasons.push("threshold not reached — peak prominence insufficient");
+
+          const statusLine = (
+            <div className="mb-1 text-[10px] text-white/55">
+              <span className="text-white/40">status:</span>{" "}
+              <span className={noBeatsYet ? "text-amber-300" : "text-emerald-300"}>
+                {noBeatsYet ? reasons[0] : "detecting beats"}
+              </span>
+            </div>
+          );
+
           if (noBeatsYet) {
             return (
-              <div className="text-[10px] italic text-white/40">
-                awaiting first beat — detector idle
-              </div>
+              <>
+                {statusLine}
+                <div className="text-[10px] italic text-white/40">
+                  awaiting first beat — detector idle
+                </div>
+              </>
             );
           }
+
           const fmtBpm = (v: number | null | undefined) =>
             v === null || v === undefined ? "awaiting…" : fmt(v, 1);
           return (
