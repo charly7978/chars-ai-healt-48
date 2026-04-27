@@ -1,5 +1,6 @@
 import type { PPGOpticalSample } from "./RadiometricPPGExtractor";
 import {
+  autocorrBpm,
   clamp,
   mean,
   preprocessPPG,
