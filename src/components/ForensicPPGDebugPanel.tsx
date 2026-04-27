@@ -39,6 +39,26 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
   const frameStats = measurement.frameStats;
   const beats = measurement.beats;
 
+  // Track RR consistency history for trend arrow.
+  const rrConsistencyHistoryRef = useRef<number[]>([]);
+  const rrCount = beats.rrIntervalsMs.length;
+  if (rrCount >= 2 && Number.isFinite(quality.rrConsistency)) {
+    const hist = rrConsistencyHistoryRef.current;
+    const last = hist[hist.length - 1];
+    if (last === undefined || Math.abs(last - quality.rrConsistency) > 1e-6) {
+      hist.push(quality.rrConsistency);
+      if (hist.length > 5) hist.shift();
+    }
+  }
+  const rrTrend: "up" | "down" | "flat" | null = (() => {
+    const hist = rrConsistencyHistoryRef.current;
+    if (hist.length < 2) return null;
+    const delta = hist[hist.length - 1] - hist[0];
+    if (delta > 0.02) return "up";
+    if (delta < -0.02) return "down";
+    return "flat";
+  })();
+
   const exportJson = () => {
     const auditData = {
       timestamp: new Date().toISOString(),
