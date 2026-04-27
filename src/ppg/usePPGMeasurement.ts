@@ -246,6 +246,79 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         }));
       }
 
+      // ============================================================
+      // FORENSIC HARD GATE: block ROI/PPG/publication unless every
+      // hardware precondition is satisfied. No soft fallbacks.
+      // ============================================================
+      const cam = cameraRef.current;
+      const samplerStats = frameStatsRef.current;
+      const video = videoRef.current;
+      const videoReady = video !== null && video.readyState >= 2 &&
+        video.videoWidth > 0 && video.videoHeight > 0;
+      const decodedFramesOk = samplerStats.frameCount >= 30;
+      const fpsOk = samplerStats.fpsQuality >= 50 && samplerStats.measuredFps >= 18;
+      const jitterOk = samplerStats.jitterMs <= 14;
+      const torchRequested = cam.torchAvailable === true;
+      const torchOk = !torchRequested || cam.torchEnabled === true;
+      const streamOk = cam.streamActive === true && cam.cameraReady === true;
+
+      const gateReasons: string[] = [];
+      if (!videoReady) gateReasons.push("video-not-decoding");
+      if (!decodedFramesOk) gateReasons.push(`warmup-frames<30 (${samplerStats.frameCount})`);
+      if (!fpsOk) gateReasons.push(`fps-quality<50 (q=${samplerStats.fpsQuality},fps=${samplerStats.measuredFps.toFixed(1)})`);
+      if (!jitterOk) gateReasons.push(`jitter>14ms (${samplerStats.jitterMs.toFixed(1)})`);
+      if (!streamOk) gateReasons.push("stream-not-live");
+      if (!torchOk) gateReasons.push("torch-requested-but-not-applied");
+
+      const acquisitionReadyNow = gateReasons.length === 0;
+
+      // Sync controller state (mark/clear acquisitionReady) and refresh local
+      // cameraRef snapshot so downstream UI/publication see the truth.
+      if (acquisitionReadyNow && !cam.acquisitionReady) {
+        cameraControllerRef.current.markAcquisitionReady({
+          warmupFrames: samplerStats.frameCount,
+          warmupJitterMs: samplerStats.jitterMs,
+          warmupFpsStdMs: samplerStats.sampleIntervalStdMs,
+          fpsReal: samplerStats.measuredFps,
+        });
+        cameraRef.current = cameraControllerRef.current.getState();
+      } else if (!acquisitionReadyNow && cam.acquisitionReady) {
+        cameraControllerRef.current.clearAcquisitionReady(gateReasons);
+        cameraRef.current = cameraControllerRef.current.getState();
+      }
+
+      if (!acquisitionReadyNow) {
+        // Hard gate: do NOT touch extractor / fusion / beats / publication.
+        // Only refresh published snapshot so the HUD shows the rejection.
+        const prev = publishedRef.current;
+        const staleSinceMs = prev.lastValidTimestamp !== null
+          ? Math.max(0, frame.timestampMs - prev.lastValidTimestamp)
+          : 0;
+        publishedRef.current = {
+          ...prev,
+          state: cam.cameraReady ? "CAMERA_READY_NO_PPG" : "CAMERA_STARTING",
+          canPublishVitals: false,
+          canVibrateBeat: false,
+          bpm: null,
+          bpmConfidence: 0,
+          oxygen: { ...prev.oxygen, spo2: null, confidence: 0, canPublish: false, reasons: ["ACQUISITION_NOT_READY"] },
+          waveformSource: "NONE",
+          beatMarkers: [],
+          withheldBeatMarkers: [],
+          quality: createEmptySignalQuality(gateReasons),
+          evidence: {
+            ...prev.evidence,
+            camera: cameraRef.current,
+          },
+          message: `ADQUISICIÓN NO LISTA: ${gateReasons.join(" | ")}`,
+          lastValidTimestamp: null,
+          staleSinceMs,
+          staleBadge: prev.lastValidTimestamp === null ? "never" : staleSinceMs <= 6000 ? "stale" : "expired",
+        };
+        publishUiSnapshot();
+        return;
+      }
+
       const sample = extractorRef.current.processFrame(frame);
 
       // Always refresh ROI evidence for diagnostics, even if frame rejected.
@@ -256,8 +329,21 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         // Refresh published.evidence.roi so HUD reflects current camera state
         if (lastEvidence) {
           const prev = publishedRef.current;
+          const staleSinceMs = prev.lastValidTimestamp !== null
+            ? Math.max(0, frame.timestampMs - prev.lastValidTimestamp)
+            : 0;
           publishedRef.current = {
             ...prev,
+            state: "CAMERA_READY_NO_PPG",
+            canPublishVitals: false,
+            canVibrateBeat: false,
+            bpm: null,
+            bpmConfidence: 0,
+            oxygen: { ...prev.oxygen, spo2: null, confidence: 0, canPublish: false, reasons: [lastRejectionMsg ?? "ROI_NOT_ACCEPTED"] },
+            waveformSource: "NONE",
+            beatMarkers: [],
+            withheldBeatMarkers: [],
+            quality: createEmptySignalQuality([...(lastEvidence.reason ?? []), lastRejectionMsg ?? "ROI_NOT_ACCEPTED"]),
             evidence: {
               ...prev.evidence,
               camera: cameraRef.current,
@@ -266,6 +352,9 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
             message: lastRejectionMsg
               ? `SIN MUESTRA PPG: ${lastRejectionMsg}`
               : prev.message,
+            lastValidTimestamp: null,
+            staleSinceMs,
+            staleBadge: prev.lastValidTimestamp === null ? "never" : staleSinceMs <= 6000 ? "stale" : "expired",
           };
         }
         publishUiSnapshot();
@@ -327,7 +416,26 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     resetProcessors();
     publishUiSnapshot(true);
 
-    const cameraState = await cameraControllerRef.current.start();
+    const video = videoRef.current;
+    if (!video) {
+      console.error("[usePPGMeasurement] videoRef.current is null");
+      activeRef.current = false;
+      publishUiSnapshot(true);
+      return;
+    }
+
+    let cameraState;
+    try {
+      // Forensic: open camera + torch SYNCHRONOUSLY from the user gesture so
+      // the browser preserves user-activation needed to enable the flashlight.
+      cameraState = await cameraControllerRef.current.startFromGesture(video);
+    } catch (e) {
+      console.error("[usePPGMeasurement] startFromGesture failed:", e);
+      activeRef.current = false;
+      publishUiSnapshot(true);
+      return;
+    }
+
     cameraRef.current = cameraState;
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraState);
     publishUiSnapshot(true);
@@ -339,33 +447,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       return;
     }
 
-    if (!videoRef.current) {
-      console.error("[usePPGMeasurement] videoRef.current is null");
-      activeRef.current = false;
-      publishUiSnapshot(true);
-      return;
-    }
-
-    const video = videoRef.current;
-    video.srcObject = cameraState.stream;
-    video.muted = true;
-    video.playsInline = true;
-
-    try {
-      await video.play();
-    } catch (e) {
-      console.error("[usePPGMeasurement] video.play() failed:", e);
-      cameraRef.current = {
-        ...cameraRef.current,
-        error: "Failed to start video playback",
-      };
-      publishedRef.current = createEmptyPublishedPPGMeasurement(cameraRef.current);
-      activeRef.current = false;
-      publishUiSnapshot(true);
-      return;
-    }
-
-    // Wait for video to be fully ready (HAVE_CURRENT_DATA = 2)
+    // Wait until the bound video element is decoding frames.
     if (video.readyState < 2) {
       await new Promise<void>((resolve) => {
         const check = () => {

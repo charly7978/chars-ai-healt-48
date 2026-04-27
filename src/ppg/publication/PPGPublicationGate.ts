@@ -60,10 +60,23 @@ export interface PublishedPPGMeasurement {
   goodWindowStreak: number;
   lastValidTimestamp: number | null;
   rejectedBeatCandidates: number;
-  /** True if showing last valid BPM due to lost signal */
-  staleBadge: boolean;
-  /** Seconds since last valid BPM update */
-  secondsSinceLastValid: number;
+  /**
+   * Stale-publication contract:
+   *   - `bpm` above is ALWAYS the freshly validated value (or null if the
+   *     current window does not pass the gate). It is NEVER backfilled.
+   *   - `lastValidBpm` mirrors the last gate-approved BPM. UI may display
+   *     it dimmed when `staleBadge !== "fresh"`.
+   *   - `staleSinceMs` = (now − lastValidTimestamp). 0 when fresh, growing
+   *     while we wait for the next valid window.
+   *   - `staleBadge` discrete state for the UI:
+   *       "fresh"   → current window valid
+   *       "stale"   → 0 < staleSinceMs ≤ 6000
+   *       "expired" → staleSinceMs > 6000  (do not trust)
+   *       "never"   → no valid window has ever been published in this session
+   */
+  lastValidBpm: number | null;
+  staleSinceMs: number;
+  staleBadge: "fresh" | "stale" | "expired" | "never";
 }
 
 const NO_SIGNAL_MESSAGE = "SIN SENAL PPG VERIFICABLE";
@@ -161,8 +174,9 @@ export function createEmptyPublishedPPGMeasurement(
     goodWindowStreak: 0,
     lastValidTimestamp: null,
     rejectedBeatCandidates: 0,
-    staleBadge: false,
-    secondsSinceLastValid: 0,
+    lastValidBpm: null,
+    staleSinceMs: 0,
+    staleBadge: "never",
   };
 }
 
@@ -170,13 +184,15 @@ export class PPGPublicationGate {
   private goodWindowStreak = 0;
   private lastWindowBucket = -1;
   private wasValid = false;
-  private lastValidTimestampInternal: number | null = null;
+  private lastValidBpm: number | null = null;
+  private lastValidAtMs: number | null = null;
 
   reset(): void {
     this.goodWindowStreak = 0;
     this.lastWindowBucket = -1;
     this.wasValid = false;
-    this.lastValidTimestampInternal = null;
+    this.lastValidBpm = null;
+    this.lastValidAtMs = null;
   }
 
   evaluate(params: {
@@ -207,7 +223,8 @@ export class PPGPublicationGate {
     const bradycardiaWindowAllowed =
       beats.bpm !== null && beats.bpm < 45 && bufferMs >= 14000 && validBeats.length >= 4;
     const enoughBeats = validBeats.length >= 5 || bradycardiaWindowAllowed;
-    const torchCondition = !camera.torchAvailable || camera.torchEnabled;
+    const torchCondition = !camera.torchAvailable || (camera.torchEnabled && camera.torchApplied);
+    const acquisitionCondition = camera.acquisitionReady === true;
     const saturationOk = quality.saturationPenalty <= 0.55;
     const perfusionOk = quality.acDcPerfusionIndex >= 0.02;
     // Multi-estimator agreement (informative, not a hard binary lock)
@@ -232,8 +249,8 @@ export class PPGPublicationGate {
     // Tile-based hard gate: BPM/SpO2 require enough usable optical real estate.
     const tileGateOk = roi.usableTileCount >= 6 && roi.roiStabilityScore >= 0.4;
     // Contact state veto for any heart-rate publication.
-    const contactStateOk =
-      roi.contactState === "stable" || roi.contactState === "partial";
+    const contactStateOk = roi.accepted === true && roi.contactState === "stable";
+    const pressureOk = roi.pressureState === "optimal";
 
     const coreQualityPass =
       quality.totalScore >= 60 &&
@@ -246,9 +263,12 @@ export class PPGPublicationGate {
       beats.confidence >= 0.45 &&
       fpsQualityOk &&
       tileGateOk &&
-      contactStateOk;
+      contactStateOk &&
+      pressureOk &&
+      acquisitionCondition;
 
     if (!camera.cameraReady) reasons.add("CAMERA_NOT_READY");
+    if (!acquisitionCondition) reasons.add(`ACQUISITION_NOT_READY_${camera.notReadyReasons?.join("+") || "UNKNOWN"}`);
     if (!torchCondition) reasons.add("TORCH_NOT_ENABLED");
     if (bufferMs < 6000 || selectedDurationMs < 6000) reasons.add("BUFFER_LT_6S");
     if (bufferMs < 10000) reasons.add("BUFFER_LT_10S_PREFERRED");
@@ -260,7 +280,8 @@ export class PPGPublicationGate {
     if (quality.rrConsistency < 0.4) reasons.add("RR_CHAOTIC_OR_INSUFFICIENT");
     if (!fpsQualityOk) reasons.add(`FPS_QUALITY_LOW_${fpsQuality.toFixed(0)}`);
     if (!tileGateOk) reasons.add(`TILE_GATE_FAIL_${roi.usableTileCount}/${roi.tileCount}`);
-    if (!contactStateOk) reasons.add(`CONTACT_STATE_${roi.contactState.toUpperCase()}`);
+    if (!contactStateOk) reasons.add(`CONTACT_NOT_ACCEPTED_${roi.contactState.toUpperCase()}`);
+    if (!pressureOk) reasons.add(`PRESSURE_${roi.pressureState.toUpperCase()}`);
 
     const now = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
     const windowBucket = Math.floor(now / 2000);
@@ -293,6 +314,7 @@ export class PPGPublicationGate {
     const canPublishVitals =
       state === "PPG_VALID" &&
       camera.cameraReady &&
+      acquisitionCondition &&
       torchCondition &&
       bufferMs >= 6000 &&
       selectedDurationMs >= 6000 &&
@@ -320,9 +342,8 @@ export class PPGPublicationGate {
 
     const waveformSource: PublishedPPGMeasurement["waveformSource"] = canPublishVitals
       ? "REAL_PPG"
-      : hasRealData && selectedSeries.length >= 3
-        ? "RAW_DEBUG_ONLY"
-        : "NONE";
+      : "NONE";
+    void hasRealData;
 
     // SpO2 needs BOTH red AND green to be optically valid (Ratio-of-Ratios).
     // If red is saturated under flash but green is fine, we still publish BPM
@@ -341,30 +362,39 @@ export class PPGPublicationGate {
       }
     }
 
-    // Stale badge logic: track last valid BPM timestamp
+    const nowMs = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
     let lastValidTimestamp: number | null = null;
     if (canPublishVitals && beats.bpm !== null) {
-      lastValidTimestamp = now;
-      this.lastValidTimestampInternal = now;
+      lastValidTimestamp = nowMs;
+      this.lastValidBpm = Math.round(beats.bpm);
+      this.lastValidAtMs = nowMs;
     }
-    
-    // Calculate stale status
-    const secondsSinceLastValid = this.lastValidTimestampInternal 
-      ? (now - this.lastValidTimestampInternal) / 1000 
-      : 0;
-    const staleBadge = !canPublishVitals && this.lastValidTimestampInternal !== null && secondsSinceLastValid < 30;
-    
-    // If stale, show last valid BPM with badge
-    const bpmToShow = canPublishVitals 
-      ? (beats.bpm !== null ? Math.round(beats.bpm) : null)
-      : (staleBadge && beats.peakBpm !== null ? Math.round(beats.peakBpm) : null);
+
+    // Stale-publication ledger. NEVER substitutes the fresh `bpm` value —
+    // only exposes "what was the last valid number and how old is it" so
+    // the UI can render a dimmed "stale 3.2s" badge instead of a number
+    // that looks fresh.
+    let staleSinceMs = 0;
+    let staleBadge: PublishedPPGMeasurement["staleBadge"] = "never";
+    if (this.lastValidAtMs !== null) {
+      if (canPublishVitals) {
+        staleBadge = "fresh";
+        staleSinceMs = 0;
+      } else {
+        staleSinceMs = Math.max(0, nowMs - this.lastValidAtMs);
+        staleBadge = staleSinceMs <= 6000 ? "stale" : "expired";
+      }
+    }
+
+    // bpm is always the freshly validated value (or null)
+    const bpmToShow = canPublishVitals ? (beats.bpm !== null ? Math.round(beats.bpm) : null) : null;
 
     return {
       state,
       canPublishVitals,
       canVibrateBeat,
       bpm: bpmToShow,
-      bpmConfidence: canPublishVitals ? beats.confidence : (staleBadge ? beats.confidence * 0.5 : 0),
+      bpmConfidence: canPublishVitals ? beats.confidence : (staleBadge === "stale" || staleBadge === "expired" ? beats.confidence * 0.5 : 0),
       oxygen,
       waveformSource,
       beatMarkers: canPublishVitals
@@ -392,12 +422,13 @@ export class PPGPublicationGate {
         reasons: [...new Set([...quality.reasons, ...reasons, ...oxygen.reasons])],
       },
       evidence: { camera, roi, channels },
-      message: canPublishVitals ? "PPG VALIDADA" : (staleBadge ? "PPG DEGRADADA - ÚLTIMO VALOR VÁLIDO" : NO_SIGNAL_MESSAGE),
+      message: canPublishVitals ? "PPG VALIDADA" : (staleBadge !== "never" && staleBadge !== "fresh" ? "PPG DEGRADADA - ÚLTIMO VALOR VÁLIDO" : NO_SIGNAL_MESSAGE),
       goodWindowStreak: this.goodWindowStreak,
       lastValidTimestamp,
       rejectedBeatCandidates: beats.rejectedCandidates,
+      lastValidBpm: this.lastValidBpm,
+      staleSinceMs,
       staleBadge,
-      secondsSinceLastValid,
     };
   }
 }

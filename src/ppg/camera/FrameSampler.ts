@@ -300,7 +300,7 @@ export class FrameSampler {
     }
   }
 
-  private handleFrame(_now: number, metadata?: BrowserVideoFrameMetadata): void {
+  private handleFrame(now: number, metadata?: BrowserVideoFrameMetadata): void {
     if (!this.running || !this.video || !this.callback) {
       if (this.acquisitionMethod !== "intervalFallback") this.scheduleNext();
       return;
@@ -341,7 +341,11 @@ export class FrameSampler {
       // which caused coordinate misalignment in consumers.
       const imageData = this.context.getImageData(0, 0, fullWidth, fullHeight);
 
-      const timestampMs = performance.now();
+      // Use the browser frame timestamp, not post-processing wall time. With
+      // requestVideoFrameCallback this is the frame presentation timestamp;
+      // RAF/interval fall back to their monotonic callback timestamp. This
+      // removes artificial sample-rate jitter from canvas processing latency.
+      const timestampMs = Number.isFinite(now) && now > 0 ? now : performance.now();
       const dt = this.lastTimestampMs > 0 ? timestampMs - this.lastTimestampMs : 0;
       if (dt > 0) this.pushDt(dt);
 

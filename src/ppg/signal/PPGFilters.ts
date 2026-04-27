@@ -274,46 +274,102 @@ export function onePoleLowPass(samples: TimeSample[], cutoffHz: number, fs: numb
 }
 
 /**
- * Band-pass filter using real sample rate (Fs)
- * 
- * FILTER RESPONSE DOCUMENTATION:
- * 
- * Adult standard band: 0.5-4.0 Hz (30-240 BPM)
- * Extended debug band: 0.3-5.0 Hz (18-300 BPM) - configurable
- * 
- * Implementation: cascaded one-pole IIR (EMA high-pass + low-pass)
- * 
- * Phase Response:
- * - Single pole IIR has non-linear phase near cutoff
- * - For peak timing: this is acceptable because PPG morphology is 
- *   preserved (steep slopes maintained)
- * - If precise timing is critical, use zero-phase filtering (filtfilt)
- *   but this adds latency (non-causal)
- * 
- * Magnitude Response:
- * - High-pass (detrendEma): -3dB at cutoff, -6dB/octave rolloff
- * - Low-pass (onePoleLowPass): -3dB at cutoff, -6dB/octave rolloff
- * - Combined: bandpass with gentle skirts
- * 
- * Group Delay:
- * - Max delay ≈ 1/(2π·fc) at cutoff frequency
- * - For fc=0.5Hz: ~318ms theoretical delay
- * - In practice: peaks align well due to morphological consistency
- * 
- * Alternative for stricter phase preservation:
- * - Use forward-backward (zero-phase) filtering
- * - Trade-off: adds 2x window latency, not suitable for real-time
- * 
- * @param samples Input time samples
- * @param lowHz High-pass cutoff (Hz) - default 0.5 for adult PPG
- * @param highHz Low-pass cutoff (Hz) - default 4.0 for adult PPG
- * @param fs Sample rate (Hz) - actual measured rate, not assumed 30
+ * Band-pass filter using real sample rate (Fs).
+ *
+ * RESPONSE DOCUMENTATION
+ * ----------------------
+ * - Adult standard PPG band: 0.5–4.0 Hz  (30–240 BPM).
+ * - Configurable extended band: 0.3–5.0 Hz (18–300 BPM, debug only).
+ * - Implementation = HP one-pole (EMA detrend) ∘ LP one-pole.
+ *   Roll-off = ~6 dB/octave each side. Phase distortion is monotonic but
+ *   bounded; for peak-timing accuracy prefer `bandpassZeroPhase`, which
+ *   removes group delay by forward-backward filtering.
+ * - This function is the LEGACY low-cost bandpass (kept for back-compat).
+ *   New code should call `bandpassZeroPhase` for morphology-preserving work.
  */
 export function bandpass(samples: TimeSample[], lowHz: number, highHz: number, fs: number): TimeSample[] {
   // High-pass: remove slow trends (DC drift, respiration < 0.5Hz)
   const highPassed = detrendEma(samples, lowHz, fs);
   // Low-pass: remove high frequency noise (motion > 4Hz, electrical interference)
   return onePoleLowPass(highPassed, highHz, fs);
+}
+
+/**
+ * 2nd-order Butterworth bandpass biquad, applied forward + backward
+ * (filtfilt). Net response: 4th-order magnitude, ZERO phase shift, so
+ * peak-timing in the output sample matches peak-timing in the input — a
+ * hard requirement for beat detection morphology.
+ *
+ * Coefficients derived via the bilinear transform of a Butterworth
+ * bandpass prototype:
+ *   ω0 = 2π·f0/fs,  bw = ω_high − ω_low,  Q = ω0/bw,  α = sin(ω0)/(2Q)
+ *   b0 =  α,  b1 = 0,  b2 = −α
+ *   a0 =  1 + α,  a1 = −2·cos(ω0),  a2 = 1 − α
+ * Reference: RBJ Audio EQ Cookbook, BPF (constant 0 dB peak gain).
+ *
+ * Stability: requires fs > 2·highHz (Nyquist). Caller guarantees fs ≥ 2·highHz.
+ *
+ * NOTE: filtfilt doubles compute (forward + reverse) but is O(n) and
+ * <0.1 ms for 10 s @ 30 Hz, so it is safe for the realtime path.
+ */
+export function bandpassZeroPhase(
+  samples: TimeSample[],
+  lowHz: number,
+  highHz: number,
+  fs: number,
+): TimeSample[] {
+  if (samples.length < 8) return samples;
+  if (!(fs > 0) || !(highHz > lowHz) || !(highHz < fs / 2)) {
+    // Out-of-range coefficients would make the biquad unstable. Fall back
+    // to the documented one-pole bandpass instead of producing NaNs.
+    return bandpass(samples, lowHz, highHz, fs);
+  }
+
+  const f0 = Math.sqrt(lowHz * highHz);
+  const w0 = (2 * Math.PI * f0) / fs;
+  const bw = ((highHz - lowHz) / f0); // bandwidth in octaves-like units
+  const alpha = Math.sin(w0) * Math.sinh((Math.LN2 / 2) * bw * (w0 / Math.sin(w0)));
+
+  const a0 = 1 + alpha;
+  const b0 = alpha / a0;
+  const b1 = 0;
+  const b2 = -alpha / a0;
+  const a1 = (-2 * Math.cos(w0)) / a0;
+  const a2 = (1 - alpha) / a0;
+
+  if (!Number.isFinite(b0) || !Number.isFinite(a1) || !Number.isFinite(a2)) {
+    return bandpass(samples, lowHz, highHz, fs);
+  }
+
+  const n = samples.length;
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) x[i] = samples[i].value;
+
+  // Forward pass
+  const y = new Float32Array(n);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < n; i += 1) {
+    const xi = x[i];
+    const yi = b0 * xi + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    y[i] = yi;
+    x2 = x1; x1 = xi;
+    y2 = y1; y1 = yi;
+  }
+
+  // Reverse pass (zero-phase)
+  const z = new Float32Array(n);
+  x1 = 0; x2 = 0; y1 = 0; y2 = 0;
+  for (let i = n - 1; i >= 0; i -= 1) {
+    const xi = y[i];
+    const yi = b0 * xi + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    z[i] = yi;
+    x2 = x1; x1 = xi;
+    y2 = y1; y1 = yi;
+  }
+
+  const out: TimeSample[] = new Array(n);
+  for (let i = 0; i < n; i += 1) out[i] = { t: samples[i].t, value: z[i] };
+  return out;
 }
 
 /**
@@ -341,8 +397,12 @@ export function preprocessPPGRobust(
   // Apply Hampel filter for outliers
   const cleaned = hampel(resampled.samples, 5, 3);
 
-  // Band-pass with real Fs
-  const filtered = bandpass(cleaned, lowHz, highHz, fs);
+  // Zero-phase bandpass when fs supports it (preserves peak timing for
+  // beat detection). Falls back to one-pole bandpass if fs is too low.
+  const filtered =
+    fs > 2 * highHz + 1
+      ? bandpassZeroPhase(cleaned, lowHz, highHz, fs)
+      : bandpass(cleaned, lowHz, highHz, fs);
 
   // Robust normalization
   const normalized = robustNormalize(filtered);
