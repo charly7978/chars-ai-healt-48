@@ -630,6 +630,14 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
             SIGNAL
           </span>
           <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
+            {measurement.camera.acquisitionReady ? (
+              <CheckCircle className="h-3.5 w-3.5 text-emerald-300" />
+            ) : (
+              <XCircle className="h-3.5 w-3.5 text-red-400" />
+            )}
+            ACQ
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
             {measurement.published.canPublishVitals ? (
               <CheckCircle className="h-3.5 w-3.5 text-emerald-300" />
             ) : (
