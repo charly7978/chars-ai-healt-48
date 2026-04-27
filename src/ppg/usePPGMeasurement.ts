@@ -459,6 +459,35 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       qualityRef.current = signalQuality;
       publishedRef.current = publishedMeasurement;
 
+      // Forensic self-test on the active path too: even when ROI is accepted
+      // we re-classify the scene optically. If hemoglobin signature is missing
+      // but the gate published vitals, that's logged as a violation.
+      noFingerSelfTestRef.current.observe({
+        t: frame.timestampMs,
+        roi: sample.roiEvidence,
+        published: publishedMeasurement,
+      });
+
+      // Periodic persistence of derived adaptive thresholds (every 4s, only
+      // when the engine has converged). On the next session this hot-starts
+      // the gate — same device, same camera, no warmup wait.
+      if (
+        adaptivePersistKeyRef.current &&
+        frame.timestampMs - lastAdaptivePersistAtRef.current > 4000
+      ) {
+        const exported = adaptiveThresholdsRef.current.exportRecord();
+        if (exported) {
+          const cam = cameraRef.current;
+          saveAdaptiveRecord({
+            key: adaptivePersistKeyRef.current,
+            deviceId: cam.selectedDeviceId,
+            cameraLabel: cam.diagnostics?.selectedDevice?.label ?? "",
+            ...exported,
+          });
+          lastAdaptivePersistAtRef.current = frame.timestampMs;
+        }
+      }
+
       if (publishedMeasurement.canVibrateBeat) {
         const lastBeat = beatResult.beats[beatResult.beats.length - 1];
         if (
