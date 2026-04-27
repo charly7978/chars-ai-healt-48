@@ -793,6 +793,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     quality,
     beats,
     published,
+    calibration,
+    repositionPrompt,
     debug,
   };
 }
