@@ -229,16 +229,61 @@ export class PPGChannelFusion {
     // Enable PCA only if sufficient window (>8s)
     const enablePCA = duration >= 8;
 
+    // Channel-mask aggregate over the recent window: a channel is allowed
+    // ONLY if it was usable in ≥60 % of the recent frames. This keeps
+    // saturated red from injecting garbage even though the mean is fine.
+    const maskUsable = (pick: (m: { r: boolean; g: boolean; b: boolean }) => boolean) =>
+      samples.filter((s) => pick(s.channelMask)).length / samples.length >= 0.6;
+    const rOk = maskUsable((m) => m.r);
+    const gOk = maskUsable((m) => m.g);
+    const bOk = maskUsable((m) => m.b);
+
+    const channelAllowed = (name: ChannelName): boolean => {
+      switch (name) {
+        case "RED_OD":
+          return rOk;
+        case "GREEN_OD":
+          return gOk;
+        case "BLUE_OD":
+          return bOk;
+        case "RG_RATIO_OD":
+          return rOk && gOk;
+        case "CHROM":
+        case "POS":
+        case "PCA_1":
+          // Multi-channel methods require green AT MINIMUM.
+          return gOk;
+      }
+    };
+
     for (const config of CHANNEL_CONFIG) {
       if (!config.enabled) continue;
       if (config.name === "PCA_1" && !enablePCA) continue;
       if (config.name === "BLUE_OD") continue; // Skip blue (too noisy)
+      if (!channelAllowed(config.name)) continue;
 
       const series = this.extractChannel(samples, config.name);
       if (series.length < 8) continue;
 
       const metrics = this.calculateChannelMetrics(series, samples, config.name);
       channels.push(metrics);
+    }
+
+    // Second pass: cross-channel agreement + final score normalization.
+    // We need everyone's BPM before we can score agreement, hence two passes.
+    const fftBpms = channels
+      .map((c) => c.fftBpm)
+      .filter((b): b is number => b !== null && Number.isFinite(b));
+    const referenceBpm = fftBpms.length >= 2 ? median(fftBpms) : null;
+
+    for (const ch of channels) {
+      if (referenceBpm !== null && ch.fftBpm !== null) {
+        const diff = Math.abs(ch.fftBpm - referenceBpm);
+        ch.channelAgreement = Math.max(0, 1 - diff / 30);
+      } else {
+        ch.channelAgreement = 0.5; // neutral when not enough channels
+      }
+      this.recomputeFinalScore(ch);
     }
 
     return channels;
