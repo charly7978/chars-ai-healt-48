@@ -199,6 +199,14 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           >
             EXPORT JSON
           </button>
+          <button
+            type="button"
+            onClick={exportCameraEvidence}
+            title="Download camera diagnostics + SpO2 calibration/badge as a single JSON evidence file"
+            className="inline-flex items-center gap-1 rounded border border-fuchsia-500/30 bg-fuchsia-500/10 px-2 py-1 text-[10px] text-fuchsia-200 hover:bg-fuchsia-500/20"
+          >
+            EXPORT CAM EVIDENCE
+          </button>
         </div>
       </div>
 
