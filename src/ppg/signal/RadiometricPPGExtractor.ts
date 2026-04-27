@@ -29,6 +29,11 @@ type Rgb = { r: number; g: number; b: number };
 
 const EPS = 1e-6;
 
+export interface ExtractorRejection {
+  evidence: FingerOpticalEvidence;
+  reason: string;
+}
+
 export class RadiometricPPGExtractor {
   private roiAnalyzer = new FingerOpticalROI();
   private samples: PPGOpticalSample[] = [];
@@ -42,6 +47,10 @@ export class RadiometricPPGExtractor {
   // EMA fallback baseline for startup
   private emaBaseline: Rgb | null = null;
 
+  // Last evidence (for diagnostics even when frame rejected)
+  private lastEvidence: FingerOpticalEvidence | null = null;
+  private lastRejection: string | null = null;
+
   constructor(private readonly maxSeconds = 45) {}
 
   reset(): void {
@@ -50,6 +59,16 @@ export class RadiometricPPGExtractor {
     this.lastTimestamp = 0;
     this.baselineHistory = [];
     this.emaBaseline = null;
+    this.lastEvidence = null;
+    this.lastRejection = null;
+  }
+
+  getLastEvidence(): FingerOpticalEvidence | null {
+    return this.lastEvidence;
+  }
+
+  getLastRejection(): string | null {
+    return this.lastRejection;
   }
 
   /**
