@@ -363,6 +363,13 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       const lastRejectionMsg = extractorRef.current.getLastRejectionMessage();
 
       if (!sample) {
+        // Ambient (finger-OFF) telemetry: when ROI is not accepted AND
+        // contact state is "absent", we are looking at ambient light. Feed
+        // the real RGB into the noise estimator so the adaptive perfusion
+        // floor reflects this device's actual sensor noise — never simulated.
+        if (lastEvidence && lastEvidence.contactState === "absent") {
+          adaptiveThresholdsRef.current.observeAmbientSample(lastEvidence.linearMean);
+        }
         // Refresh published.evidence.roi so HUD reflects current camera state
         if (lastEvidence) {
           const prev = publishedRef.current;
