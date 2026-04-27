@@ -174,6 +174,9 @@ export function createEmptyPublishedPPGMeasurement(
     goodWindowStreak: 0,
     lastValidTimestamp: null,
     rejectedBeatCandidates: 0,
+    lastValidBpm: null,
+    staleSinceMs: 0,
+    staleBadge: "never",
   };
 }
 
@@ -181,11 +184,15 @@ export class PPGPublicationGate {
   private goodWindowStreak = 0;
   private lastWindowBucket = -1;
   private wasValid = false;
+  private lastValidBpm: number | null = null;
+  private lastValidAtMs: number | null = null;
 
   reset(): void {
     this.goodWindowStreak = 0;
     this.lastWindowBucket = -1;
     this.wasValid = false;
+    this.lastValidBpm = null;
+    this.lastValidAtMs = null;
   }
 
   evaluate(params: {
