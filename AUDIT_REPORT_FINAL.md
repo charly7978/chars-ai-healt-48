@@ -9,7 +9,7 @@
 
 ## 📋 MEJORAS RECIENTES (Post-Auditoría)
 
-### Enhanced Multi-Rear PPG Probe
+### 1. Enhanced Multi-Rear PPG Probe
 **Fecha:** 2026-04-27  
 **Archivo:** `src/ppg/camera/PPGCameraController.ts`  
 **Líneas:** 1017-1334
@@ -61,6 +61,44 @@ framesAnalyzed < 45     → -25 points
 1. **DC Component**: Media de serie temporal green (baseline reflectance)
 2. **AC Component**: Desviación estándar (pulsatile variation)
 3. **Perfusion Index**: AC/DC ratio (métrica clínica PPG)
+4. **Signal Stability**: Inverso de DC drift entre primera/segunda mitad
+5. **Temporal SNR**: 10*log10(signalVariance / highFreqNoiseVariance)
+6. **Cardiac Band Power**: Varianza de señal suavizada (~0.5-4Hz banda)
+
+**Estado:** ✅ Implementado y probado
+
+---
+
+### 2. ROI Border Exclusion - Finger Detection Enhancement
+**Fecha:** 2026-04-27  
+**Archivo:** `src/ppg/roi/FingerOpticalROI.ts`  
+**Líneas:** 218-225, 227-228, 285, 506-510
+
+#### Cambios Implementados
+| Aspecto | Anterior | Nuevo |
+|---------|----------|-------|
+| **Análisis espacial** | Frame completo | Exclusión de borde 10% |
+| **Análisis por tiles** | TILE_GRID×TILE_GRID completo | Tiles centrales (excluye 1 tile borde) |
+| **Razón** | Vignetting óptico, errores de placement | Mejor cobertura central real |
+
+#### Implementación
+```typescript
+// Border exclusion: ignore outer 10% of frame edges
+const borderX = Math.floor(width * 0.1);
+const borderY = Math.floor(height * 0.1);
+const xStart = borderX; const xEnd = width - borderX;
+const yStart = borderY; const yEnd = height - borderY;
+
+// Tile analysis excluye bordes
+const tyStart = 1; const tyEnd = TILE_GRID - 1;
+const txStart = 1; const txEnd = TILE_GRID - 1;
+```
+
+**Estado:** ✅ Implementado y probado
+
+---
+
+## 📋 MEJORAS RECIENTES (Post-Auditoría)
 4. **Signal Stability**: Inverso de DC drift entre primera/segunda mitad
 5. **Temporal SNR**: 10*log10(signalVariance / highFreqNoiseVariance)
 6. **Cardiac Band Power**: Varianza de señal suavizada (~0.5-4Hz banda)

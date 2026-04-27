@@ -266,7 +266,7 @@ export class AdaptiveAcquisitionThresholds {
    *  - Hydrated thresholds are the FLOOR for live derivation (we never
    *    publish a relaxed value just because storage said so). The runtime
    *    `derive()` will only RAISE these values, never lower them.
-   *  - We mark the engine as "active" with a small synthetic frameCount equal
+   *  - We mark the engine as "active" with a small seed frameCount equal
    *    to the profiling window. This represents prior real observations on
    *    THIS device — never fake samples; the EMA still tracks live frames
    *    from the very next observeFrame() call.
