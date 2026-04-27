@@ -50,6 +50,7 @@ function buildSamples(opts: BuildOpts): PPGOpticalSample[] {
         b: { median: dc, trimmedMean: dc, p5: dc - 2, p95: dc + 2 },
       },
       dc: { r: dc, g: dc, b: dc },
+      baseline: { r: dc, g: dc, b: dc },
       od: { r: 0.5 + ac * 0.7, g: 0.6 + ac, b: 0.4 + ac * 0.4 },
       ac: { r: ac, g: ac, b: ac * 0.5 },
       acRobust: { r: ac, g: ac, b: ac * 0.5 },
