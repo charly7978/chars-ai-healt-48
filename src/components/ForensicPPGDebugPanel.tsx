@@ -37,6 +37,66 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
   const reasons = measurement.published.quality.reasons;
   const frameStats = measurement.frameStats;
 
+  const exportJson = () => {
+    const auditData = {
+      timestamp: new Date().toISOString(),
+      fpsStats: measurement.fpsStats,
+      frameStats,
+      camera: {
+        streamActive: camera.streamActive,
+        cameraReady: camera.cameraReady,
+        torchEnabled: camera.torchEnabled,
+        settings: cameraSettings,
+      },
+      roi: {
+        accepted: roi.accepted,
+        contactScore: roi.contactScore,
+        illuminationScore: roi.illuminationScore,
+        motionRisk: roi.motionRisk,
+        pressureRisk: roi.pressureRisk,
+        saturationPenalty: quality.saturationPenalty,
+      },
+      beats: {
+        bpm: measurement.beats.bpm,
+        fftBpm: measurement.beats.fftBpm,
+        autocorrBpm: measurement.beats.autocorrBpm,
+        estimatorAgreementBpm: measurement.beats.estimatorAgreementBpm,
+        acceptedCount: measurement.beats.beats.length,
+        rejectedCount: measurement.beats.rejectedCandidates,
+        rrIntervalsMs: measurement.beats.rrIntervalsMs.slice(-10),
+      },
+      quality: {
+        totalScore: quality.totalScore,
+        grade: quality.grade,
+        bandPowerRatio: quality.bandPowerRatio,
+        snrDb: quality.snrDb,
+        rrConsistency: quality.rrConsistency,
+      },
+      publication: {
+        state: measurement.published.state,
+        canPublishVitals: measurement.published.canPublishVitals,
+        bpm: measurement.published.bpm,
+        goodWindowStreak: measurement.published.goodWindowStreak,
+        lastValidTimestamp: measurement.published.lastValidTimestamp,
+      },
+      oxygen: {
+        spo2: oxygen.spo2,
+        confidence: oxygen.confidence,
+        canPublish: oxygen.canPublish,
+      },
+      rawSamplesLast30s: measurement.rawSamples.slice(-Math.floor(30 * frameStats.measuredFps)),
+      channelsLast30s: measurement.channels.slice(-Math.floor(30 * frameStats.measuredFps)),
+    };
+
+    const blob = new Blob([JSON.stringify(auditData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ppg-audit-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Determine status color
   const isAccepted = roi.accepted;
   const statusColor = isAccepted ? "text-emerald-400" : "text-amber-400";
@@ -45,7 +105,16 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
     <div className="max-h-[70vh] w-[min(92vw,520px)] overflow-y-auto rounded-md border border-emerald-400/20 bg-black/88 p-3 font-mono text-[11px] leading-relaxed text-emerald-100 shadow-2xl backdrop-blur-md">
       <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-white">
         <span className="font-semibold">PPG FORENSIC DEBUG</span>
-        <span className={statusColor}>{isAccepted ? "ACCEPTED" : "REJECTED"}</span>
+        <div className="flex items-center gap-2">
+          <span className={statusColor}>{isAccepted ? "ACCEPTED" : "REJECTED"}</span>
+          <button
+            type="button"
+            onClick={exportJson}
+            className="inline-flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-300 hover:bg-emerald-500/20"
+          >
+            EXPORT JSON
+          </button>
+        </div>
       </div>
 
       {/* CAMERA SECTION */}

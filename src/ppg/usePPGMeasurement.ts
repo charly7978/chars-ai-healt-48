@@ -47,6 +47,11 @@ export interface UsePPGMeasurementResult {
     sampleIntervalStdMs: number;
     isActive: boolean;
   };
+  fpsStats: {
+    acquisitionFps: number;
+    processingFps: number;
+    renderFps: number;
+  };
   rawSamples: PPGOpticalSample[];
   channels: FusedPPGChannels[];
   quality: PPGSignalQuality | null;
@@ -137,8 +142,21 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   );
   const frameStatsRef = useRef<FrameSamplerStats>(createEmptyFrameStats());
 
+  // FPS tracking
+  const processingFpsRef = useRef(0);
+  const lastProcessTimeRef = useRef(0);
+  const processCountRef = useRef(0);
+  const renderFpsRef = useRef(0);
+  const lastRenderTimeRef = useRef(0);
+  const renderCountRef = useRef(0);
+
   const [camera, setCamera] = useState<PPGCameraState>(cameraRef.current);
   const [frameStats, setFrameStats] = useState<FrameSamplerStats>(frameStatsRef.current);
+  const [fpsStats, setFpsStats] = useState<UsePPGMeasurementResult["fpsStats"]>({
+    acquisitionFps: 0,
+    processingFps: 0,
+    renderFps: 0,
+  });
   const [rawSamples, setRawSamples] = useState<PPGOpticalSample[]>([]);
   const [channels, setChannels] = useState<FusedPPGChannels[]>([]);
   const [quality, setQuality] = useState<PPGSignalQuality | null>(null);
@@ -206,6 +224,20 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     return (frame: RealFrame) => {
       if (!activeRef.current) return;
       frameStatsRef.current = frameSamplerRef.current.getStats();
+
+      // Track processing FPS
+      const now = performance.now();
+      processCountRef.current++;
+      if (now - lastProcessTimeRef.current >= 1000) {
+        processingFpsRef.current = processCountRef.current;
+        processCountRef.current = 0;
+        lastProcessTimeRef.current = now;
+        setFpsStats((prev) => ({
+          ...prev,
+          acquisitionFps: frameStatsRef.current.measuredFps,
+          processingFps: processingFpsRef.current,
+        }));
+      }
 
       const sample = extractorRef.current.processFrame(frame);
       if (!sample) {
@@ -356,6 +388,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     stop,
     camera,
     frameStats,
+    fpsStats,
     rawSamples,
     channels,
     quality,

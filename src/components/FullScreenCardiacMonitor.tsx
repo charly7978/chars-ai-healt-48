@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   Bug,
   Camera,
+  CheckCircle,
   Flashlight,
   Play,
   RadioTower,
   Square,
+  XCircle,
 } from "lucide-react";
 import type { UsePPGMeasurementResult } from "@/ppg/usePPGMeasurement";
 import ForensicPPGDebugPanel from "./ForensicPPGDebugPanel";
@@ -107,10 +110,22 @@ function drawTrace(params: {
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.beginPath();
+
+  let drawing = false;
   for (let i = 0; i < points.length; i += 1) {
+    // Skip NaN values (gaps)
+    if (Number.isNaN(points[i].value)) {
+      drawing = false;
+      continue;
+    }
+
     const x = ((points[i].t - minT) / spanT) * width;
-    if (i === 0) ctx.moveTo(x, y[i]);
-    else ctx.lineTo(x, y[i]);
+    if (!drawing) {
+      ctx.moveTo(x, y[i]);
+      drawing = true;
+    } else {
+      ctx.lineTo(x, y[i]);
+    }
   }
   ctx.stroke();
   ctx.restore();
@@ -146,19 +161,27 @@ function drawBeatMarkers(
 }
 
 function mainTrace(measurement: UsePPGMeasurementResult): TracePoint[] {
-  if (measurement.published.waveform.length > 1) {
-    const lastT = measurement.channels[measurement.channels.length - 1]?.t ?? performance.now();
-    const step = 1000 / Math.max(15, measurement.frameStats.measuredFps || 30);
-    const start = lastT - measurement.published.waveform.length * step;
-    return measurement.published.waveform.map((value, index) => ({
-      t: start + index * step,
-      value,
-    }));
+  // Use real ring buffer from channels with gap handling
+  const recentChannels = measurement.channels.slice(-520);
+  if (recentChannels.length < 2) return [];
+
+  const points: TracePoint[] = [];
+  const maxGapMs = 200; // Maximum gap to interpolate (200ms)
+
+  for (let i = 0; i < recentChannels.length; i++) {
+    const sample = recentChannels[i];
+    if (i > 0) {
+      const prev = recentChannels[i - 1];
+      const gap = sample.t - prev.t;
+      if (gap > maxGapMs) {
+        // Gap detected - don't interpolate, cut the line
+        points.push({ t: sample.t, value: NaN }); // NaN creates a break in the line
+      }
+    }
+    points.push({ t: sample.t, value: sample.selected });
   }
-  return measurement.channels.slice(-520).map((sample) => ({
-    t: sample.t,
-    value: sample.selected,
-  }));
+
+  return points;
 }
 
 function drawMonitor(canvas: HTMLCanvasElement, measurement: UsePPGMeasurementResult): void {
@@ -184,19 +207,33 @@ function drawMonitor(canvas: HTMLCanvasElement, measurement: UsePPGMeasurementRe
   const trace = mainTrace(measurement);
   const official = measurement.published.waveformSource === "REAL_PPG";
   const debugTrace = measurement.published.waveformSource === "RAW_DEBUG_ONLY";
+  const noSignal = measurement.published.waveformSource === "NONE";
 
-  drawTrace({
-    ctx,
-    points: trace,
-    top: mainTop,
-    height: mainHeight,
-    width,
-    color: official ? "#19ff88" : debugTrace ? "rgba(251,191,36,0.56)" : "rgba(148,163,184,0.18)",
-    lineWidth: official ? 2.25 : 1.55,
-    glow: official ? "rgba(25,255,136,0.58)" : undefined,
-    label: official ? "REAL PPG LOCKED" : debugTrace ? "RAW DEBUG - NOT A VITAL WAVEFORM" : "NO VERIFIED PPG",
-    dpr,
-  });
+  // Show flat baseline when no signal
+  if (noSignal || trace.length === 0) {
+    ctx.strokeStyle = "rgba(148,163,184,0.18)";
+    ctx.lineWidth = 1.55 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(0, mainTop + mainHeight / 2);
+    ctx.lineTo(width, mainTop + mainHeight / 2);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(214, 255, 242, 0.46)";
+    ctx.font = `${10 * dpr}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.fillText("SIN SEÑAL PPG VERIFICABLE", 14 * dpr, mainTop + 15 * dpr);
+  } else {
+    drawTrace({
+      ctx,
+      points: trace,
+      top: mainTop,
+      height: mainHeight,
+      width,
+      color: official ? "#19ff88" : debugTrace ? "rgba(251,191,36,0.56)" : "rgba(148,163,184,0.18)",
+      lineWidth: official ? 2.25 : 1.55,
+      glow: official ? "rgba(25,255,136,0.58)" : undefined,
+      label: official ? "REAL PPG LOCKED" : debugTrace ? "RAW DEBUG - NOT A VITAL WAVEFORM" : "NO VERIFIED PPG",
+      dpr,
+    });
+  }
 
   if (official) {
     drawBeatMarkers(ctx, measurement.published.beatMarkers, trace, width, mainTop, mainHeight, dpr);
@@ -255,16 +292,31 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
   const latestChannel = measurement.channels[measurement.channels.length - 1];
   const reasons = measurement.published.quality.reasons;
 
+  // Render FPS tracking
+  const renderCountRef = useRef(0);
+  const lastRenderTimeRef = useRef(0);
+  const renderFpsRef = useRef(0);
+
   const sessionLabel = useMemo(() => {
     const width = measurement.camera.settings?.width ?? measurement.frameStats.width;
     const height = measurement.camera.settings?.height ?? measurement.frameStats.height;
-    return `${width || 0}x${height || 0} / ${measurement.frameStats.measuredFps.toFixed(1)} FPS`;
-  }, [measurement.camera.settings, measurement.frameStats]);
+    return `${width || 0}x${height || 0} | ACQ:${measurement.fpsStats.acquisitionFps.toFixed(1)} PROC:${measurement.fpsStats.processingFps.toFixed(1)} REND:${renderFpsRef.current.toFixed(1)}`;
+  }, [measurement.camera.settings, measurement.frameStats, measurement.fpsStats]);
 
   useEffect(() => {
     let raf = 0;
     const render = () => {
       if (canvasRef.current) drawMonitor(canvasRef.current, measurement);
+
+      // Track render FPS
+      renderCountRef.current++;
+      const now = performance.now();
+      if (now - lastRenderTimeRef.current >= 1000) {
+        renderFpsRef.current = renderCountRef.current;
+        renderCountRef.current = 0;
+        lastRenderTimeRef.current = now;
+      }
+
       raf = requestAnimationFrame(render);
     };
     render();
@@ -317,6 +369,42 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
                 : "TORCH OFF"
               : "TORCH N/A"}
           </span>
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
+            {measurement.published.evidence.roi.accepted ? (
+              <CheckCircle className="h-3.5 w-3.5 text-emerald-300" />
+            ) : (
+              <XCircle className="h-3.5 w-3.5 text-red-400" />
+            )}
+            ROI
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
+            {measurement.published.waveformSource === "REAL_PPG" ? (
+              <CheckCircle className="h-3.5 w-3.5 text-emerald-300" />
+            ) : (
+              <XCircle className="h-3.5 w-3.5 text-red-400" />
+            )}
+            SIGNAL
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
+            {measurement.published.canPublishVitals ? (
+              <CheckCircle className="h-3.5 w-3.5 text-emerald-300" />
+            ) : (
+              <XCircle className="h-3.5 w-3.5 text-red-400" />
+            )}
+            PUB
+          </span>
+          {measurement.published.quality.saturationPenalty > 0.45 && (
+            <span className="inline-flex items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-red-300">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              SAT
+            </span>
+          )}
+          {measurement.published.evidence.roi.motionRisk > 0.3 && (
+            <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-300">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              MOTION
+            </span>
+          )}
           <span className="rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
             {sessionLabel}
           </span>
