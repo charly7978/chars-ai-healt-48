@@ -830,11 +830,56 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           <span className={roi.roiStabilityScore >= 0.6 ? "text-emerald-400" : roi.roiStabilityScore >= 0.4 ? "text-amber-300" : "text-red-400"}>
             {fmt(roi.roiStabilityScore, 2)}
           </span>
-          <span className="text-white/55">channel usable R/G/B</span>
+          <span
+            className="text-white/55"
+            title="ROI-level usability — does the spatial finger mask have enough usable pixels per channel? Computed by FingerOpticalROI from saturation/clipping over the current frame's tile pool. Drives SpO2 channel veto."
+          >
+            roi.channelUsable R/G/B
+          </span>
           <span>
             <span className={roi.channelUsable.r ? "text-emerald-400" : "text-red-400"}>R</span>{" "}
             <span className={roi.channelUsable.g ? "text-emerald-400" : "text-red-400"}>G</span>{" "}
             <span className={roi.channelUsable.b ? "text-emerald-400" : "text-red-400"}>B</span>
+          </span>
+          {/*
+            Independent dimension: per-frame `sample.channelMask` aggregated
+            over the recent ≥60 % window by PPGChannelFusion. THIS is what
+            drives channel selection (CHROM/POS/RG_RATIO eligibility) — NOT
+            the spatial roi.channelUsable above. Showing them side-by-side
+            is the single best way to confirm the gate is using the right
+            dimension end-to-end.
+          */}
+          <span
+            className="text-white/55"
+            title="Fusion-level mask — fraction of recent frames where each channel was usable per PPGOpticalSample.channelMask. PPGChannelFusion drops a channel from selection if this is below 60%. Shown here as the latest sample's flags + the channel currently selected by the fusion engine."
+          >
+            sample.channelMask R/G/B
+          </span>
+          <span>
+            {(() => {
+              // `measurement.rawSamples` is the actual PPGOpticalSample[]
+              // ring buffer the fusion engine consumes. We read the *last*
+              // sample's channelMask — same source of truth, no second copy.
+              const lastSample = measurement.rawSamples[measurement.rawSamples.length - 1];
+              const m = lastSample?.channelMask;
+              if (!m) return <span className="text-white/40">--</span>;
+              return (
+                <>
+                  <span className={m.r ? "text-emerald-400" : "text-red-400"}>R</span>{" "}
+                  <span className={m.g ? "text-emerald-400" : "text-red-400"}>G</span>{" "}
+                  <span className={m.b ? "text-emerald-400" : "text-red-400"}>B</span>
+                </>
+              );
+            })()}
+          </span>
+          <span
+            className="text-white/55"
+            title="Channel currently selected by PPGChannelFusion + selection reason string. Compare with publicationDecisionLog.lastSelectedChannel to confirm the gate sees the same active source."
+          >
+            fusion.selected
+          </span>
+          <span className="font-mono text-cyan-300">
+            {evidence.channels?.selectedName ?? "--"}
           </span>
           <span className="text-white/55">sat R/G/B</span>
           <span className="font-mono">
