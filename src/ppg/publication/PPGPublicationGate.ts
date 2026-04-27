@@ -190,6 +190,15 @@ export class PPGPublicationGate {
   private wasValid = false;
   private lastValidBpm: number | null = null;
   private lastValidAtMs: number | null = null;
+  /**
+   * Per-frame consecutive ROI-contact streak. Increments only on frames where
+   * ROI is accepted, contactState === "stable" and pressureState === "optimal".
+   * Resets to 0 on any break. Vitals (BPM/SpO2) cannot publish until the streak
+   * reaches MIN_CONTACT_STREAK_FRAMES, even if all spectral conditions pass.
+   * This eliminates one-shot false positives from transient flashes/motion.
+   */
+  private contactFrameStreak = 0;
+  private static readonly MIN_CONTACT_STREAK_FRAMES = 30; // ~1.0s @ 30fps
 
   reset(): void {
     this.goodWindowStreak = 0;
@@ -197,6 +206,7 @@ export class PPGPublicationGate {
     this.wasValid = false;
     this.lastValidBpm = null;
     this.lastValidAtMs = null;
+    this.contactFrameStreak = 0;
   }
 
   evaluate(params: {
