@@ -232,6 +232,12 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const [quality, setQuality] = useState<PPGSignalQuality>(qualityRef.current);
   const [beats, setBeats] = useState<BeatDetectionResult>(beatsRef.current);
   const [published, setPublished] = useState<PublishedPPGMeasurement>(publishedRef.current);
+  const [calibration, setCalibration] = useState<UsePPGMeasurementResult["calibration"]>(
+    calibrationRef.current,
+  );
+  const [repositionPrompt, setRepositionPrompt] = useState<UsePPGMeasurementResult["repositionPrompt"]>(
+    repositionRef.current,
+  );
   const [debug, setDebug] = useState<UsePPGMeasurementResult["debug"]>({
     active: false,
     opticalSamples: 0,
