@@ -975,6 +975,47 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         </div>
       </div>
 
+      {/* ADAPTIVE THRESHOLDS — per-device floor learned from real telemetry */}
+      <div className="mb-3 border-l-2 border-fuchsia-500/50 pl-2">
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-fuchsia-300">
+          Adaptive thresholds {debug.adaptive.active ? "✓ ACTIVE" : `(profiling ${debug.adaptive.framesObserved}/${debug.adaptive.framesRequired})`}
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <span className="text-white/55">acquisition</span>
+          <span>{debug.adaptive.acquisitionMethod}</span>
+          <span className="text-white/55">torch readback</span>
+          <span className={debug.adaptive.torchApplied === false ? "text-red-400" : debug.adaptive.torchApplied ? "text-emerald-400" : "text-white/40"}>
+            {debug.adaptive.torchApplied === null ? "n/a" : debug.adaptive.torchApplied ? "applied" : "DENIED"}
+          </span>
+          <span className="text-white/55">sensor noise</span>
+          <span>{fmt(debug.adaptive.observed.sensorNoiseDb, 1)} dB</span>
+          <span className="text-white/55">min FPS / max jitter</span>
+          <span>
+            {fmt(debug.adaptive.thresholds.minMeasuredFps, 0)} / {fmt(debug.adaptive.thresholds.maxJitterMs, 1)} ms
+          </span>
+          <span className="text-white/55">min fpsQ / drop ≤</span>
+          <span>
+            {fmt(debug.adaptive.thresholds.minFpsQuality, 0)} / {fmt(debug.adaptive.thresholds.maxDroppedRatio * 100, 0)}%
+          </span>
+          <span className="text-white/55">contact / perfusion</span>
+          <span>
+            ≥ {fmt(debug.adaptive.thresholds.minContactScore, 2)} / ≥ {fmt(debug.adaptive.thresholds.minPerfusionIndex, 3)}
+          </span>
+          <span className="text-white/55">band / total</span>
+          <span>
+            ≥ {fmt(debug.adaptive.thresholds.minBandPowerRatio, 2)} / ≥ {fmt(debug.adaptive.thresholds.minTotalQualityScore, 0)}
+          </span>
+          {debug.adaptive.reasons.length > 0 && (
+            <>
+              <span className="text-white/55">notes</span>
+              <span className="truncate text-[9px] text-amber-300" title={debug.adaptive.reasons.join(" | ")}>
+                {debug.adaptive.reasons.join(" | ")}
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* SIGNAL SECTION */}
       <div className="mb-3 border-l-2 border-emerald-500/50 pl-2">
         <div className="mb-1 text-[10px] uppercase tracking-wider text-emerald-300">Signal</div>
