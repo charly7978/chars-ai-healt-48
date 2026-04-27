@@ -294,12 +294,22 @@ export class PPGPublicationGate {
         ? "RAW_DEBUG_ONLY"
         : "NONE";
 
+    // SpO2 needs BOTH red AND green to be optically valid (Ratio-of-Ratios).
+    // If red is saturated under flash but green is fine, we still publish BPM
+    // (handled above) but block SpO2 explicitly so the user is not misled.
+    const spo2ChannelsOk = roi.channelUsable.r && roi.channelUsable.g;
     const oxygen = estimateCameraSpO2({
       samples: opticalSamples,
       quality,
-      canPublishVitals,
+      canPublishVitals: canPublishVitals && spo2ChannelsOk,
       calibrationBadge: camera.diagnostics?.calibration.status ?? "uncalibrated",
     });
+    if (!spo2ChannelsOk) {
+      oxygen.canPublish = false;
+      if (!oxygen.reasons.includes("CHANNEL_RED_OR_GREEN_UNUSABLE")) {
+        oxygen.reasons = [...oxygen.reasons, "CHANNEL_RED_OR_GREEN_UNUSABLE"];
+      }
+    }
 
     let lastValidTimestamp: number | null = null;
     if (canPublishVitals && beats.bpm !== null) {
