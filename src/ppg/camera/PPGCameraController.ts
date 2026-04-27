@@ -1,3 +1,80 @@
+import {
+  lookupCalibrationProfile,
+  type CalibrationStatus,
+  type CalibrationLookupResult,
+} from "./CameraCalibrationProfile";
+
+/* ------------------------------------------------------------------ */
+/* Public types                                                       */
+/* ------------------------------------------------------------------ */
+
+export interface DeviceCameraProfile {
+  deviceId: string;
+  label: string;
+  groupId: string;
+  facingModeDetected: "environment" | "user" | "unknown";
+  score: number;
+  penalties: {
+    ultraWide: number;
+    frontCamera: number;
+    lowResolution: number;
+    lowFps: number;
+    missingTorch: number;
+  };
+  selectedReason: string | null;
+  rejectedReasons: string[];
+}
+
+export interface ConstraintAttemptLog {
+  label: string;
+  constraints: MediaStreamConstraints;
+  outcome: "success" | "failure";
+  errorName?: string;
+  errorMessage?: string;
+  resolvedDeviceId?: string;
+  resolvedLabel?: string;
+}
+
+export interface AppliedFineConstraint {
+  key:
+    | "torch"
+    | "exposureMode"
+    | "focusMode"
+    | "whiteBalanceMode"
+    | "frameRate"
+    | "exposureCompensation"
+    | "iso";
+  attempted: unknown;
+  applied: unknown;
+  status: "applied" | "unsupported" | "failed";
+  errorMessage?: string;
+}
+
+export interface CameraDiagnostics {
+  enumeratedDevices: DeviceCameraProfile[];
+  selectedDevice: DeviceCameraProfile | null;
+  attempts: ConstraintAttemptLog[];
+  fineConstraints: AppliedFineConstraint[];
+  capabilities: MediaTrackCapabilities | null;
+  settings: MediaTrackSettings | null;
+  failedConstraints: string[];
+  torchStatus: {
+    available: boolean;
+    requested: boolean;
+    appliedReadback: boolean;
+  };
+  calibration: {
+    status: CalibrationStatus;
+    profileKey: string | null;
+    matchedBy: CalibrationLookupResult["matchedBy"];
+    reason: string;
+    canPublishSpO2: boolean;
+  };
+  fpsTarget: number;
+  fpsMeasured: number;
+  userAgent: string;
+}
+
 export interface PPGCameraState {
   stream: MediaStream | null;
   videoTrack: MediaStreamTrack | null;
@@ -15,30 +92,139 @@ export interface PPGCameraState {
   selectedDeviceId: string | null;
   error: string | null;
   lastError: string | null;
+  diagnostics: CameraDiagnostics;
 }
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+const TARGET_FPS = 30;
 
 const REQUESTED_VIDEO: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
   width: { ideal: 1280 },
   height: { ideal: 720 },
-  frameRate: { ideal: 30 },
+  frameRate: { ideal: TARGET_FPS },
 };
 
-const EXACT_ENVIRONMENT: MediaTrackConstraints = {
-  facingMode: { exact: "environment" },
-  width: { ideal: 1280 },
-  height: { ideal: 720 },
-  frameRate: { ideal: 30 },
-};
-
-type TorchCapabilities = MediaTrackCapabilities & { torch?: boolean };
 type TorchConstraintSet = MediaTrackConstraintSet & { torch?: boolean };
 
 function torchConstraint(enabled: boolean): MediaTrackConstraints {
   return { advanced: [{ torch: enabled } as TorchConstraintSet] };
 }
 
-function emptyState(error: string | null = null, lastError: string | null = null): PPGCameraState {
+const ULTRA_WIDE_TOKENS = [
+  "ultra wide",
+  "ultrawide",
+  "ultra-wide",
+  "wide angle",
+  "wide-angle",
+  "0.5",
+  "0,5x",
+  "0.5x",
+];
+const NON_PRIMARY_TOKENS = ["macro", "depth", "telephoto", "tele "];
+const REAR_TOKENS = ["back", "rear", "environment", "trasera", "posterior", "world"];
+const FRONT_TOKENS = ["front", "user", "selfie", "facetime", "frontal"];
+
+function detectFacingFromLabel(label: string): "environment" | "user" | "unknown" {
+  const l = label.toLowerCase();
+  if (REAR_TOKENS.some((t) => l.includes(t))) return "environment";
+  if (FRONT_TOKENS.some((t) => l.includes(t))) return "user";
+  return "unknown";
+}
+
+function profileFromDevice(device: MediaDeviceInfo): DeviceCameraProfile {
+  const label = device.label || "";
+  const lower = label.toLowerCase();
+  const facing = detectFacingFromLabel(label);
+  const rejectedReasons: string[] = [];
+
+  let score = 100;
+  const penalties = {
+    ultraWide: 0,
+    frontCamera: 0,
+    lowResolution: 0,
+    lowFps: 0,
+    missingTorch: 0,
+  };
+
+  if (facing === "user") {
+    penalties.frontCamera = 80;
+    rejectedReasons.push("front-camera");
+  }
+  if (ULTRA_WIDE_TOKENS.some((t) => lower.includes(t))) {
+    penalties.ultraWide = 60;
+    rejectedReasons.push("ultra-wide-lens");
+  }
+  if (NON_PRIMARY_TOKENS.some((t) => lower.includes(t))) {
+    penalties.ultraWide += 25;
+    rejectedReasons.push("non-primary-lens");
+  }
+
+  // Boost obvious primary rear cams
+  if (
+    facing === "environment" &&
+    !ULTRA_WIDE_TOKENS.some((t) => lower.includes(t)) &&
+    !NON_PRIMARY_TOKENS.some((t) => lower.includes(t))
+  ) {
+    score += 20;
+  }
+
+  // Devices with empty labels (permission not yet granted on first call)
+  if (!label) {
+    rejectedReasons.push("empty-label");
+  }
+
+  const finalScore =
+    score -
+    penalties.ultraWide -
+    penalties.frontCamera -
+    penalties.lowResolution -
+    penalties.lowFps -
+    penalties.missingTorch;
+
+  return {
+    deviceId: device.deviceId,
+    label,
+    groupId: device.groupId,
+    facingModeDetected: facing,
+    score: finalScore,
+    penalties,
+    selectedReason: null,
+    rejectedReasons,
+  };
+}
+
+function emptyDiagnostics(): CameraDiagnostics {
+  return {
+    enumeratedDevices: [],
+    selectedDevice: null,
+    attempts: [],
+    fineConstraints: [],
+    capabilities: null,
+    settings: null,
+    failedConstraints: [],
+    torchStatus: { available: false, requested: false, appliedReadback: false },
+    calibration: {
+      status: "uncalibrated",
+      profileKey: null,
+      matchedBy: "none",
+      reason: "camera not started yet",
+      canPublishSpO2: false,
+    },
+    fpsTarget: TARGET_FPS,
+    fpsMeasured: 0,
+    userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+  };
+}
+
+function emptyState(
+  error: string | null = null,
+  lastError: string | null = null,
+  diagnostics: CameraDiagnostics = emptyDiagnostics(),
+): PPGCameraState {
   return {
     stream: null,
     videoTrack: null,
@@ -56,29 +242,13 @@ function emptyState(error: string | null = null, lastError: string | null = null
     selectedDeviceId: null,
     error,
     lastError: lastError ?? error,
+    diagnostics,
   };
 }
 
-function isLikelyRearCamera(device: MediaDeviceInfo): boolean {
-  const label = device.label.toLowerCase();
-  return (
-    label.includes("back") ||
-    label.includes("rear") ||
-    label.includes("environment") ||
-    label.includes("trasera") ||
-    label.includes("posterior")
-  );
-}
-
-function isLikelyUltraWide(device: MediaDeviceInfo): boolean {
-  const label = device.label.toLowerCase();
-  return (
-    label.includes("ultra") ||
-    label.includes("wide") ||
-    label.includes("0.5") ||
-    label.includes("0,5")
-  );
-}
+/* ------------------------------------------------------------------ */
+/* Controller                                                         */
+/* ------------------------------------------------------------------ */
 
 export class PPGCameraController {
   private state: PPGCameraState = emptyState();
@@ -88,7 +258,6 @@ export class PPGCameraController {
 
   getState(): PPGCameraState {
     const state = { ...this.state };
-    // Update dynamic stream state
     if (state.videoTrack) {
       state.streamActive = state.videoTrack.readyState === "live";
     }
@@ -112,8 +281,8 @@ export class PPGCameraController {
   }
 
   async start(): Promise<PPGCameraState> {
-    // Reset state on every start attempt for clean acquisition
-    this.state = emptyState(null, this.lastError);
+    const diagnostics = emptyDiagnostics();
+    this.state = emptyState(null, this.lastError, diagnostics);
     this.frameCount = 0;
     this.lastFrameTime = 0;
 
@@ -122,62 +291,137 @@ export class PPGCameraController {
         throw new Error("Camera API not supported by this browser");
       }
 
-      const { stream, constraints, deviceId } = await this.openRearCamera();
+      // Phase 1 — minimal permission grant so device labels become visible.
+      let priming: MediaStream | null = null;
+      try {
+        priming = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+      } catch (e) {
+        diagnostics.attempts.push({
+          label: "permission-priming",
+          constraints: { video: { facingMode: { ideal: "environment" } }, audio: false },
+          outcome: "failure",
+          errorName: (e as Error).name,
+          errorMessage: (e as Error).message,
+        });
+      }
 
-      const videoTrack = stream.getVideoTracks()[0] ?? null;
+      // Phase 2 — enumerate and score devices.
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const profiles = devices
+        .filter((d) => d.kind === "videoinput")
+        .map(profileFromDevice)
+        .sort((a, b) => b.score - a.score);
+      diagnostics.enumeratedDevices = profiles;
+
+      // Release the priming stream before opening the chosen one.
+      priming?.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {
+          /* noop */
+        }
+      });
+
+      const bestRear = profiles.find(
+        (p) =>
+          p.facingModeDetected === "environment" &&
+          p.penalties.ultraWide === 0 &&
+          p.penalties.frontCamera === 0,
+      );
+      if (bestRear) {
+        bestRear.selectedReason = "best-rear-non-ultrawide";
+      }
+
+      // Phase 3 — open with progressive constraints, logging every attempt.
+      const opened = await this.openCamera(diagnostics, bestRear?.deviceId ?? null);
+
+      const videoTrack = opened.stream.getVideoTracks()[0] ?? null;
       if (!videoTrack) {
         throw new Error("No video track received from camera");
       }
 
-      // Capture capabilities and settings BEFORE torch manipulation
+      // Sync the picked device against the enumerated profiles.
+      const settings0 = videoTrack.getSettings();
+      const matchedProfile =
+        profiles.find((p) => p.deviceId === settings0.deviceId) ?? null;
+      diagnostics.selectedDevice =
+        matchedProfile ?? {
+          deviceId: settings0.deviceId ?? "",
+          label: videoTrack.label,
+          groupId: settings0.groupId ?? "",
+          facingModeDetected: detectFacingFromLabel(videoTrack.label),
+          score: 0,
+          penalties: {
+            ultraWide: 0,
+            frontCamera: 0,
+            lowResolution: 0,
+            lowFps: 0,
+            missingTorch: 0,
+          },
+          selectedReason: "browser-chose-without-deviceId",
+          rejectedReasons: [],
+        };
+      if (matchedProfile && !matchedProfile.selectedReason) {
+        matchedProfile.selectedReason = opened.selectedReason;
+      }
+
+      // Phase 4 — capture capabilities/settings.
       let capabilities: MediaTrackCapabilities | null = null;
-      let settings: MediaTrackSettings | null = null;
       try {
         capabilities = videoTrack.getCapabilities();
       } catch (e) {
         console.warn("[PPGCamera] getCapabilities failed:", e);
       }
+      let settings: MediaTrackSettings | null = videoTrack.getSettings();
+      diagnostics.capabilities = capabilities;
+      diagnostics.settings = settings;
 
-      try {
-        settings = videoTrack.getSettings();
-      } catch (e) {
-        console.warn("[PPGCamera] getSettings failed:", e);
-      }
+      // Phase 5 — apply fine optical constraints, recording each outcome.
+      await this.applyFineConstraints(videoTrack, capabilities, diagnostics);
 
-      // Determine torch availability from capabilities
-      const torchCap = (capabilities as TorchCapabilities | null)?.torch;
-      const torchAvailable = torchCap === true || torchCap === undefined; // undefined = might support but not exposed
+      // Re-read settings after fine tuning.
+      settings = videoTrack.getSettings();
+      diagnostics.settings = settings;
 
-      let torchEnabled = false;
-      let torchApplied = false;
+      const torchCap = capabilities?.torch === true;
+      diagnostics.torchStatus.available = torchCap;
+      const torchEntry = diagnostics.fineConstraints.find((c) => c.key === "torch");
+      const torchEnabled =
+        torchEntry?.status === "applied" &&
+        (settings?.torch === true || settings?.fillLightMode === "flash");
+      const torchApplied = torchEntry?.status === "applied";
+      diagnostics.torchStatus.requested = torchEntry?.attempted === true;
+      diagnostics.torchStatus.appliedReadback = torchEnabled === true;
 
-      // Apply torch if available - verify by re-reading settings
-      if (torchAvailable) {
-        try {
-          await videoTrack.applyConstraints(torchConstraint(true));
-          // Verify torch was actually applied
-          const newSettings = videoTrack.getSettings();
-          // @ts-expect-error - torch may exist in some browsers
-          torchEnabled = newSettings?.torch === true || newSettings?.fillLightMode === "flash";
-          torchApplied = true;
-          console.log("[PPGCamera] Torch applied:", torchEnabled, "settings:", newSettings);
-        } catch (e) {
-          console.warn("[PPGCamera] Torch apply failed:", e);
-          torchEnabled = false;
-          torchApplied = false;
-        }
-      }
+      // Phase 6 — calibration lookup.
+      const lookup = lookupCalibrationProfile({
+        cameraLabel: videoTrack.label,
+        userAgent: navigator.userAgent,
+      });
+      diagnostics.calibration = {
+        status: lookup.status,
+        profileKey: lookup.profile?.phoneModelKey ?? null,
+        matchedBy: lookup.matchedBy,
+        reason: lookup.reason,
+        canPublishSpO2:
+          lookup.status === "calibrated" || lookup.status === "partial",
+      };
+
+      diagnostics.fpsMeasured = settings?.frameRate ?? 0;
 
       const width = settings?.width ?? 0;
       const height = settings?.height ?? 0;
 
       this.state = {
-        stream,
+        stream: opened.stream,
         videoTrack,
         capabilities,
         settings,
-        constraints,
-        torchAvailable,
+        constraints: opened.constraints,
+        torchAvailable: torchCap,
         torchEnabled,
         torchApplied,
         cameraReady: true,
@@ -185,23 +429,25 @@ export class PPGCameraController {
         measuredFps: settings?.frameRate ?? 0,
         width,
         height,
-        selectedDeviceId: deviceId,
+        selectedDeviceId: settings?.deviceId ?? null,
         error: null,
         lastError: this.lastError,
+        diagnostics,
       };
 
-      console.log("[PPGCamera] Started:", {
-        deviceId,
+      console.log("[PPGCamera] Started", {
+        device: diagnostics.selectedDevice?.label,
         resolution: `${width}x${height}`,
         fps: settings?.frameRate,
-        torch: { available: torchAvailable, enabled: torchEnabled, applied: torchApplied },
+        torch: diagnostics.torchStatus,
+        calibration: diagnostics.calibration,
       });
 
       return this.getState();
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.lastError = errorMsg;
-      this.state = emptyState(errorMsg, this.lastError);
+      this.state = emptyState(errorMsg, this.lastError, diagnostics);
       return this.getState();
     }
   }
@@ -210,50 +456,79 @@ export class PPGCameraController {
     const current = this.state;
     const track = current.videoTrack;
 
-    // Attempt to disable torch before stopping
     if (track && track.readyState === "live") {
       try {
-        const capabilities = track.getCapabilities() as TorchCapabilities;
+        const capabilities = track.getCapabilities();
         if (capabilities?.torch) {
           await track.applyConstraints(torchConstraint(false));
-          console.log("[PPGCamera] Torch disabled");
         }
       } catch {
-        // Torch shutdown is best-effort; track.stop below is authoritative.
+        // best-effort
       }
     }
 
-    // Stop all tracks
     current.stream?.getTracks().forEach((mediaTrack) => {
       try {
         mediaTrack.stop();
       } catch {
-        // Ignore stop errors
+        /* noop */
       }
     });
 
     this.state = emptyState(null, this.lastError);
     this.frameCount = 0;
     this.lastFrameTime = 0;
-    console.log("[PPGCamera] Stopped");
   }
 
-  private async openRearCamera(): Promise<{ stream: MediaStream; constraints: MediaTrackConstraints; deviceId: string | null }> {
-    // Attempt chain from most specific to most permissive
-    const attempts: { constraints: MediaStreamConstraints; label: string }[] = [
+  validateStream(): boolean {
+    const track = this.state.videoTrack;
+    if (!track) return false;
+    if (track.readyState !== "live") return false;
+    if (track.muted) return false;
+    return true;
+  }
+
+  /* ---------------- private ---------------- */
+
+  private async openCamera(
+    diagnostics: CameraDiagnostics,
+    preferredDeviceId: string | null,
+  ): Promise<{
+    stream: MediaStream;
+    constraints: MediaTrackConstraints;
+    selectedReason: string;
+  }> {
+    const attempts: { label: string; constraints: MediaStreamConstraints }[] = [];
+
+    if (preferredDeviceId) {
+      attempts.push({
+        label: `deviceId-exact:${preferredDeviceId.slice(0, 10)}`,
+        constraints: {
+          video: {
+            ...REQUESTED_VIDEO,
+            deviceId: { exact: preferredDeviceId },
+          },
+          audio: false,
+        },
+      });
+    }
+
+    attempts.push(
       {
         label: "exact-environment-hd",
         constraints: {
-          video: { ...EXACT_ENVIRONMENT },
+          video: {
+            facingMode: { exact: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: TARGET_FPS },
+          },
           audio: false,
         },
       },
       {
         label: "ideal-environment-hd",
-        constraints: {
-          video: { ...REQUESTED_VIDEO },
-          audio: false,
-        },
+        constraints: { video: { ...REQUESTED_VIDEO }, audio: false },
       },
       {
         label: "exact-environment-sd",
@@ -268,48 +543,40 @@ export class PPGCameraController {
       },
       {
         label: "any-environment",
-        constraints: {
-          video: { facingMode: "environment" },
-          audio: false,
-        },
+        constraints: { video: { facingMode: "environment" }, audio: false },
       },
       {
         label: "fallback-any-video",
-        constraints: {
-          video: true,
-          audio: false,
-        },
+        constraints: { video: true, audio: false },
       },
-    ];
+    );
 
     let lastError: unknown = null;
-
     for (const attempt of attempts) {
       try {
-        console.log(`[PPGCamera] Trying ${attempt.label}...`);
         const stream = await navigator.mediaDevices.getUserMedia(attempt.constraints);
         const track = stream.getVideoTracks()[0];
         const settings = track?.getSettings();
-        const deviceId = settings?.deviceId ?? null;
-
-        // Validate it's actually a rear camera if possible
-        const label = track?.label?.toLowerCase() ?? "";
-        const isRear = label.includes("back") || label.includes("rear") || label.includes("environment") || label.includes("trasera");
-
-        console.log(`[PPGCamera] Success with ${attempt.label}:`, {
-          deviceId,
-          label: track?.label,
-          isRear,
-          resolution: `${settings?.width}x${settings?.height}`,
+        diagnostics.attempts.push({
+          label: attempt.label,
+          constraints: attempt.constraints,
+          outcome: "success",
+          resolvedDeviceId: settings?.deviceId,
+          resolvedLabel: track?.label,
         });
-
         return {
           stream,
           constraints: attempt.constraints.video as MediaTrackConstraints,
-          deviceId,
+          selectedReason: attempt.label,
         };
       } catch (error) {
-        console.warn(`[PPGCamera] Failed ${attempt.label}:`, error);
+        diagnostics.attempts.push({
+          label: attempt.label,
+          constraints: attempt.constraints,
+          outcome: "failure",
+          errorName: (error as Error).name,
+          errorMessage: (error as Error).message,
+        });
         lastError = error;
       }
     }
@@ -317,48 +584,111 @@ export class PPGCameraController {
     throw lastError ?? new Error("Failed to open rear camera after all attempts");
   }
 
-  private async replaceUltraWideIfPossible(stream: MediaStream): Promise<MediaStream> {
-    try {
-      const currentTrack = stream.getVideoTracks()[0];
-      const currentLabel = currentTrack?.label.toLowerCase() ?? "";
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const rearCameras = devices
-        .filter((device) => device.kind === "videoinput")
-        .filter(isLikelyRearCamera);
-      const preferred = rearCameras.find((device) => !isLikelyUltraWide(device));
-
-      if (
-        preferred?.deviceId &&
-        currentLabel &&
-        (currentLabel.includes("ultra") || currentLabel.includes("wide")) &&
-        !currentLabel.includes(preferred.label.toLowerCase())
-      ) {
-        console.log("[PPGCamera] Replacing ultra-wide with standard lens:", preferred.label);
-        const replacement = await navigator.mediaDevices.getUserMedia({
-          video: {
-            ...REQUESTED_VIDEO,
-            deviceId: { exact: preferred.deviceId },
-          },
-          audio: false,
+  private async applyFineConstraints(
+    track: MediaStreamTrack,
+    capabilities: MediaTrackCapabilities | null,
+    diagnostics: CameraDiagnostics,
+  ): Promise<void> {
+    const tryConstraint = async (
+      key: AppliedFineConstraint["key"],
+      attempted: unknown,
+      payload: MediaTrackConstraints,
+      supported: boolean,
+    ): Promise<void> => {
+      if (!supported) {
+        diagnostics.fineConstraints.push({
+          key,
+          attempted,
+          applied: null,
+          status: "unsupported",
         });
-        stream.getTracks().forEach((track) => track.stop());
-        return replacement;
+        return;
       }
-    } catch {
-      // Device labels and deviceId selection are browser-dependent.
-    }
+      try {
+        await track.applyConstraints(payload);
+        const newSettings = track.getSettings();
+        const applied = (newSettings as Record<string, unknown>)[key];
+        diagnostics.fineConstraints.push({
+          key,
+          attempted,
+          applied,
+          status: "applied",
+        });
+      } catch (error) {
+        diagnostics.failedConstraints.push(key);
+        diagnostics.fineConstraints.push({
+          key,
+          attempted,
+          applied: null,
+          status: "failed",
+          errorMessage: (error as Error).message,
+        });
+      }
+    };
 
-    return stream;
-  }
+    // torch
+    await tryConstraint("torch", true, torchConstraint(true), capabilities?.torch === true);
 
-  /**
-   * Validate that the current stream is still active and usable
-   */
-  validateStream(): boolean {
-    const track = this.state.videoTrack;
-    if (!track) return false;
-    if (track.readyState !== "live") return false;
-    if (track.muted) return false;
-    return true;
+    // exposureMode
+    const exposureModes = capabilities?.exposureMode ?? [];
+    const preferredExposure = exposureModes.includes("continuous")
+      ? "continuous"
+      : exposureModes.includes("manual")
+        ? "manual"
+        : null;
+    await tryConstraint(
+      "exposureMode",
+      preferredExposure,
+      preferredExposure
+        ? { advanced: [{ exposureMode: preferredExposure }] }
+        : {},
+      preferredExposure !== null,
+    );
+
+    // focusMode
+    const focusModes = capabilities?.focusMode ?? [];
+    const preferredFocus = focusModes.includes("continuous")
+      ? "continuous"
+      : focusModes.includes("manual")
+        ? "manual"
+        : focusModes.includes("infinity")
+          ? "infinity"
+          : null;
+    await tryConstraint(
+      "focusMode",
+      preferredFocus,
+      preferredFocus ? { advanced: [{ focusMode: preferredFocus }] } : {},
+      preferredFocus !== null,
+    );
+
+    // whiteBalanceMode
+    const wbModes = capabilities?.whiteBalanceMode ?? [];
+    const preferredWb = wbModes.includes("manual")
+      ? "manual"
+      : wbModes.includes("continuous")
+        ? "continuous"
+        : null;
+    await tryConstraint(
+      "whiteBalanceMode",
+      preferredWb,
+      preferredWb ? { advanced: [{ whiteBalanceMode: preferredWb }] } : {},
+      preferredWb !== null,
+    );
+
+    // frameRate
+    await tryConstraint(
+      "frameRate",
+      TARGET_FPS,
+      { advanced: [{ frameRate: { ideal: TARGET_FPS } }] },
+      true,
+    );
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Empty-state factory exported for the hook                           */
+/* ------------------------------------------------------------------ */
+
+export function createEmptyPPGCameraState(): PPGCameraState {
+  return emptyState();
 }
