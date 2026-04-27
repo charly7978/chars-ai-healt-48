@@ -3,7 +3,7 @@ import {
   autocorrBpm,
   clamp,
   mean,
-  preprocessPPG,
+  preprocessPPGRobust,
   spectralMetrics,
   std,
   type TimeSample,
@@ -29,6 +29,7 @@ export interface ChannelMetrics {
   stabilityScore: number;
   finalScore: number;
   series: TimeSample[];
+  actualFs: number;
 }
 
 export interface FusedPPGChannels {
@@ -262,13 +263,24 @@ export class PPGChannelFusion {
     opticalSamples: PPGOpticalSample[],
     name: ChannelName,
   ): ChannelMetrics {
-    // Preprocess
-    const processed = preprocessPPG(series);
+    // Derive target Fs from measured FPS, limit to reasonable range
+    const avgFps = mean(opticalSamples.map((s) => s.fps));
+    const targetFs = clamp(avgFps, 15, 60); // Limit to 15-60 Hz
 
-    // Spectral metrics
-    const spectral = spectralMetrics(processed);
+    // Preprocess with real Fs
+    const preprocessResult = preprocessPPGRobust(series, 0.5, 4.0, targetFs);
+    if (!preprocessResult.valid) {
+      // Fallback to simple preprocessing if validation fails
+      const processed = series.map((s) => ({ t: s.t, value: s.value }));
+      return this.createFallbackMetrics(name, processed, opticalSamples);
+    }
+    const processed = preprocessResult.samples;
+    const actualFs = preprocessResult.actualFs;
 
-    // Autocorr metrics
+    // Spectral metrics with actual Fs
+    const spectral = spectralMetrics(processed, 0.5, 4.0);
+
+    // Autocorr metrics with actual Fs
     const autocorr = autocorrBpm(processed);
 
     // FFT BPM for agreement calculation
@@ -323,6 +335,31 @@ export class PPGChannelFusion {
       stabilityScore,
       finalScore,
       series: processed,
+      actualFs,
+    };
+  }
+
+  private createFallbackMetrics(
+    name: ChannelName,
+    series: TimeSample[],
+    opticalSamples: PPGOpticalSample[],
+  ): ChannelMetrics {
+    const avgSaturation = mean(opticalSamples.map((s) => s.saturation.gHigh));
+    const dcDrift = std(opticalSamples.map((s) => s.baseline.g));
+    const stabilityScore = opticalSamples.every((s) => s.baselineValid) ? 1 : 0.5;
+    const avgFps = mean(opticalSamples.map((s) => s.fps));
+    return {
+      name,
+      snrDb: -60,
+      bandPowerRatio: 0,
+      autocorrPeakStrength: 0,
+      fftAgreement: 0,
+      avgSaturation,
+      dcDrift,
+      stabilityScore,
+      finalScore: -1000,
+      series,
+      actualFs: clamp(avgFps, 15, 60),
     };
   }
 
@@ -332,6 +369,7 @@ export class PPGChannelFusion {
   ): { selected: ChannelMetrics; reason: string } {
     if (channels.length === 0) {
       // Fallback to simple green OD
+      const avgFps = mean(samples.map((s) => s.fps));
       return {
         selected: {
           name: "GREEN_OD",
@@ -344,6 +382,7 @@ export class PPGChannelFusion {
           stabilityScore: 0,
           finalScore: -1000,
           series: samples.map((s) => ({ t: s.t, value: s.od.g })),
+          actualFs: clamp(avgFps, 15, 60),
         },
         reason: "NO_VALID_CHANNELS_FALLBACK_GREEN",
       };
@@ -387,7 +426,15 @@ export class PPGChannelFusion {
   }
 
   private greenOdSeries(samples: PPGOpticalSample[]): TimeSample[] {
-    return preprocessPPG(samples.map((sample) => ({ t: sample.t, value: sample.od.g })));
+    const avgFps = mean(samples.map((s) => s.fps));
+    const targetFs = clamp(avgFps, 15, 60);
+    const result = preprocessPPGRobust(
+      samples.map((sample) => ({ t: sample.t, value: sample.od.g })),
+      0.5,
+      4.0,
+      targetFs,
+    );
+    return result.valid ? result.samples : samples.map((s) => ({ t: s.t, value: s.od.g }));
   }
 
   private chromSeries(samples: PPGOpticalSample[]): TimeSample[] {
@@ -407,7 +454,10 @@ export class PPGChannelFusion {
       t: sample.t,
       value: gN[index] - redWeight * rN[index] - blueWeight * bN[index],
     }));
-    return preprocessPPG(raw);
+    const avgFps = mean(samples.map((s) => s.fps));
+    const targetFs = clamp(avgFps, 15, 60);
+    const result = preprocessPPGRobust(raw, 0.5, 4.0, targetFs);
+    return result.valid ? result.samples : raw;
   }
 
   private pcaSeries(
@@ -416,7 +466,15 @@ export class PPGChannelFusion {
     g2Series: TimeSample[],
   ): TimeSample[] {
     if (samples.length < 12) {
-      return preprocessPPG(samples.map((sample) => ({ t: sample.t, value: sample.od.g })));
+      const avgFps = mean(samples.map((s) => s.fps));
+      const targetFs = clamp(avgFps, 15, 60);
+      const result = preprocessPPGRobust(
+        samples.map((sample) => ({ t: sample.t, value: sample.od.g })),
+        0.5,
+        4.0,
+        targetFs,
+      );
+      return result.valid ? result.samples : samples.map((s) => ({ t: s.t, value: s.od.g }));
     }
 
     const rN = normalizeArray(samples.map((sample) => sample.od.r));
@@ -429,13 +487,17 @@ export class PPGChannelFusion {
       value: rows[index][0] * pc[0] + rows[index][1] * pc[1] + rows[index][2] * pc[2],
     }));
 
-    const processed = preprocessPPG(raw);
+    const avgFps = mean(samples.map((s) => s.fps));
+    const targetFs = clamp(avgFps, 15, 60);
+    const result = preprocessPPGRobust(raw, 0.5, 4.0, targetFs);
+    const processed = result.valid ? result.samples : raw;
     const align = Math.abs(correlation(processed, g1Series)) >= Math.abs(correlation(processed, g2Series))
       ? correlation(processed, g1Series)
       : correlation(processed, g2Series);
     if (align < 0) {
       raw = raw.map((sample) => ({ t: sample.t, value: -sample.value }));
-      return preprocessPPG(raw);
+      const result2 = preprocessPPGRobust(raw, 0.5, 4.0, targetFs);
+      return result2.valid ? result2.samples : raw;
     }
 
     return processed;

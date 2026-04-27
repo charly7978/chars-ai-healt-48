@@ -8,7 +8,7 @@ import {
   durationMs,
   mean,
   median,
-  preprocessPPG,
+  preprocessPPGRobust,
   spectralMetrics,
   type TimeSample,
 } from "./PPGFilters";
@@ -96,7 +96,17 @@ export class PPGSignalQualityAnalyzer {
       return createEmptySignalQuality(["INSUFFICIENT_REAL_BUFFER", ...reasons]);
     }
 
-    const signal = preprocessPPG(selectedSeries, 0.5, 4.0, 30);
+    // Derive target Fs from optical samples, limit to reasonable range
+    const avgFps = mean(opticalSamples.map((s) => s.fps));
+    const targetFs = clamp(avgFps, 15, 60);
+
+    const preprocessResult = preprocessPPGRobust(selectedSeries, 0.5, 4.0, targetFs);
+    if (!preprocessResult.valid) {
+      return createEmptySignalQuality(["RESAMPLE_FAILED", ...reasons]);
+    }
+    const signal = preprocessResult.samples;
+    const actualFs = preprocessResult.actualFs;
+
     const spectral = spectralMetrics(signal, 0.5, 4.0);
     const autocorr = autocorrBpm(signal);
     const fftBpm =
