@@ -278,34 +278,53 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
       {/* BEAT DETECTION SECTION */}
       <div className="mb-3 border-l-2 border-orange-500/50 pl-2">
         <div className="mb-1 text-[10px] uppercase tracking-wider text-orange-300">Beat Detection</div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-          <span className="text-white/55">beats accepted / rejected</span>
-          <span>
-            {beats.beats.length} / {beats.rejectedCandidates}
-          </span>
-          <span className="text-white/55">BPM (peaks)</span>
-          <span className={beats.bpm !== null ? "text-emerald-400" : "text-red-400"}>
-            {fmt(beats.bpm, 1)}
-          </span>
-          <span className="text-white/55">BPM (FFT)</span>
-          <span className={beats.fftBpm !== null ? "text-emerald-400" : "text-red-400"}>
-            {fmt(beats.fftBpm, 1)}
-          </span>
-          <span className="text-white/55">BPM (autocorr)</span>
-          <span className={beats.autocorrBpm !== null ? "text-emerald-400" : "text-red-400"}>
-            {fmt(beats.autocorrBpm, 1)}
-          </span>
-          <span className="text-white/55">estimator agreement</span>
-          <span className={beats.estimatorAgreementBpm !== undefined && beats.estimatorAgreementBpm <= 5 ? "text-emerald-400" : "text-red-400"}>
-            {fmt(beats.estimatorAgreementBpm, 1)} BPM
-          </span>
-          <span className="text-white/55">RR consistency</span>
-          <span>{fmt(quality.rrConsistency, 2)}</span>
-          <span className="text-white/55">RR intervals (last 5)</span>
-          <span className="text-[9px]">
-            {beats.rrIntervalsMs.slice(-5).map((rr, i) => `${fmt(rr, 0)}ms`).join(", ") || "--"}
-          </span>
-        </div>
+        {(() => {
+          const noBeatsYet =
+            beats.beats.length === 0 &&
+            beats.rejectedCandidates === 0 &&
+            beats.bpm === null &&
+            (beats.fftBpm ?? null) === null &&
+            (beats.autocorrBpm ?? null) === null;
+          if (noBeatsYet) {
+            return (
+              <div className="text-[10px] italic text-white/40">
+                awaiting first beat — detector idle
+              </div>
+            );
+          }
+          const fmtBpm = (v: number | null | undefined) =>
+            v === null || v === undefined ? "awaiting…" : fmt(v, 1);
+          return (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <span className="text-white/55">beats accepted / rejected</span>
+              <span>
+                {beats.beats.length} / {beats.rejectedCandidates}
+              </span>
+              <span className="text-white/55">BPM (peaks)</span>
+              <span className={beats.bpm !== null ? "text-emerald-400" : "text-white/40"}>
+                {fmtBpm(beats.bpm)}
+              </span>
+              <span className="text-white/55">BPM (FFT)</span>
+              <span className={(beats.fftBpm ?? null) !== null ? "text-emerald-400" : "text-white/40"}>
+                {fmtBpm(beats.fftBpm)}
+              </span>
+              <span className="text-white/55">BPM (autocorr)</span>
+              <span className={(beats.autocorrBpm ?? null) !== null ? "text-emerald-400" : "text-white/40"}>
+                {fmtBpm(beats.autocorrBpm)}
+              </span>
+              <span className="text-white/55">estimator agreement</span>
+              <span className={beats.estimatorAgreementBpm !== undefined && beats.estimatorAgreementBpm <= 5 ? "text-emerald-400" : "text-white/40"}>
+                {beats.estimatorAgreementBpm === undefined ? "awaiting…" : `${fmt(beats.estimatorAgreementBpm, 1)} BPM`}
+              </span>
+              <span className="text-white/55">RR consistency</span>
+              <span>{fmt(quality.rrConsistency, 2)}</span>
+              <span className="text-white/55">RR intervals (last 5)</span>
+              <span className="text-[9px]">
+                {beats.rrIntervalsMs.slice(-5).map((rr) => `${fmt(rr, 0)}ms`).join(", ") || "--"}
+              </span>
+            </div>
+          );
+        })()}
       </div>
 
       {/* OUTPUT SECTION */}
