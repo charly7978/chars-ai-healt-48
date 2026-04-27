@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PPGChannelFusionEngine } from "../PPGChannelFusion";
+import { PPGChannelFusion, type ChannelMetrics } from "../PPGChannelFusion";
 import type {
   ChannelMask,
   PPGOpticalSample,
