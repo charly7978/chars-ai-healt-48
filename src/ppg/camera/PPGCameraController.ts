@@ -269,7 +269,12 @@ function emptyDiagnostics(): CameraDiagnostics {
     capabilities: null,
     settings: null,
     failedConstraints: [],
-    torchStatus: { available: false, requested: false, appliedReadback: false },
+    torchStatus: {
+      available: false,
+      requested: false,
+      appliedReadback: false,
+      resolved: "unsupported",
+    },
     calibration: {
       status: "uncalibrated",
       profileKey: null,
@@ -280,6 +285,8 @@ function emptyDiagnostics(): CameraDiagnostics {
     fpsTarget: TARGET_FPS,
     fpsMeasured: 0,
     userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+    autoCameraControlUnavailable: false,
+    multiRearProbe: null,
   };
 }
 
@@ -298,6 +305,9 @@ function emptyState(
     torchEnabled: false,
     torchApplied: false,
     cameraReady: false,
+    acquisitionReady: false,
+    notReadyReasons: ["camera-not-started"],
+    acquisitionReport: null,
     streamActive: false,
     measuredFps: 0,
     width: 0,
