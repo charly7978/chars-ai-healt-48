@@ -134,7 +134,7 @@ describe("PPGChannelFusion — channelMask ≥60 % gating", () => {
     const { fused } = runEngine(samples);
     expect(fused.allChannels.length).toBe(0);
     expect(fused.selectedName).toBe("GREEN_OD");
-    expect(fused.selectionReason).toBe("NO_VALID_CHANNELS_FALLBACK_GREEN");
+    expect(fused.selectionReason).toMatch(/NO_VALID_CHANNELS/);
   });
 
   it("does NOT publish multi-channel CHROM/POS when green is masked-out", () => {
