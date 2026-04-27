@@ -140,6 +140,17 @@ export class AdaptiveAcquisitionThresholds {
   private ambientGreenSamples: number[] = [];
   private sensorNoiseDb = -40; // pessimistic default until measured
 
+  // Auto-tuned ambient (finger-OFF) noise estimation window.
+  // Bounds: AMBIENT_WIN_MIN..AMBIENT_WIN_MAX. Starts wide for robustness; shrinks
+  // when the dB estimate is stable across recomputations (low variance), grows
+  // when the estimate is volatile. This adapts the window length to the actual
+  // device's noise stationarity instead of using a fixed 240-sample cap.
+  private ambientWindowSize = 120;
+  private readonly ambientNoiseHistory: number[] = []; // last N noise dB readings
+  private static readonly AMBIENT_WIN_MIN = 45;
+  private static readonly AMBIENT_WIN_MAX = 360;
+  private static readonly AMBIENT_HISTORY_CAP = 20;
+
   private framesObserved = 0;
   private acquisitionMethod: AcquisitionMethod | "none" = "none";
   private torchApplied: boolean | null = null;
