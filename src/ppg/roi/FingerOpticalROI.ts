@@ -372,16 +372,18 @@ export class FingerOpticalROI {
       dcTrend = slope; // luma units per frame
     }
 
-    // Update DC stability
+    // Update DC stability + frame-to-frame luminance delta
+    let luminanceDelta = 0;
     if (this.previousLuma !== null) {
+      luminanceDelta = clamp01(Math.abs(meanLuma - this.previousLuma) / 255);
       const relChange = Math.abs(meanLuma - this.previousLuma) / Math.max(20, this.previousLuma);
       const instant = clamp01(1 - relChange * 8); // More aggressive than before
       this.dcStability = this.dcStability * 0.88 + instant * 0.12;
     }
     this.previousLuma = meanLuma;
 
-    // Motion risk from DC oscillation
-    const motionRisk = clamp01(Math.abs(dcTrend) / 10);
+    // Motion risk from DC oscillation (will be augmented later by centroid drift)
+    let motionRisk = clamp01(Math.abs(dcTrend) / 10);
 
     // Chromatic analysis
     const redRatio = meanRgb.r / Math.max(1, meanRgb.r + meanRgb.g + meanRgb.b);
