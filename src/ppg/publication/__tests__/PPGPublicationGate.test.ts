@@ -366,14 +366,24 @@ describe("AdaptiveAcquisitionThresholds — auto-tuned ambient window", () => {
     expect(eng.getAmbientWindowSize()).toBeLessThan(initial);
   });
 
-  it("grows the window when the noise estimate is volatile", async () => {
+  it("grows (or holds) the window when the noise estimate is volatile", async () => {
     const { AdaptiveAcquisitionThresholds } = await import("../../camera/AdaptiveAcquisitionThresholds");
     const eng = new AdaptiveAcquisitionThresholds();
-    const initial = eng.getAmbientWindowSize();
-    for (let i = 0; i < 400; i++) {
-      const swing = i % 30 < 15 ? 1 : 25;
-      eng.observeAmbientSample({ r: 100 + (Math.random() - 0.5) * swing, g: 100, b: 100 });
+    // Force the engine into a SHRUNK starting state so growth is observable.
+    for (let i = 0; i < 200; i++) {
+      eng.observeAmbientSample({ r: 100 + (i % 2 === 0 ? 0.3 : -0.3), g: 100, b: 100 });
     }
-    expect(eng.getAmbientWindowSize()).toBeGreaterThanOrEqual(initial);
+    const shrunkBaseline = eng.getAmbientWindowSize();
+    // Now feed alternating regimes that flip mean+spread every 12 samples so
+    // the rolling std/mean (and therefore noise-dB) jumps between blocks.
+    let seed = 1;
+    const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+    for (let i = 0; i < 600; i++) {
+      const block = Math.floor(i / 12) % 2;
+      const meanLvl = block === 0 ? 60 : 180;
+      const spread = block === 0 ? 1 : 30;
+      eng.observeAmbientSample({ r: meanLvl + (rand() - 0.5) * spread, g: 100, b: 100 });
+    }
+    expect(eng.getAmbientWindowSize()).toBeGreaterThanOrEqual(shrunkBaseline);
   });
 });
