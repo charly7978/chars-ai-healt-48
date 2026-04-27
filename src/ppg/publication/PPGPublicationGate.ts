@@ -350,8 +350,25 @@ export class PPGPublicationGate {
       waveform: waveformSource === "NONE" ? [] : waveformFromSeries(selectedSeries),
       waveformSource,
       beatMarkers: canPublishVitals
-        ? beats.beats.slice(-16).map((beat) => ({ t: beat.t, confidence: beat.confidence }))
+        ? beats.beats.slice(-16).map((beat) => ({
+            t: beat.t,
+            confidence: beat.confidence,
+            onsetT: beat.onsetT,
+            troughT: beat.troughT,
+          }))
         : [],
+      withheldBeatMarkers: beats.withheldBeats
+        .slice(-12)
+        .map((beat) => ({ t: beat.t, reason: beat.rejectionReason ?? "UNKNOWN" })),
+      irregularityFlag: beats.irregularityFlag,
+      estimatorBreakdown: {
+        peakBpm: beats.peakBpm,
+        medianIbiBpm: beats.medianIbiBpm,
+        fftBpm: beats.fftBpm,
+        autocorrBpm: beats.autocorrBpm,
+        agreementBpm: beats.estimatorAgreementBpm,
+        publicationException: beats.publicationException,
+      },
       quality: {
         ...quality,
         reasons: [...new Set([...quality.reasons, ...reasons, ...oxygen.reasons])],
