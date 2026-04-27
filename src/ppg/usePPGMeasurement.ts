@@ -218,6 +218,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       selectedChannel: latestChannel?.selectedName ?? "--",
       channelSelectionReason: latestChannel?.selectionReason ?? "--",
       lastUpdateMs: Date.now(),
+      adaptive: adaptiveThresholdsRef.current.snapshot(),
     });
   }, []);
 
