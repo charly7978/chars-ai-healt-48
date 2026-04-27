@@ -268,6 +268,159 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
     URL.revokeObjectURL(url);
   };
 
+  // Current schema version produced by exportCameraEvidence(). When this is
+  // bumped, add a new step to `migrateEvidence` below — never break old files.
+  const CURRENT_EVIDENCE_SCHEMA = 2;
+
+  /**
+   * Forward-migrate an imported evidence payload to the current schema so the
+   * forensic view can render it without conditional checks everywhere.
+   *
+   * Migration ladder (each step is additive and idempotent):
+   *   pre-v1 (no `evidenceSchemaVersion`) → v1
+   *     - wrap legacy shapes; ensure `cameraDiagnostics`/`spo2` keys exist;
+   *       infer `timestamp` from `exportedAtMs` or file mtime fallback.
+   *   v1 → v2
+   *     - per-record `timestamp` + `timestampIso` on `attempts`,
+   *       `fineConstraints`, `torchStatus`;
+   *     - synthesize `cameraDiagnostics.fpsSample` from `fpsTarget`/`fpsMeasured`;
+   *     - add `cameraStateSummary.measuredFpsAt`/`measuredFpsAtIso`.
+   *
+   * Returns `{ migrated, fromVersion, appliedSteps, warnings }` so the UI can
+   * show exactly what was upgraded.
+   */
+  const migrateEvidence = (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    raw: any,
+  ): {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    migrated: any;
+    fromVersion: number | "pre-v1";
+    appliedSteps: string[];
+    warnings: string[];
+  } => {
+    const warnings: string[] = [];
+    const appliedSteps: string[] = [];
+    // Shallow clone — we never mutate the caller's object.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const evidence: any = { ...raw };
+
+    const detectedVersion: number | "pre-v1" =
+      typeof evidence.evidenceSchemaVersion === "number"
+        ? evidence.evidenceSchemaVersion
+        : "pre-v1";
+
+    const fallbackTs =
+      typeof evidence.exportedAtMs === "number"
+        ? evidence.exportedAtMs
+        : typeof evidence.timestamp === "string"
+          ? Date.parse(evidence.timestamp) || Date.now()
+          : Date.now();
+    const fallbackIso = (() => {
+      try {
+        return new Date(fallbackTs).toISOString();
+      } catch {
+        return new Date().toISOString();
+      }
+    })();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const annotateTs = (item: any) => {
+      if (!item || typeof item !== "object") return item;
+      if (typeof item.timestamp === "number" && typeof item.timestampIso === "string") {
+        return item;
+      }
+      const ts =
+        typeof item.timestamp === "number"
+          ? item.timestamp
+          : typeof item.appliedAt === "number"
+            ? item.appliedAt
+            : typeof item.at === "number"
+              ? item.at
+              : fallbackTs;
+      let iso = fallbackIso;
+      try {
+        iso = new Date(ts).toISOString();
+      } catch {
+        iso = fallbackIso;
+      }
+      return { ...item, timestamp: ts, timestampIso: iso };
+    };
+
+    // ── Step: pre-v1 → v1 ──────────────────────────────────────────────────
+    if (detectedVersion === "pre-v1") {
+      appliedSteps.push("pre-v1 → v1: normalize root shape");
+      if (!evidence.timestamp) evidence.timestamp = fallbackIso;
+      if (typeof evidence.exportedAtMs !== "number") evidence.exportedAtMs = fallbackTs;
+      if (!("cameraDiagnostics" in evidence) && evidence.diagnostics) {
+        // Some very early dumps used a different key.
+        evidence.cameraDiagnostics = evidence.diagnostics;
+        warnings.push("renamed legacy `diagnostics` → `cameraDiagnostics`");
+      }
+      if (!("spo2" in evidence) && evidence.oxygen) {
+        evidence.spo2 = evidence.oxygen;
+        warnings.push("renamed legacy `oxygen` → `spo2`");
+      }
+      if (!evidence.cameraDiagnostics) {
+        warnings.push("cameraDiagnostics missing in source — diagnostics view will be empty");
+      }
+      if (!evidence.spo2) {
+        warnings.push("spo2 block missing in source — SpO2 fields will be empty");
+      }
+      if (!evidence.cameraStateSummary) {
+        evidence.cameraStateSummary = {};
+        warnings.push("cameraStateSummary missing — backfilled with empty object");
+      }
+      evidence.evidenceSchemaVersion = 1;
+    }
+
+    // ── Step: v1 → v2 ──────────────────────────────────────────────────────
+    if (evidence.evidenceSchemaVersion === 1) {
+      appliedSteps.push("v1 → v2: backfill timestamps on attempts/fineConstraints/torchStatus");
+      const diag = evidence.cameraDiagnostics;
+      if (diag && typeof diag === "object") {
+        const upgradedDiag = { ...diag };
+        if (Array.isArray(diag.attempts)) {
+          upgradedDiag.attempts = diag.attempts.map(annotateTs);
+        }
+        if (Array.isArray(diag.fineConstraints)) {
+          upgradedDiag.fineConstraints = diag.fineConstraints.map(annotateTs);
+        }
+        if (diag.torchStatus) {
+          upgradedDiag.torchStatus = annotateTs(diag.torchStatus);
+        }
+        if (!diag.fpsSample && (diag.fpsTarget !== undefined || diag.fpsMeasured !== undefined)) {
+          upgradedDiag.fpsSample = {
+            target: diag.fpsTarget ?? null,
+            measured: diag.fpsMeasured ?? null,
+            timestamp: fallbackTs,
+            timestampIso: fallbackIso,
+          };
+        }
+        evidence.cameraDiagnostics = upgradedDiag;
+      }
+      const summary = evidence.cameraStateSummary;
+      if (summary && typeof summary === "object" && summary.measuredFpsAt === undefined) {
+        evidence.cameraStateSummary = {
+          ...summary,
+          measuredFpsAt: fallbackTs,
+          measuredFpsAtIso: fallbackIso,
+        };
+      }
+      evidence.evidenceSchemaVersion = 2;
+    }
+
+    // Future: if (evidence.evidenceSchemaVersion === 2) { ... → 3 ... }
+
+    if (evidence.evidenceSchemaVersion > CURRENT_EVIDENCE_SCHEMA) {
+      warnings.push(
+        `Evidence schema v${evidence.evidenceSchemaVersion} is newer than this build (v${CURRENT_EVIDENCE_SCHEMA}). Some fields may not render.`,
+      );
+    }
+
+    return { migrated: evidence, fromVersion: detectedVersion, appliedSteps, warnings };
+  };
+
   const handleImportEvidenceClick = () => {
     setImportError(null);
     fileInputRef.current?.click();
@@ -283,10 +436,14 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
       if (!parsed || typeof parsed !== "object") {
         throw new Error("File is not a JSON object");
       }
-      if (!("cameraDiagnostics" in parsed) && !("spo2" in parsed)) {
+      if (!("cameraDiagnostics" in parsed) && !("spo2" in parsed) && !("diagnostics" in parsed) && !("oxygen" in parsed)) {
         throw new Error("Missing cameraDiagnostics/spo2 — not a PPG evidence file");
       }
-      setImportedEvidence(parsed);
+      const { migrated, fromVersion, appliedSteps, warnings } = migrateEvidence(parsed);
+      // Stash migration metadata on the imported object so the UI banner can
+      // expose exactly what was upgraded (and any data-loss warnings).
+      migrated.__migration = { fromVersion, appliedSteps, warnings };
+      setImportedEvidence(migrated);
       setImportError(null);
     } catch (err) {
       setImportedEvidence(null);
@@ -389,10 +546,26 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           )}
           {importedEvidence && (
             <div className="rounded border border-sky-400/40 bg-sky-500/10 p-2 text-[10px] text-sky-200">
-              Showing IMPORTED evidence from{" "}
-              <span className="font-semibold">{importedEvidence.timestamp ?? "unknown time"}</span>{" "}
-              (schema v{importedEvidence.evidenceSchemaVersion ?? "?"}). Live diagnostics paused
-              below.
+              <div>
+                Showing IMPORTED evidence from{" "}
+                <span className="font-semibold">{importedEvidence.timestamp ?? "unknown time"}</span>{" "}
+                (schema v{importedEvidence.evidenceSchemaVersion ?? "?"}). Live diagnostics paused
+                below.
+              </div>
+              {importedEvidence.__migration?.appliedSteps?.length > 0 && (
+                <div className="mt-1 text-[9px] text-sky-300/80">
+                  Migrated from {String(importedEvidence.__migration.fromVersion)} →{" "}
+                  v{importedEvidence.evidenceSchemaVersion}:{" "}
+                  {importedEvidence.__migration.appliedSteps.join("; ")}
+                </div>
+              )}
+              {importedEvidence.__migration?.warnings?.length > 0 && (
+                <ul className="mt-1 list-disc pl-4 text-[9px] text-amber-200">
+                  {importedEvidence.__migration.warnings.map((w: string) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </div>
