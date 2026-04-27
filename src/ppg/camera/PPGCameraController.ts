@@ -489,11 +489,11 @@ export class PPGCameraController {
           torchReadback =
             settings?.torch === true || settings?.fillLightMode === "flash";
           diagnostics.fineConstraints.push({
-            key: `torch:${strat.label}`,
-            attempted: true,
-            requested: strat.constraints,
-            status: torchReadback ? "applied" : "ignored",
-            readback: { torch: settings?.torch, fillLightMode: settings?.fillLightMode },
+            key: "torch",
+            attempted: { strategy: strat.label, constraints: strat.constraints },
+            applied: { torch: settings?.torch, fillLightMode: settings?.fillLightMode },
+            status: torchReadback ? "applied" : "failed",
+            errorMessage: torchReadback ? undefined : `strategy ${strat.label} ignored by browser`,
           });
           if (torchReadback) {
             torchApplied = true;
@@ -501,9 +501,9 @@ export class PPGCameraController {
           }
         } catch (e) {
           diagnostics.fineConstraints.push({
-            key: `torch:${strat.label}`,
-            attempted: true,
-            requested: strat.constraints,
+            key: "torch",
+            attempted: { strategy: strat.label, constraints: strat.constraints },
+            applied: null,
             status: "failed",
             errorMessage: (e as Error).message,
           });
@@ -513,7 +513,7 @@ export class PPGCameraController {
       diagnostics.fineConstraints.push({
         key: "torch",
         attempted: false,
-        requested: null,
+        applied: null,
         status: "unsupported",
       });
     }
