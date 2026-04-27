@@ -60,6 +60,23 @@ export interface PublishedPPGMeasurement {
   goodWindowStreak: number;
   lastValidTimestamp: number | null;
   rejectedBeatCandidates: number;
+  /**
+   * Stale-publication contract:
+   *   - `bpm` above is ALWAYS the freshly validated value (or null if the
+   *     current window does not pass the gate). It is NEVER backfilled.
+   *   - `lastValidBpm` mirrors the last gate-approved BPM. UI may display
+   *     it dimmed when `staleBadge !== "fresh"`.
+   *   - `staleSinceMs` = (now − lastValidTimestamp). 0 when fresh, growing
+   *     while we wait for the next valid window.
+   *   - `staleBadge` discrete state for the UI:
+   *       "fresh"   → current window valid
+   *       "stale"   → 0 < staleSinceMs ≤ 6000
+   *       "expired" → staleSinceMs > 6000  (do not trust)
+   *       "never"   → no valid window has ever been published in this session
+   */
+  lastValidBpm: number | null;
+  staleSinceMs: number;
+  staleBadge: "fresh" | "stale" | "expired" | "never";
 }
 
 const NO_SIGNAL_MESSAGE = "SIN SENAL PPG VERIFICABLE";
@@ -157,6 +174,9 @@ export function createEmptyPublishedPPGMeasurement(
     goodWindowStreak: 0,
     lastValidTimestamp: null,
     rejectedBeatCandidates: 0,
+    lastValidBpm: null,
+    staleSinceMs: 0,
+    staleBadge: "never",
   };
 }
 
@@ -164,11 +184,15 @@ export class PPGPublicationGate {
   private goodWindowStreak = 0;
   private lastWindowBucket = -1;
   private wasValid = false;
+  private lastValidBpm: number | null = null;
+  private lastValidAtMs: number | null = null;
 
   reset(): void {
     this.goodWindowStreak = 0;
     this.lastWindowBucket = -1;
     this.wasValid = false;
+    this.lastValidBpm = null;
+    this.lastValidAtMs = null;
   }
 
   evaluate(params: {
@@ -333,9 +357,28 @@ export class PPGPublicationGate {
       }
     }
 
+    const nowMs = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
     let lastValidTimestamp: number | null = null;
     if (canPublishVitals && beats.bpm !== null) {
-      lastValidTimestamp = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
+      lastValidTimestamp = nowMs;
+      this.lastValidBpm = Math.round(beats.bpm);
+      this.lastValidAtMs = nowMs;
+    }
+
+    // Stale-publication ledger. NEVER substitutes the fresh `bpm` value —
+    // only exposes "what was the last valid number and how old is it" so
+    // the UI can render a dimmed "stale 3.2s" badge instead of a number
+    // that looks fresh.
+    let staleSinceMs = 0;
+    let staleBadge: PublishedPPGMeasurement["staleBadge"] = "never";
+    if (this.lastValidAtMs !== null) {
+      if (canPublishVitals) {
+        staleBadge = "fresh";
+        staleSinceMs = 0;
+      } else {
+        staleSinceMs = Math.max(0, nowMs - this.lastValidAtMs);
+        staleBadge = staleSinceMs <= 6000 ? "stale" : "expired";
+      }
     }
 
     return {
@@ -375,6 +418,9 @@ export class PPGPublicationGate {
       goodWindowStreak: this.goodWindowStreak,
       lastValidTimestamp,
       rejectedBeatCandidates: beats.rejectedCandidates,
+      lastValidBpm: this.lastValidBpm,
+      staleSinceMs,
+      staleBadge,
     };
   }
 }
