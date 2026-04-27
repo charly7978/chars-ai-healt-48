@@ -54,8 +54,8 @@ export interface UsePPGMeasurementResult {
   };
   rawSamples: PPGOpticalSample[];
   channels: FusedPPGChannels[];
-  quality: PPGSignalQuality | null;
-  beats: BeatDetectionResult | null;
+  quality: PPGSignalQuality;
+  beats: BeatDetectionResult;
   published: PublishedPPGMeasurement;
   debug: {
     active: boolean;
@@ -135,8 +135,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const cameraRef = useRef<PPGCameraState>(createEmptyCameraState());
   const rawSamplesRef = useRef<PPGOpticalSample[]>([]);
   const channelsRef = useRef<FusedPPGChannels[]>([]);
-  const qualityRef = useRef<PPGSignalQuality | null>(null);
-  const beatsRef = useRef<BeatDetectionResult | null>(null);
+  const qualityRef = useRef<PPGSignalQuality>(createEmptySignalQuality());
+  const beatsRef = useRef<BeatDetectionResult>(emptyBeats());
   const publishedRef = useRef<PublishedPPGMeasurement>(
     createEmptyPublishedPPGMeasurement(cameraRef.current),
   );
@@ -159,8 +159,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   });
   const [rawSamples, setRawSamples] = useState<PPGOpticalSample[]>([]);
   const [channels, setChannels] = useState<FusedPPGChannels[]>([]);
-  const [quality, setQuality] = useState<PPGSignalQuality | null>(null);
-  const [beats, setBeats] = useState<BeatDetectionResult | null>(null);
+  const [quality, setQuality] = useState<PPGSignalQuality>(qualityRef.current);
+  const [beats, setBeats] = useState<BeatDetectionResult>(beatsRef.current);
   const [published, setPublished] = useState<PublishedPPGMeasurement>(publishedRef.current);
   const [debug, setDebug] = useState<UsePPGMeasurementResult["debug"]>({
     active: false,
