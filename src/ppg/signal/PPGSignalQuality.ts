@@ -30,6 +30,7 @@ export interface PPGSignalQuality {
   snrDb: number;
   rrConsistency: number;
   morphologyScore: number;
+  baselineStability: number;
   totalScore: number;
   grade: "NO_SIGNAL" | "WEAK" | "FAIR" | "GOOD" | "EXCELLENT";
   reasons: string[];
@@ -53,6 +54,7 @@ export function createEmptySignalQuality(reasons: string[] = ["NO_REAL_PPG_WINDO
     snrDb: -60,
     rrConsistency: 0,
     morphologyScore: 0,
+    baselineStability: 0,
     totalScore: 0,
     grade: "NO_SIGNAL",
     reasons,
@@ -124,6 +126,10 @@ export class PPGSignalQualityAnalyzer {
       sample.perfusion.b,
     ]);
     const acDcPerfusionIndex = mean(perfusionValues);
+
+    // Calculate baseline stability from optical samples
+    const baselineValidRatio = opticalSamples.filter((s) => s.baselineValid).length / opticalSamples.length;
+    const baselineStability = baselineValidRatio * roi.dcStability;
     const rrScore = rrConsistency(beats.rrIntervalsMs);
     const morphologyScore =
       beats.beats.length > 0
@@ -195,6 +201,7 @@ export class PPGSignalQualityAnalyzer {
       snrDb: spectral.snrDb,
       rrConsistency: rrScore,
       morphologyScore,
+      baselineStability,
       totalScore,
       grade: grade(totalScore),
       reasons: [...reasons],

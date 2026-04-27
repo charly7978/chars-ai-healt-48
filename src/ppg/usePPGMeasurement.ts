@@ -59,6 +59,10 @@ export interface UsePPGMeasurementResult {
     torchApplied: boolean;
     frameIntervalMs: number;
     frameIntervalStdMs: number;
+    measuredFps: number;
+    targetFs: number;
+    selectedChannel: string;
+    channelSelectionReason: string;
     lastUpdateMs: number;
   };
 }
@@ -147,6 +151,10 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     torchApplied: false,
     frameIntervalMs: 0,
     frameIntervalStdMs: 0,
+    measuredFps: 0,
+    targetFs: 30,
+    selectedChannel: "--",
+    channelSelectionReason: "--",
     lastUpdateMs: 0,
   });
 
@@ -163,6 +171,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     setBeats(beatsRef.current);
     setPublished(publishedRef.current);
     const samplerStats = frameStatsRef.current;
+    const latestChannel = channelsRef.current[channelsRef.current.length - 1];
     setDebug({
       active: activeRef.current,
       opticalSamples: rawSamplesRef.current.length,
@@ -171,6 +180,10 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       torchApplied: cameraRef.current.torchApplied,
       frameIntervalMs: samplerStats.sampleIntervalMs,
       frameIntervalStdMs: samplerStats.sampleIntervalStdMs,
+      measuredFps: samplerStats.measuredFps,
+      targetFs: 30, // Target uniform sampling rate
+      selectedChannel: latestChannel?.selectedName ?? "--",
+      channelSelectionReason: latestChannel?.selectionReason ?? "--",
       lastUpdateMs: Date.now(),
     });
   }, []);

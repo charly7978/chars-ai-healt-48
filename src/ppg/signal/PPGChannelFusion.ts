@@ -8,17 +8,50 @@ import {
   type TimeSample,
 } from "./PPGFilters";
 
+export type ChannelName =
+  | "GREEN_OD"
+  | "RED_OD"
+  | "BLUE_OD"
+  | "CHROM"
+  | "POS"
+  | "RG_RATIO_OD"
+  | "PCA_1";
+
+export interface ChannelMetrics {
+  name: ChannelName;
+  snrDb: number;
+  bandPowerRatio: number;
+  autocorrPeakStrength: number;
+  fftAgreement: number;
+  avgSaturation: number;
+  dcDrift: number;
+  stabilityScore: number;
+  finalScore: number;
+  series: TimeSample[];
+}
+
 export interface FusedPPGChannels {
   t: number;
   g1: number;
   g2: number;
   g3: number;
   selected: number;
-  selectedName: "G1_GREEN_OD" | "G2_CHROM_OD" | "G3_PCA_POS";
+  selectedName: ChannelName;
   channelSnr: { g1: number; g2: number; g3: number };
+  allChannels: ChannelMetrics[];
+  selectionReason: string;
 }
 
-type ChannelName = FusedPPGChannels["selectedName"];
+// Channel configuration for PPG extraction
+const CHANNEL_CONFIG: { name: ChannelName; enabled: boolean; priority: number }[] = [
+  { name: "GREEN_OD", enabled: true, priority: 1 },
+  { name: "RED_OD", enabled: true, priority: 2 },
+  { name: "CHROM", enabled: true, priority: 3 },
+  { name: "POS", enabled: true, priority: 4 },
+  { name: "RG_RATIO_OD", enabled: true, priority: 5 },
+  { name: "PCA_1", enabled: false, priority: 6 }, // Only if sufficient window
+  { name: "BLUE_OD", enabled: false, priority: 7 }, // Usually too noisy
+];
 
 function latestValue(samples: TimeSample[]): number {
   return samples.length > 0 ? samples[samples.length - 1].value : 0;
@@ -104,42 +137,233 @@ export class PPGChannelFusion {
     this.prune(sample.t);
 
     const recent = this.getRecentOptical(12);
-    const g1Series = this.greenOdSeries(recent);
-    const g2Series = this.chromSeries(recent);
-    const g3Series = this.pcaSeries(recent, g1Series, g2Series);
-    const snr1 = spectralMetrics(g1Series).snrDb;
-    const snr2 = spectralMetrics(g2Series).snrDb;
-    const snr3 = spectralMetrics(g3Series).snrDb;
 
-    const avgSatG = mean(recent.map((item) => item.saturation.gHigh));
-    const avgSatR = mean(recent.map((item) => item.saturation.rHigh));
-    const avgSatB = mean(recent.map((item) => item.saturation.bHigh));
-    const scores: Array<{ name: ChannelName; score: number }> = [
-      { name: "G1_GREEN_OD", score: snr1 - avgSatG * 18 },
-      { name: "G2_CHROM_OD", score: snr2 - (avgSatR + avgSatB) * 6 },
-      { name: "G3_PCA_POS", score: snr3 - Math.max(avgSatR, avgSatG, avgSatB) * 10 },
-    ].sort((a, b) => b.score - a.score);
+    // Calculate all channel metrics
+    const allChannels = this.calculateAllChannels(recent);
 
-    const selectedName = scores[0]?.name ?? "G1_GREEN_OD";
-    const g1 = latestValue(g1Series);
-    const g2 = latestValue(g2Series);
-    const g3 = latestValue(g3Series);
-    const selected =
-      selectedName === "G1_GREEN_OD" ? g1 : selectedName === "G2_CHROM_OD" ? g2 : g3;
+    // Select best channel using robust ranking
+    const selection = this.selectBestChannel(allChannels, recent);
+
+    // Legacy G1/G2/G3 for backward compatibility
+    const g1 = allChannels.find((c) => c.name === "GREEN_OD")?.series ?? [];
+    const g2 = allChannels.find((c) => c.name === "CHROM")?.series ?? [];
+    const g3 = allChannels.find((c) => c.name === "PCA_1")?.series ?? [];
 
     const fused: FusedPPGChannels = {
       t: sample.t,
-      g1,
-      g2,
-      g3,
-      selected,
-      selectedName,
-      channelSnr: { g1: snr1, g2: snr2, g3: snr3 },
+      g1: latestValue(g1),
+      g2: latestValue(g2),
+      g3: latestValue(g3),
+      selected: latestValue(selection.selected.series),
+      selectedName: selection.selected.name,
+      channelSnr: {
+        g1: allChannels.find((c) => c.name === "GREEN_OD")?.snrDb ?? -60,
+        g2: allChannels.find((c) => c.name === "CHROM")?.snrDb ?? -60,
+        g3: allChannels.find((c) => c.name === "PCA_1")?.snrDb ?? -60,
+      },
+      allChannels,
+      selectionReason: selection.reason,
     };
 
     this.history.push(fused);
     this.prune(sample.t);
     return fused;
+  }
+
+  private calculateAllChannels(samples: PPGOpticalSample[]): ChannelMetrics[] {
+    if (samples.length < 8) return [];
+
+    const channels: ChannelMetrics[] = [];
+    const duration = (samples[samples.length - 1].t - samples[0].t) / 1000;
+
+    // Enable PCA only if sufficient window (>8s)
+    const enablePCA = duration >= 8;
+
+    for (const config of CHANNEL_CONFIG) {
+      if (!config.enabled) continue;
+      if (config.name === "PCA_1" && !enablePCA) continue;
+      if (config.name === "BLUE_OD") continue; // Skip blue (too noisy)
+
+      const series = this.extractChannel(samples, config.name);
+      if (series.length < 8) continue;
+
+      const metrics = this.calculateChannelMetrics(series, samples, config.name);
+      channels.push(metrics);
+    }
+
+    return channels;
+  }
+
+  private extractChannel(samples: PPGOpticalSample[], name: ChannelName): TimeSample[] {
+    switch (name) {
+      case "GREEN_OD":
+        return samples.map((s) => ({ t: s.t, value: s.od.g }));
+      case "RED_OD":
+        return samples.map((s) => ({ t: s.t, value: s.od.r }));
+      case "BLUE_OD":
+        return samples.map((s) => ({ t: s.t, value: s.od.b }));
+      case "CHROM":
+        return this.chromRawSeries(samples);
+      case "POS":
+        return this.posRawSeries(samples);
+      case "RG_RATIO_OD":
+        return samples.map((s) => ({ t: s.t, value: s.od.r / (s.od.g + 1e-6) }));
+      case "PCA_1":
+        return this.pcaRawSeries(samples);
+      default:
+        return [];
+    }
+  }
+
+  private chromRawSeries(samples: PPGOpticalSample[]): TimeSample[] {
+    if (samples.length < 3) return [];
+    const rN = normalizeArray(samples.map((s) => s.od.r));
+    const gN = normalizeArray(samples.map((s) => s.od.g));
+    const bN = normalizeArray(samples.map((s) => s.od.b));
+    const avgSatR = mean(samples.map((s) => s.saturation.rHigh));
+    const avgSatB = mean(samples.map((s) => s.saturation.bHigh));
+    const redWeight = 0.5 * clamp(1 - avgSatR * 2.5, 0.05, 1);
+    const blueWeight = 0.5 * clamp(1 - avgSatB * 2.5, 0.05, 1);
+    return samples.map((s, i) => ({
+      t: s.t,
+      value: gN[i] - redWeight * rN[i] - blueWeight * bN[i],
+    }));
+  }
+
+  private posRawSeries(samples: PPGOpticalSample[]): TimeSample[] {
+    // Plane Orthogonal to Skin (POS) algorithm approximation
+    if (samples.length < 3) return [];
+    const r = normalizeArray(samples.map((s) => s.linear.r));
+    const g = normalizeArray(samples.map((s) => s.linear.g));
+    const b = normalizeArray(samples.map((s) => s.linear.b));
+    // Simplified POS: projection orthogonal to [1, 1, 1] weighted by std
+    return samples.map((s, i) => ({
+      t: s.t,
+      value: g[i] - 0.5 * r[i] - 0.5 * b[i],
+    }));
+  }
+
+  private pcaRawSeries(samples: PPGOpticalSample[]): TimeSample[] {
+    if (samples.length < 12) return [];
+    const rN = normalizeArray(samples.map((s) => s.od.r));
+    const gN = normalizeArray(samples.map((s) => s.od.g));
+    const bN = normalizeArray(samples.map((s) => s.od.b));
+    const rows = samples.map((_, i) => [rN[i], gN[i], bN[i]]);
+    const pc = firstPrincipalVector(rows);
+    return samples.map((s, i) => ({
+      t: s.t,
+      value: rows[i][0] * pc[0] + rows[i][1] * pc[1] + rows[i][2] * pc[2],
+    }));
+  }
+
+  private calculateChannelMetrics(
+    series: TimeSample[],
+    opticalSamples: PPGOpticalSample[],
+    name: ChannelName,
+  ): ChannelMetrics {
+    // Preprocess
+    const processed = preprocessPPG(series);
+
+    // Spectral metrics
+    const spectral = spectralMetrics(processed);
+
+    // Autocorr metrics
+    const autocorr = autocorrBpm(processed);
+
+    // FFT BPM for agreement calculation
+    const fftBpm = spectral.bandPowerRatio >= 0.35 ? spectral.dominantFrequencyBpm : null;
+
+    // Calculate agreement with FFT
+    let fftAgreement = 0;
+    if (fftBpm !== null && autocorr.bpm !== null) {
+      const diff = Math.abs(fftBpm - autocorr.bpm);
+      fftAgreement = Math.max(0, 1 - diff / 30); // 30 BPM tolerance
+    }
+
+    // Average saturation for this channel
+    let avgSaturation = 0;
+    if (name === "GREEN_OD" || name === "CHROM" || name === "POS") {
+      avgSaturation = mean(opticalSamples.map((s) => s.saturation.gHigh));
+    } else if (name === "RED_OD" || name === "RG_RATIO_OD") {
+      avgSaturation = mean(opticalSamples.map((s) => s.saturation.rHigh));
+    } else {
+      avgSaturation = Math.max(
+        mean(opticalSamples.map((s) => s.saturation.rHigh)),
+        mean(opticalSamples.map((s) => s.saturation.gHigh)),
+        mean(opticalSamples.map((s) => s.saturation.bHigh)),
+      );
+    }
+
+    // DC drift (stability of baseline)
+    const baselines = opticalSamples.map((s) => s.baseline);
+    const dcDrift = std(baselines.map((b) => b.r + b.g + b.b));
+
+    // Stability score (requires at least 8s of stable data)
+    const stabilityScore = opticalSamples.every((s) => s.baselineValid) ? 1 : 0.5;
+
+    // Final score combining all criteria
+    const finalScore =
+      spectral.snrDb * 0.25 +
+      spectral.bandPowerRatio * 30 +
+      (autocorr.score || 0) * 20 +
+      fftAgreement * 15 -
+      avgSaturation * 25 -
+      dcDrift * 5 +
+      stabilityScore * 10;
+
+    return {
+      name,
+      snrDb: spectral.snrDb,
+      bandPowerRatio: spectral.bandPowerRatio,
+      autocorrPeakStrength: autocorr.score || 0,
+      fftAgreement,
+      avgSaturation,
+      dcDrift,
+      stabilityScore,
+      finalScore,
+      series: processed,
+    };
+  }
+
+  private selectBestChannel(
+    channels: ChannelMetrics[],
+    samples: PPGOpticalSample[],
+  ): { selected: ChannelMetrics; reason: string } {
+    if (channels.length === 0) {
+      // Fallback to simple green OD
+      return {
+        selected: {
+          name: "GREEN_OD",
+          snrDb: -60,
+          bandPowerRatio: 0,
+          autocorrPeakStrength: 0,
+          fftAgreement: 0,
+          avgSaturation: 1,
+          dcDrift: 0,
+          stabilityScore: 0,
+          finalScore: -1000,
+          series: samples.map((s) => ({ t: s.t, value: s.od.g })),
+        },
+        reason: "NO_VALID_CHANNELS_FALLBACK_GREEN",
+      };
+    }
+
+    // Sort by final score
+    const ranked = [...channels].sort((a, b) => b.finalScore - a.finalScore);
+    const best = ranked[0];
+
+    // Build selection reason
+    const reasons: string[] = [];
+    if (best.snrDb > 5) reasons.push(`SNR:${best.snrDb.toFixed(1)}dB`);
+    if (best.bandPowerRatio > 0.4) reasons.push(`BPR:${(best.bandPowerRatio * 100).toFixed(0)}%`);
+    if (best.autocorrPeakStrength > 0.3) reasons.push(`AC:${(best.autocorrPeakStrength * 100).toFixed(0)}%`);
+    if (best.fftAgreement > 0.7) reasons.push("FFT_AGREE");
+    if (best.avgSaturation < 0.1) reasons.push("LOW_SAT");
+    if (best.stabilityScore >= 1) reasons.push("STABLE");
+
+    const reason = `${best.name} (${ranked.length} ch) Score:${best.finalScore.toFixed(1)} [${reasons.join(", ")}]`;
+
+    return { selected: best, reason };
   }
 
   getHistory(seconds = this.maxSeconds): FusedPPGChannels[] {

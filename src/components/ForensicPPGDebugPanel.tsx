@@ -165,6 +165,21 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         </div>
       </div>
 
+      {/* SAMPLER SECTION - Fs info */}
+      <div className="mb-3 border-l-2 border-blue-500/50 pl-2">
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-blue-300">Sampling</div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <span className="text-white/55">measured FPS</span>
+          <span>{fmt(debug.measuredFps, 1)} fps</span>
+          <span className="text-white/55">target Fs</span>
+          <span>{debug.targetFs} Hz</span>
+          <span className="text-white/55">frame interval</span>
+          <span>
+            {fmt(debug.frameIntervalMs, 1)} ± {fmt(debug.frameIntervalStdMs, 1)} ms
+          </span>
+        </div>
+      </div>
+
       {/* SIGNAL SECTION */}
       <div className="mb-3 border-l-2 border-emerald-500/50 pl-2">
         <div className="mb-1 text-[10px] uppercase tracking-wider text-emerald-300">Signal</div>
@@ -173,10 +188,16 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           <span>
             {fmt(latestChannels?.g1, 3)} / {fmt(latestChannels?.g2, 3)} / {fmt(latestChannels?.g3, 3)}
           </span>
-          <span className="text-white/55">selected</span>
-          <span>{latestChannels?.selectedName ?? "--"}</span>
+          <span className="text-white/55">selected channel</span>
+          <span className="text-cyan-300">{latestChannels?.selectedName ?? "--"}</span>
+          <span className="text-white/55">selection reason</span>
+          <span className="truncate text-[9px]" title={debug.channelSelectionReason}>
+            {debug.channelSelectionReason}
+          </span>
           <span className="text-white/55">band power</span>
           <span>{fmt(quality.bandPowerRatio, 3)}</span>
+          <span className="text-white/55">SNR</span>
+          <span>{fmt(quality.snrDb, 1)} dB</span>
           <span className="text-white/55">FFT / autocorr / peak</span>
           <span>
             {fmt(quality.fftBpm, 1)} / {fmt(quality.autocorrBpm, 1)} / {fmt(quality.peakBpm, 1)}
