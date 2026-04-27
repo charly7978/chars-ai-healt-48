@@ -120,9 +120,13 @@ export class RadiometricPPGExtractor {
   }
 
   processFrame(frame: RealFrame): PPGOpticalSample | null {
-    if (!frame.imageData || frame.width <= 0 || frame.height <= 0) return null;
+    if (!frame.imageData || frame.width <= 0 || frame.height <= 0) {
+      console.log("[RadiometricPPGExtractor] Invalid frame data");
+      return null;
+    }
 
     const evidence = this.roiAnalyzer.analyze(frame.imageData);
+    console.log("[RadiometricPPGExtractor] ROI evidence accepted:", evidence.accepted, "reasons:", evidence.reason.slice(0, 3));
 
     // DO NOT hard-reject ROI - let quality scores handle it downstream
     // The ROI analyzer provides scores; hard rejection was blocking all frames
@@ -153,7 +157,11 @@ export class RadiometricPPGExtractor {
       }
     }
 
-    if (linearValues.r.length < 32) return null;
+    console.log("[RadiometricPPGExtractor] Collected pixels:", linearValues.r.length, "required: 32");
+    if (linearValues.r.length < 32) {
+      console.log("[RadiometricPPGExtractor] Insufficient pixels, returning null");
+      return null;
+    }
 
     // Calculate dt from real timestamps
     const dt = this.lastTimestamp > 0 ? frame.timestampMs - this.lastTimestamp : 1000 / frame.measuredFps;
