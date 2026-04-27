@@ -39,25 +39,29 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
   const frameStats = measurement.frameStats;
   const beats = measurement.beats;
 
-  // Track RR consistency history for trend arrow.
-  const rrConsistencyHistoryRef = useRef<number[]>([]);
+  // Track RR consistency history for trend arrow (with timestamps for auditability).
+  const rrConsistencyHistoryRef = useRef<{ value: number; timestamp: number }[]>([]);
   const rrCount = beats.rrIntervalsMs.length;
   if (rrCount >= 2 && Number.isFinite(quality.rrConsistency)) {
     const hist = rrConsistencyHistoryRef.current;
     const last = hist[hist.length - 1];
-    if (last === undefined || Math.abs(last - quality.rrConsistency) > 1e-6) {
-      hist.push(quality.rrConsistency);
+    if (last === undefined || Math.abs(last.value - quality.rrConsistency) > 1e-6) {
+      hist.push({ value: quality.rrConsistency, timestamp: Date.now() });
       if (hist.length > 5) hist.shift();
     }
   }
+  const rrHistory = rrConsistencyHistoryRef.current;
   const rrTrend: "up" | "down" | "flat" | null = (() => {
-    const hist = rrConsistencyHistoryRef.current;
-    if (hist.length < 2) return null;
-    const delta = hist[hist.length - 1] - hist[0];
+    if (rrHistory.length < 2) return null;
+    const delta = rrHistory[rrHistory.length - 1].value - rrHistory[0].value;
     if (delta > 0.02) return "up";
     if (delta < -0.02) return "down";
     return "flat";
   })();
+  const fmtClock = (ts: number) => {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+  };
 
   const exportJson = () => {
     const auditData = {
@@ -376,14 +380,13 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                   "  ▲ improving  (delta > +0.02)\n" +
                   "  ▼ degrading  (delta < −0.02)\n" +
                   "  ▬ stable     (|delta| ≤ 0.02)\n\n" +
-                  `Trend window (${rrConsistencyHistoryRef.current.length}/5): ` +
-                  (rrConsistencyHistoryRef.current.length === 0
+                  `Trend window (${rrHistory.length}/5): ` +
+                  (rrHistory.length === 0
                     ? "empty"
-                    : rrConsistencyHistoryRef.current.map((v) => v.toFixed(2)).join(" → ")) +
-                  (rrConsistencyHistoryRef.current.length >= 2
+                    : rrHistory.map((h) => `${h.value.toFixed(2)}@${fmtClock(h.timestamp)}`).join(" → ")) +
+                  (rrHistory.length >= 2
                     ? `\nDelta: ${(
-                        rrConsistencyHistoryRef.current[rrConsistencyHistoryRef.current.length - 1] -
-                        rrConsistencyHistoryRef.current[0]
+                        rrHistory[rrHistory.length - 1].value - rrHistory[0].value
                       ).toFixed(3)}`
                     : "")
                 }
@@ -409,6 +412,16 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                     <span className="ml-1 text-[9px] text-white/40">
                       ({beats.beats.length} beats / using {rrCount} RR{rrCount === 1 ? "" : "s"})
                     </span>
+                    {rrHistory.length >= 2 && (
+                      <span
+                        className="ml-1 text-[9px] text-white/50"
+                        title="First → last value of the trend window used for the ▲/▼/▬ arrow"
+                      >
+                        [trend: {rrHistory[0].value.toFixed(2)}@{fmtClock(rrHistory[0].timestamp)} →{" "}
+                        {rrHistory[rrHistory.length - 1].value.toFixed(2)}@
+                        {fmtClock(rrHistory[rrHistory.length - 1].timestamp)}]
+                      </span>
+                    )}
                   </>
                 )}
               </span>
