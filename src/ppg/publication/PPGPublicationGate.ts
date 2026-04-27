@@ -154,42 +154,49 @@ export class PPGPublicationGate {
     const reasons = new Set<string>(quality.reasons);
     const bufferMs = opticalSamples.length >= 2 ? opticalSamples[opticalSamples.length - 1].t - opticalSamples[0].t : 0;
     const selectedDurationMs = durationMs(selectedSeries);
-    const validBeats = beats.beats.filter((beat) => beat.confidence >= 0.65);
+    const validBeats = beats.beats.filter((beat) => beat.confidence >= 0.55);
     const bradycardiaWindowAllowed =
       beats.bpm !== null && beats.bpm < 45 && bufferMs >= 14000 && validBeats.length >= 4;
-    const enoughBeats = validBeats.length >= 6 || bradycardiaWindowAllowed;
+    const enoughBeats = validBeats.length >= 5 || bradycardiaWindowAllowed;
     const torchCondition = !camera.torchAvailable || camera.torchEnabled;
-    const saturationOk = quality.saturationPenalty <= 0.45;
-    const perfusionOk = quality.acDcPerfusionIndex >= 0.03;
-    // Use multi-estimator agreement from BeatDetector
+    const saturationOk = quality.saturationPenalty <= 0.55;
+    const perfusionOk = quality.acDcPerfusionIndex >= 0.02;
+    // Multi-estimator agreement (informative, not a hard binary lock)
     const estimatorAgreementBpm = beats.estimatorAgreementBpm ?? 999;
-    const estimatorsOk =
-      beats.fftBpm !== null &&
-      beats.autocorrBpm !== null &&
-      beats.bpm !== null;
-    const agreementOk = estimatorAgreementBpm <= 5;
+    const estimatorsAvailable =
+      Number(beats.fftBpm !== null) +
+      Number(beats.autocorrBpm !== null) +
+      Number(beats.bpm !== null);
+    // Require at least 2 estimators agreeing within 8 BPM, OR a single
+    // very-high-confidence temporal detection with strong band power.
+    const twoEstimatorsAgree = estimatorsAvailable >= 2 && estimatorAgreementBpm <= 8;
+    const strongTemporalAlone =
+      beats.bpm !== null &&
+      beats.confidence >= 0.7 &&
+      quality.bandPowerRatio >= 0.45 &&
+      quality.rrConsistency >= 0.6;
+    const agreementOk = twoEstimatorsAgree || strongTemporalAlone;
+
     const coreQualityPass =
-      quality.totalScore >= 70 &&
-      quality.bandPowerRatio >= 0.35 &&
+      quality.totalScore >= 60 &&
+      quality.bandPowerRatio >= 0.30 &&
       agreementOk &&
-      estimatorsOk &&
-      roi.contactScore >= 0.55 &&
+      roi.contactScore >= 0.45 &&
       saturationOk &&
       perfusionOk &&
-      quality.rrConsistency >= 0.45 &&
-      beats.confidence >= 0.55;
+      quality.rrConsistency >= 0.4 &&
+      beats.confidence >= 0.45;
 
     if (!camera.cameraReady) reasons.add("CAMERA_NOT_READY");
     if (!torchCondition) reasons.add("TORCH_NOT_ENABLED");
-    // Prefer 12-15s buffer for stable publication, minimum 8s
-    if (bufferMs < 8000 || selectedDurationMs < 8000) reasons.add("BUFFER_LT_8S");
-    if (bufferMs < 12000) reasons.add("BUFFER_LT_12S_PREFERRED");
+    if (bufferMs < 6000 || selectedDurationMs < 6000) reasons.add("BUFFER_LT_6S");
+    if (bufferMs < 10000) reasons.add("BUFFER_LT_10S_PREFERRED");
     if (!enoughBeats) reasons.add("NOT_ENOUGH_VALID_BEATS");
     if (!agreementOk) reasons.add(`ESTIMATOR_AGREEMENT_${estimatorAgreementBpm.toFixed(1)}_BPM`);
-    if (!estimatorsOk) reasons.add("MISSING_REQUIRED_ESTIMATOR");
+    if (estimatorsAvailable < 2 && !strongTemporalAlone) reasons.add("INSUFFICIENT_ESTIMATORS");
     if (!saturationOk) reasons.add("SATURATION_DESTRUCTIVE");
     if (!perfusionOk) reasons.add("PERFUSION_BELOW_THRESHOLD");
-    if (quality.rrConsistency < 0.45) reasons.add("RR_CHAOTIC_OR_INSUFFICIENT");
+    if (quality.rrConsistency < 0.4) reasons.add("RR_CHAOTIC_OR_INSUFFICIENT");
 
     const now = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
     const windowBucket = Math.floor(now / 2000);
@@ -207,13 +214,13 @@ export class PPGPublicationGate {
       state = "ERROR";
     } else if (!camera.cameraReady) {
       state = "CAMERA_STARTING";
-    } else if (bufferMs < 1200 || roi.contactScore < 0.30) {
+    } else if (bufferMs < 1200 || roi.contactScore < 0.25) {
       state = "CAMERA_READY_NO_PPG";
-    } else if (bufferMs < 8000) {
+    } else if (bufferMs < 6000) {
       state = "ACQUIRING_BASELINE";
-    } else if (quality.totalScore < 45) {
+    } else if (quality.totalScore < 35) {
       state = this.wasValid ? "PPG_LOST" : "PPG_WEAK";
-    } else if (coreQualityPass && this.goodWindowStreak >= 3 && enoughBeats) {
+    } else if (coreQualityPass && this.goodWindowStreak >= 2 && enoughBeats) {
       state = "PPG_VALID";
     } else {
       state = this.wasValid ? "PPG_LOST" : "PPG_VALIDATING";
@@ -223,11 +230,11 @@ export class PPGPublicationGate {
       state === "PPG_VALID" &&
       camera.cameraReady &&
       torchCondition &&
-      bufferMs >= 8000 &&
-      selectedDurationMs >= 8000 &&
+      bufferMs >= 6000 &&
+      selectedDurationMs >= 6000 &&
       enoughBeats &&
       coreQualityPass &&
-      this.goodWindowStreak >= 3 &&
+      this.goodWindowStreak >= 2 &&
       beats.bpm !== null;
 
     // Suspend publication immediately if quality drops
