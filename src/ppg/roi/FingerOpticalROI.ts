@@ -10,6 +10,10 @@ export interface FingerOpticalEvidence {
   opticalDensity: { r: number; g: number; b: number };
   highSaturation: { r: number; g: number; b: number };
   lowSaturation: { r: number; g: number; b: number };
+  /** Per-channel ratio (0..1) of pixels usable for that channel after independent saturation masking */
+  usablePixelRatio: { r: number; g: number; b: number };
+  /** Best channel usable ratio — what the pipeline can actually rely on */
+  usablePixelRatioMax: number;
   spatialVariance: number;
   dcStability: number;
   dcTrend: number;
@@ -87,11 +91,20 @@ export class FingerOpticalROI {
 
     let sumLuma = 0;
     let sumLumaSq = 0;
-    let validCount = 0;
+    let validCount = 0; // pixels usable in at least one channel (luma stats)
+
+    // Per-channel usable counts (pixels not clipped on that channel)
+    const usableCount = { r: 0, g: 0, b: 0 };
 
     // Saturation tracking
     const highSat = { r: 0, g: 0, b: 0 };
     const lowSat = { r: 0, g: 0, b: 0 };
+
+    // Per-channel saturation thresholds. We keep them tight at the top
+    // (the flash easily clips red on dark skin) but allow black-level noise
+    // floor on the bottom (sensors rarely return true 0).
+    const HIGH = 250;
+    const LOW = 4;
 
     for (let y = 0; y < height; y += step) {
       for (let x = 0; x < width; x += step) {
@@ -100,32 +113,50 @@ export class FingerOpticalROI {
         const g = data[idx + 1];
         const b = data[idx + 2];
 
-        // Saturation mask: reject pixels near 0 or 255
-        const isSaturated = r >= 252 || g >= 252 || b >= 252;
-        const isDark = r <= 3 && g <= 3 && b <= 3;
+        const rHigh = r >= HIGH;
+        const gHigh = g >= HIGH;
+        const bHigh = b >= HIGH;
+        const rLow = r <= LOW;
+        const gLow = g <= LOW;
+        const bLow = b <= LOW;
 
-        if (r >= 252) highSat.r++;
-        if (g >= 252) highSat.g++;
-        if (b >= 252) highSat.b++;
-        if (r <= 3) lowSat.r++;
-        if (g <= 3) lowSat.g++;
-        if (b <= 3) lowSat.b++;
+        if (rHigh) highSat.r++;
+        if (gHigh) highSat.g++;
+        if (bHigh) highSat.b++;
+        if (rLow) lowSat.r++;
+        if (gLow) lowSat.g++;
+        if (bLow) lowSat.b++;
 
-        // Only include non-saturated pixels
-        if (!isSaturated && !isDark) {
+        const rUsable = !rHigh && !rLow;
+        const gUsable = !gHigh && !gLow;
+        const bUsable = !bHigh && !bLow;
+
+        // Independent channel masking: a clipped red pixel still contributes
+        // green and blue, so the green-channel pulse signal is preserved even
+        // when the flash blows out red.
+        if (rUsable) {
           rawValues.r.push(r);
+          linearValues.r.push(srgbToLinear(r));
+          usableCount.r++;
+        }
+        if (gUsable) {
           rawValues.g.push(g);
+          linearValues.g.push(srgbToLinear(g));
+          usableCount.g++;
+        }
+        if (bUsable) {
           rawValues.b.push(b);
+          linearValues.b.push(srgbToLinear(b));
+          usableCount.b++;
+        }
 
-          const lr = srgbToLinear(r);
-          const lg = srgbToLinear(g);
-          const lb = srgbToLinear(b);
-          linearValues.r.push(lr);
-          linearValues.g.push(lg);
-          linearValues.b.push(lb);
-
-          // Perceptual luma for spatial analysis
-          const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (rUsable || gUsable || bUsable) {
+          // Luma uses whatever channels survived; missing channels fall back
+          // to the per-channel midpoint so we don't artificially darken stats.
+          const lr = rUsable ? r : 128;
+          const lg = gUsable ? g : 128;
+          const lb = bUsable ? b : 128;
+          const luma = 0.299 * lr + 0.587 * lg + 0.114 * lb;
           sumLuma += luma;
           sumLumaSq += luma * luma;
           validCount++;
@@ -139,11 +170,11 @@ export class FingerOpticalROI {
     for (const ch of CHANNELS) rawValues[ch].sort((a, b) => a - b);
     for (const ch of CHANNELS) linearValues[ch].sort((a, b) => a - b);
 
-    // Raw RGB statistics
+    // Per-channel raw RGB statistics — each channel uses only its own usable pool
     const meanRgb = {
-      r: validCount ? rawValues.r.reduce((a, b) => a + b, 0) / validCount : 0,
-      g: validCount ? rawValues.g.reduce((a, b) => a + b, 0) / validCount : 0,
-      b: validCount ? rawValues.b.reduce((a, b) => a + b, 0) / validCount : 0,
+      r: usableCount.r ? rawValues.r.reduce((a, b) => a + b, 0) / usableCount.r : 0,
+      g: usableCount.g ? rawValues.g.reduce((a, b) => a + b, 0) / usableCount.g : 0,
+      b: usableCount.b ? rawValues.b.reduce((a, b) => a + b, 0) / usableCount.b : 0,
     };
     const medianRgb = {
       r: percentile(rawValues.r, 0.5),
@@ -167,6 +198,17 @@ export class FingerOpticalROI {
       g: trimmedMean(linearValues.g, 0.1),
       b: trimmedMean(linearValues.b, 0.1),
     };
+
+    const usablePixelRatio = {
+      r: usableCount.r / Math.max(1, totalChecked),
+      g: usableCount.g / Math.max(1, totalChecked),
+      b: usableCount.b / Math.max(1, totalChecked),
+    };
+    const usablePixelRatioMax = Math.max(
+      usablePixelRatio.r,
+      usablePixelRatio.g,
+      usablePixelRatio.b,
+    );
 
     // Update adaptive baseline (slow, percentile-based)
     if (!this.baselineLinear) {
@@ -255,8 +297,9 @@ export class FingerOpticalROI {
     // Illumination score (brightness + saturation check)
     const illuminationScore = clamp01(brightnessScore * 0.7 + saturationScore * 0.3);
 
-    // Coverage score (valid pixels vs expected)
-    const coverageRatio = validCount / Math.max(1, totalChecked);
+    // Coverage uses the BEST channel — if green is fully usable we shouldn't
+    // reject the frame just because red is saturated under flash.
+    const coverageRatio = usablePixelRatioMax;
     const uniformityScore = clamp01(1 - spatialVariance * 25);
     const coverageScore = clamp01(coverageRatio * uniformityScore);
 
@@ -312,6 +355,8 @@ export class FingerOpticalROI {
       opticalDensity,
       highSaturation,
       lowSaturation,
+      usablePixelRatio,
+      usablePixelRatioMax,
       spatialVariance,
       dcStability: this.dcStability,
       dcTrend,

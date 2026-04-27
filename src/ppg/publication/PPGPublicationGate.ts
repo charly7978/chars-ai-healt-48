@@ -86,6 +86,8 @@ export function createEmptyPublishedPPGMeasurement(
         opticalDensity: { r: 0, g: 0, b: 0 },
         highSaturation: { r: 0, g: 0, b: 0 },
         lowSaturation: { r: 0, g: 0, b: 0 },
+        usablePixelRatio: { r: 0, g: 0, b: 0 },
+        usablePixelRatioMax: 0,
         spatialVariance: 0,
         dcStability: 0,
         dcTrend: 0,
