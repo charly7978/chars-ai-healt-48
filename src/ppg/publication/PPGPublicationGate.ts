@@ -263,7 +263,7 @@ export class PPGPublicationGate {
     const tileGateOk = roi.usableTileCount >= 6 && roi.roiStabilityScore >= 0.4;
     // Contact state veto for any heart-rate publication.
     const contactStateOk = roi.accepted === true && roi.contactState === "stable";
-    const pressureOk = roi.pressureState === "optimal";
+    const pressureOk = roi.pressureState === "optimal" || roi.pressureState === "low_pressure";
 
     const coreQualityPass =
       quality.totalScore >= thr.minTotalQualityScore &&
