@@ -153,9 +153,6 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const processingFpsRef = useRef(0);
   const lastProcessTimeRef = useRef(0);
   const processCountRef = useRef(0);
-  const renderFpsRef = useRef(0);
-  const lastRenderTimeRef = useRef(0);
-  const renderCountRef = useRef(0);
 
   const [camera, setCamera] = useState<PPGCameraState>(cameraRef.current);
   const [frameStats, setFrameStats] = useState<FrameSamplerStats>(frameStatsRef.current);

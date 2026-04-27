@@ -19,13 +19,7 @@ function rgb(value?: { r: number; g: number; b: number }): string {
   return `${fmt(value.r, 1)}, ${fmt(value.g, 1)}, ${fmt(value.b, 1)}`;
 }
 
-type DebugCapabilities = MediaTrackCapabilities & {
-  torch?: boolean;
-  frameRate?: { max?: number };
-};
-
 export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugPanelProps) {
-  const latestSample = measurement.rawSamples[measurement.rawSamples.length - 1];
   const latestChannels = measurement.channels[measurement.channels.length - 1];
   const quality = measurement.quality;
   const evidence = measurement.published.evidence;
@@ -33,7 +27,6 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
   const oxygen = measurement.published.oxygen;
   const camera = measurement.camera;
   const cameraSettings = camera.settings;
-  const cameraCapabilities = camera.capabilities as DebugCapabilities | null;
   const debug = measurement.debug;
   const reasons = measurement.published.quality.reasons;
   const frameStats = measurement.frameStats;

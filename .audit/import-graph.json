@@ -1,0 +1,41 @@
+{
+  "generatedAt": "2026-04-27T05:34:21.524Z",
+  "runtimeEntries": [
+    "src/main.tsx",
+    "src/App.tsx"
+  ],
+  "testEntries": [
+    "src/ppg/signal/__tests__/BeatDetector.test.ts"
+  ],
+  "counts": {
+    "KEEP_PRODUCTION": 19,
+    "KEEP_TEST": 1,
+    "KEEP_DOC": 1,
+    "KEEP_TYPES": 2
+  },
+  "classification": {
+    "src/App.tsx": "KEEP_PRODUCTION",
+    "src/components/ForensicPPGDebugPanel.tsx": "KEEP_PRODUCTION",
+    "src/components/FullScreenCardiacMonitor.tsx": "KEEP_PRODUCTION",
+    "src/index.css": "KEEP_PRODUCTION",
+    "src/main.tsx": "KEEP_PRODUCTION",
+    "src/pages/Index.tsx": "KEEP_PRODUCTION",
+    "src/pages/NotFound.tsx": "KEEP_PRODUCTION",
+    "src/ppg/camera/CameraCalibrationProfile.ts": "KEEP_PRODUCTION",
+    "src/ppg/camera/FrameSampler.ts": "KEEP_PRODUCTION",
+    "src/ppg/camera/PPGCameraController.ts": "KEEP_PRODUCTION",
+    "src/ppg/publication/PPGPublicationGate.ts": "KEEP_PRODUCTION",
+    "src/ppg/roi/FingerOpticalROI.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/BeatDetector.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/PPGChannelFusion.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/PPGFilters.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/PPGOxygenEstimator.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/PPGSignalQuality.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/RadiometricPPGExtractor.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/__tests__/BeatDetector.test.ts": "KEEP_TEST",
+    "src/ppg/usePPGMeasurement.ts": "KEEP_PRODUCTION",
+    "src/tailwind.config.lov.json": "KEEP_DOC",
+    "src/types/media-stream.d.ts": "KEEP_TYPES",
+    "src/vite-env.d.ts": "KEEP_TYPES"
+  }
+}

@@ -153,15 +153,11 @@ export class PPGPublicationGate {
   private goodWindowStreak = 0;
   private lastWindowBucket = -1;
   private wasValid = false;
-  private lastPublishedBpm: number | null = null;
-  private lastPublishedTimestamp: number | null = null;
 
   reset(): void {
     this.goodWindowStreak = 0;
     this.lastWindowBucket = -1;
     this.wasValid = false;
-    this.lastPublishedBpm = null;
-    this.lastPublishedTimestamp = null;
   }
 
   evaluate(params: {
@@ -286,11 +282,8 @@ export class PPGPublicationGate {
       this.goodWindowStreak >= 2 &&
       beats.bpm !== null;
 
-    // Suspend publication immediately if quality drops
-    if (!canPublishVitals && this.wasValid) {
-      this.lastPublishedBpm = null;
-      this.lastPublishedTimestamp = null;
-    }
+    // Quality dropped — wasValid transition handled below; nothing else to clear
+    // because publication is recomputed every window from `canPublishVitals`.
 
     this.wasValid = canPublishVitals;
 

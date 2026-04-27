@@ -1,4 +1,4 @@
-import { clamp, srgbToLinear, trimmedMean } from "../signal/PPGFilters";
+import { srgbToLinear, trimmedMean } from "../signal/PPGFilters";
 
 /**
  * High-level finger-contact state derived from the per-tile analysis.
@@ -315,8 +315,6 @@ export class FingerOpticalROI {
 
     // Chromatic analysis
     const redRatio = meanRgb.r / Math.max(1, meanRgb.r + meanRgb.g + meanRgb.b);
-    const rgRatio = meanRgb.r / Math.max(1, meanRgb.g);
-    const rbRatio = meanRgb.r / Math.max(1, meanRgb.b);
 
     // Red dominance (finger-like under flash)
     const redDominance = clamp01((redRatio - 0.3) / 0.4);

@@ -105,7 +105,6 @@ export class PPGSignalQualityAnalyzer {
       return createEmptySignalQuality(["RESAMPLE_FAILED", ...reasons]);
     }
     const signal = preprocessResult.samples;
-    const actualFs = preprocessResult.actualFs;
 
     const spectral = spectralMetrics(signal, 0.5, 4.0);
     const autocorr = autocorrBpm(signal);
