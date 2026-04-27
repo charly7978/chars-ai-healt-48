@@ -323,7 +323,9 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           const fmtBpm = (v: number | null | undefined) =>
             v === null || v === undefined ? "awaiting…" : fmt(v, 1);
           return (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            <>
+              {statusLine}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
               <span className="text-white/55">beats accepted / rejected</span>
               <span>
                 {beats.beats.length} / {beats.rejectedCandidates}
