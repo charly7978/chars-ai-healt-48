@@ -319,6 +319,11 @@ export class PPGPublicationGate {
     if (!tileGateOk) reasons.add(`TILE_GATE_FAIL_${roi.usableTileCount}/${roi.tileCount}`);
     if (!contactStateOk) reasons.add(`CONTACT_NOT_ACCEPTED_${roi.contactState.toUpperCase()}`);
     if (!pressureOk) reasons.add(`PRESSURE_${roi.pressureState.toUpperCase()}`);
+    if (!contactStreakOk) {
+      reasons.add(
+        `CONTACT_STREAK_${this.contactFrameStreak}/${PPGPublicationGate.MIN_CONTACT_STREAK_FRAMES}`,
+      );
+    }
 
     const now = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
     const windowBucket = Math.floor(now / 2000);
