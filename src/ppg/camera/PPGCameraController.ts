@@ -336,11 +336,28 @@ export class PPGCameraController {
       }
 
       // Phase 3 — open with progressive constraints, logging every attempt.
-      const opened = await this.openCamera(diagnostics, bestRear?.deviceId ?? null);
+      let opened = await this.openCamera(diagnostics, bestRear?.deviceId ?? null);
 
-      const videoTrack = opened.stream.getVideoTracks()[0] ?? null;
+      let videoTrack = opened.stream.getVideoTracks()[0] ?? null;
       if (!videoTrack) {
         throw new Error("No video track received from camera");
+      }
+
+      // Phase 3.5 — if browser handed us an ultrawide/front despite our hint,
+      // swap to the best non-ultrawide rear candidate.
+      const swap = await this.replaceUltraWideIfNeeded(
+        videoTrack,
+        opened.stream,
+        profiles,
+        diagnostics,
+      );
+      if (swap) {
+        opened = {
+          stream: swap.stream,
+          constraints: swap.constraints,
+          selectedReason: "ultrawide-replaced",
+        };
+        videoTrack = swap.stream.getVideoTracks()[0];
       }
 
       // Sync the picked device against the enumerated profiles.
@@ -367,6 +384,16 @@ export class PPGCameraController {
       if (matchedProfile && !matchedProfile.selectedReason) {
         matchedProfile.selectedReason = opened.selectedReason;
       }
+      // Mark all other enumerated profiles as rejected with reason.
+      const chosenId = diagnostics.selectedDevice.deviceId;
+      for (const p of profiles) {
+        if (p.deviceId !== chosenId && p.selectedReason === null) {
+          if (p.rejectedReasons.length === 0) {
+            p.rejectedReasons.push("not-best-score");
+          }
+        }
+      }
+
 
       // Phase 4 — capture capabilities/settings.
       let capabilities: MediaTrackCapabilities | null = null;
@@ -582,6 +609,88 @@ export class PPGCameraController {
     }
 
     throw lastError ?? new Error("Failed to open rear camera after all attempts");
+  }
+
+  private async replaceUltraWideIfNeeded(
+    track: MediaStreamTrack,
+    stream: MediaStream,
+    profiles: DeviceCameraProfile[],
+    diagnostics: CameraDiagnostics,
+  ): Promise<{ stream: MediaStream; constraints: MediaTrackConstraints } | null> {
+    const label = (track.label || "").toLowerCase();
+    const settings = track.getSettings();
+    const matched = profiles.find((p) => p.deviceId === settings.deviceId) ?? null;
+    const isUltrawideOrFront =
+      ULTRA_WIDE_TOKENS.some((t) => label.includes(t)) ||
+      NON_PRIMARY_TOKENS.some((t) => label.includes(t)) ||
+      detectFacingFromLabel(track.label) === "user" ||
+      (matched ? matched.penalties.ultraWide > 0 || matched.penalties.frontCamera > 0 : false);
+
+    if (!isUltrawideOrFront) return null;
+
+    const replacement = profiles.find(
+      (p) =>
+        p.deviceId !== settings.deviceId &&
+        p.facingModeDetected === "environment" &&
+        p.penalties.ultraWide === 0 &&
+        p.penalties.frontCamera === 0,
+    );
+    if (!replacement) {
+      // Mark the chosen ultrawide so the panel surfaces why we kept it.
+      if (matched) {
+        matched.rejectedReasons.push(
+          "would-replace-but-no-suitable-rear-candidate",
+        );
+      }
+      diagnostics.attempts.push({
+        label: "ultrawide-replacement-skipped",
+        constraints: {},
+        outcome: "failure",
+        errorName: "NoCandidate",
+        errorMessage:
+          "Initial track is ultrawide/front but no non-ultrawide rear candidate exists",
+      });
+      return null;
+    }
+
+    const replConstraints: MediaTrackConstraints = {
+      ...REQUESTED_VIDEO,
+      deviceId: { exact: replacement.deviceId },
+    };
+    try {
+      const replacementStream = await navigator.mediaDevices.getUserMedia({
+        video: replConstraints,
+        audio: false,
+      });
+      stream.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {
+          /* noop */
+        }
+      });
+      if (matched) {
+        matched.rejectedReasons.push("replaced-by-non-ultrawide-rear");
+      }
+      replacement.selectedReason = "ultrawide-replacement";
+      diagnostics.attempts.push({
+        label: "ultrawide-replacement",
+        constraints: { video: replConstraints, audio: false },
+        outcome: "success",
+        resolvedDeviceId: replacement.deviceId,
+        resolvedLabel: replacement.label,
+      });
+      return { stream: replacementStream, constraints: replConstraints };
+    } catch (error) {
+      diagnostics.attempts.push({
+        label: "ultrawide-replacement",
+        constraints: { video: replConstraints, audio: false },
+        outcome: "failure",
+        errorName: (error as Error).name,
+        errorMessage: (error as Error).message,
+      });
+      return null;
+    }
   }
 
   private async applyFineConstraints(

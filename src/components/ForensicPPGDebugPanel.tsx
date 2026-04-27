@@ -254,6 +254,45 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                 {String(calib.canPublishSpO2)}
               </span>
             </div>
+            {diag.enumeratedDevices.length > 1 && (
+              <details className="mt-1 text-[10px]">
+                <summary className="cursor-pointer text-white/55 hover:text-white/80">
+                  candidates &amp; rejection reasons ({diag.enumeratedDevices.length})
+                </summary>
+                <ul className="mt-1 space-y-0.5">
+                  {diag.enumeratedDevices.map((d) => {
+                    const isSelected = d.deviceId === diag.selectedDevice?.deviceId;
+                    return (
+                      <li
+                        key={d.deviceId || d.label}
+                        className={
+                          "rounded px-1 py-0.5 " +
+                          (isSelected
+                            ? "bg-emerald-400/10 text-emerald-200"
+                            : "bg-white/5 text-white/70")
+                        }
+                      >
+                        <span className="font-semibold">
+                          [{fmt(d.score, 0)}] {d.label || "(empty label)"}
+                        </span>
+                        <span className="ml-1 text-white/40">
+                          {d.facingModeDetected}
+                        </span>
+                        {isSelected ? (
+                          <span className="ml-1 text-emerald-300">
+                            ✓ {d.selectedReason ?? "selected"}
+                          </span>
+                        ) : d.rejectedReasons.length > 0 ? (
+                          <span className="ml-1 text-amber-300">
+                            ✗ {d.rejectedReasons.join(", ")}
+                          </span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </details>
+            )}
           </div>
         );
       })()}
