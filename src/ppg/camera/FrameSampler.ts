@@ -6,6 +6,8 @@ export interface RealFrame {
   mediaTime?: number;
   presentedFrames?: number;
   measuredFps: number;
+  sampleIntervalMs: number;
+  isRoiReduced: boolean;
 }
 
 export interface FrameSamplerStats {
@@ -14,6 +16,10 @@ export interface FrameSamplerStats {
   droppedFrames: number;
   width: number;
   height: number;
+  sampleIntervalMs: number;
+  sampleIntervalStdMs: number;
+  lastFrameTimeMs: number;
+  isActive: boolean;
 }
 
 export type RealFrameCallback = (frame: RealFrame) => void;
@@ -33,6 +39,11 @@ type VideoElementWithFrameCallbacks = HTMLVideoElement & {
   cancelVideoFrameCallback: (handle: number) => void;
 };
 
+interface FrameInterval {
+  timestamp: number;
+  interval: number;
+}
+
 export class FrameSampler {
   private running = false;
   private video: HTMLVideoElement | null = null;
@@ -51,34 +62,93 @@ export class FrameSampler {
     droppedFrames: 0,
     width: 0,
     height: 0,
+    sampleIntervalMs: 0,
+    sampleIntervalStdMs: 0,
+    lastFrameTimeMs: 0,
+    isActive: false,
   };
 
-  constructor(private readonly maxAnalysisWidth = 640) {}
+  // Ring buffer for interval tracking (last 60 samples = ~2s at 30fps)
+  private intervalBuffer: FrameInterval[] = [];
+  private readonly maxIntervalBufferSize = 60;
+
+  // ROI tracking
+  private currentRoi = { x: 0, y: 0, width: 0, height: 0 };
+  private fullFrameAnalysisCount = 0;
+
+  constructor(
+    private readonly maxAnalysisWidth = 640,
+    private readonly reducedRoiRatio = 0.4, // Start with reduced ROI
+  ) {}
 
   getStats(): FrameSamplerStats {
     return { ...this.stats };
   }
 
+  private calculateIntervalStats(): { mean: number; std: number } {
+    if (this.intervalBuffer.length < 2) return { mean: 0, std: 0 };
+
+    const intervals = this.intervalBuffer.map((f) => f.interval);
+    const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+
+    const variance =
+      intervals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) /
+      intervals.length;
+    const std = Math.sqrt(variance);
+
+    return { mean, std };
+  }
+
+  private updateIntervalBuffer(timestamp: number): void {
+    if (this.lastTimestampMs > 0) {
+      const interval = timestamp - this.lastTimestampMs;
+      this.intervalBuffer.push({ timestamp, interval });
+
+      if (this.intervalBuffer.length > this.maxIntervalBufferSize) {
+        this.intervalBuffer.shift();
+      }
+    }
+  }
+
   start(video: HTMLVideoElement, callback: RealFrameCallback): void {
     if (this.running) return;
+
     this.video = video;
     this.callback = callback;
     this.running = true;
     this.lastTimestampMs = 0;
     this.lastPresentedFrames = null;
+    this.intervalBuffer = [];
+    this.fullFrameAnalysisCount = 0;
+    this.currentRoi = { x: 0, y: 0, width: 0, height: 0 };
+
     this.stats = {
       measuredFps: 0,
       frameCount: 0,
       droppedFrames: 0,
       width: 0,
       height: 0,
+      sampleIntervalMs: 0,
+      sampleIntervalStdMs: 0,
+      lastFrameTimeMs: 0,
+      isActive: true,
     };
 
+    console.log("[FrameSampler] Started");
     this.scheduleNext();
   }
 
   stop(): void {
+    console.log(
+      "[FrameSampler] Stopped. Processed",
+      this.stats.frameCount,
+      "frames, FPS:",
+      this.stats.measuredFps.toFixed(1),
+    );
+
     this.running = false;
+    this.stats.isActive = false;
+
     if (this.requestId !== null && this.video) {
       if ("cancelVideoFrameCallback" in HTMLVideoElement.prototype) {
         (this.video as VideoElementWithFrameCallbacks).cancelVideoFrameCallback(this.requestId);
@@ -86,9 +156,11 @@ export class FrameSampler {
         cancelAnimationFrame(this.requestId);
       }
     }
+
     this.requestId = null;
     this.callback = null;
     this.video = null;
+    this.intervalBuffer = [];
   }
 
   private scheduleNext(): void {
@@ -110,69 +182,123 @@ export class FrameSampler {
     const videoWidth = this.video.videoWidth;
     const videoHeight = this.video.videoHeight;
 
-    if (videoWidth > 0 && videoHeight > 0 && this.video.readyState >= 2) {
-      const scale = Math.min(1, this.maxAnalysisWidth / videoWidth);
-      const width = Math.max(1, Math.round(videoWidth * scale));
-      const height = Math.max(1, Math.round(videoHeight * scale));
-      this.ensureCanvas(width, height);
+    // Validate video dimensions
+    if (videoWidth === 0 || videoHeight === 0) {
+      console.warn("[FrameSampler] Invalid video dimensions, skipping frame");
+      this.scheduleNext();
+      return;
+    }
 
-      if (this.context) {
-        try {
-          this.context.drawImage(this.video, 0, 0, width, height);
-          const imageData = this.context.getImageData(0, 0, width, height);
-          const timestampMs = now;
-          const dt = this.lastTimestampMs > 0 ? timestampMs - this.lastTimestampMs : 0;
-          if (dt > 0) {
-            const instantFps = 1000 / dt;
-            this.stats.measuredFps =
-              this.stats.measuredFps <= 0
-                ? instantFps
-                : this.stats.measuredFps * 0.9 + instantFps * 0.1;
-          }
-          this.lastTimestampMs = timestampMs;
+    if (this.video.readyState < 2) {
+      this.scheduleNext();
+      return;
+    }
 
-          const presentedFrames =
-            typeof metadata?.presentedFrames === "number"
-              ? metadata.presentedFrames
-              : undefined;
-          if (
-            presentedFrames !== undefined &&
-            this.lastPresentedFrames !== null &&
-            presentedFrames > this.lastPresentedFrames + 1
-          ) {
-            this.stats.droppedFrames += presentedFrames - this.lastPresentedFrames - 1;
-          }
-          if (presentedFrames !== undefined) {
-            this.lastPresentedFrames = presentedFrames;
-          }
+    // Determine analysis dimensions and ROI
+    const scale = Math.min(1, this.maxAnalysisWidth / videoWidth);
+    const fullWidth = Math.max(1, Math.round(videoWidth * scale));
+    const fullHeight = Math.max(1, Math.round(videoHeight * scale));
 
-          this.stats.frameCount += 1;
-          this.stats.width = width;
-          this.stats.height = height;
+    // Use reduced ROI initially, expand if needed based on external signal
+    const isReducedMode = this.fullFrameAnalysisCount < 3;
+    let roiWidth = isReducedMode ? Math.floor(fullWidth * this.reducedRoiRatio) : fullWidth;
+    let roiHeight = isReducedMode ? Math.floor(fullHeight * this.reducedRoiRatio) : fullHeight;
 
-          this.callback({
-            imageData,
-            width,
-            height,
-            timestampMs,
-            mediaTime:
-              typeof metadata?.mediaTime === "number" ? metadata.mediaTime : undefined,
-            presentedFrames,
-            measuredFps: this.stats.measuredFps,
-          });
-        } catch {
-          // getImageData may fail if the browser cannot read this frame.
+    // Center the ROI
+    const roiX = Math.floor((fullWidth - roiWidth) / 2);
+    const roiY = Math.floor((fullHeight - fullHeight) / 2); // Keep full height for now
+    roiHeight = fullHeight; // Always use full height for better finger coverage
+
+    this.ensureCanvas(fullWidth, fullHeight);
+
+    if (this.context) {
+      try {
+        // Draw full frame
+        this.context.drawImage(this.video, 0, 0, fullWidth, fullHeight);
+
+        // Get full or ROI image data
+        const imageData = this.context.getImageData(roiX, roiY, roiWidth, roiHeight);
+
+        // Use monotonic timestamp
+        const timestampMs = performance.now();
+
+        // Update interval buffer for accurate interval stats
+        this.updateIntervalBuffer(timestampMs);
+        const intervalStats = this.calculateIntervalStats();
+
+        const dt = this.lastTimestampMs > 0 ? timestampMs - this.lastTimestampMs : 0;
+        let instantFps = 0;
+        if (dt > 0) {
+          instantFps = 1000 / dt;
+          // Exponential moving average for FPS
+          this.stats.measuredFps =
+            this.stats.measuredFps <= 0
+              ? instantFps
+              : this.stats.measuredFps * 0.9 + instantFps * 0.1;
         }
+
+        this.lastTimestampMs = timestampMs;
+        this.stats.lastFrameTimeMs = timestampMs;
+        this.stats.sampleIntervalMs = intervalStats.mean;
+        this.stats.sampleIntervalStdMs = intervalStats.std;
+
+        // Track dropped frames from browser metadata
+        const presentedFrames =
+          typeof metadata?.presentedFrames === "number" ? metadata.presentedFrames : undefined;
+
+        if (
+          presentedFrames !== undefined &&
+          this.lastPresentedFrames !== null &&
+          presentedFrames > this.lastPresentedFrames + 1
+        ) {
+          this.stats.droppedFrames += presentedFrames - this.lastPresentedFrames - 1;
+        }
+        if (presentedFrames !== undefined) {
+          this.lastPresentedFrames = presentedFrames;
+        }
+
+        this.stats.frameCount += 1;
+        this.stats.width = roiWidth;
+        this.stats.height = roiHeight;
+
+        this.callback({
+          imageData,
+          width: roiWidth,
+          height: roiHeight,
+          timestampMs,
+          mediaTime: typeof metadata?.mediaTime === "number" ? metadata.mediaTime : undefined,
+          presentedFrames,
+          measuredFps: this.stats.measuredFps,
+          sampleIntervalMs: intervalStats.mean,
+          isRoiReduced: isReducedMode,
+        });
+      } catch (err) {
+        // getImageData may fail if the browser cannot read this frame
+        console.warn("[FrameSampler] Frame capture failed:", err);
       }
     }
 
     this.scheduleNext();
   }
 
+  /**
+   * Signal that full frame analysis is needed (e.g., when ROI detection fails)
+   */
+  requestFullFrameAnalysis(): void {
+    this.fullFrameAnalysisCount = Math.max(this.fullFrameAnalysisCount, 3);
+  }
+
   private ensureCanvas(width: number, height: number): void {
-    if (this.canvas && this.stats.width === width && this.stats.height === height) {
-      return;
+    // Check if canvas exists with correct dimensions
+    if (this.canvas) {
+      const currentWidth = this.canvas instanceof OffscreenCanvas ? this.canvas.width : (this.canvas as HTMLCanvasElement).width;
+      const currentHeight = this.canvas instanceof OffscreenCanvas ? this.canvas.height : (this.canvas as HTMLCanvasElement).height;
+      if (currentWidth === width && currentHeight === height) {
+        return;
+      }
     }
+
+    console.log(`[FrameSampler] Creating canvas: ${width}x${height}`);
 
     if (typeof OffscreenCanvas !== "undefined") {
       this.canvas = new OffscreenCanvas(width, height);
@@ -180,16 +306,19 @@ export class FrameSampler {
         willReadFrequently: true,
         alpha: false,
       });
-      return;
+    } else {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      this.canvas = canvas;
+      this.context = canvas.getContext("2d", {
+        willReadFrequently: true,
+        alpha: false,
+      });
     }
 
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    this.canvas = canvas;
-    this.context = canvas.getContext("2d", {
-      willReadFrequently: true,
-      alpha: false,
-    });
+    if (!this.context) {
+      console.error("[FrameSampler] Failed to create 2D context");
+    }
   }
 }

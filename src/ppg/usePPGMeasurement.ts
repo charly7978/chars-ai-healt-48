@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type React from "react";
+import type { RefObject } from "react";
 import {
   PPGCameraController,
   type PPGCameraState,
@@ -32,7 +32,7 @@ import {
 } from "./signal/RadiometricPPGExtractor";
 
 export interface UsePPGMeasurementResult {
-  videoRef: React.RefObject<HTMLVideoElement>;
+  videoRef: RefObject<HTMLVideoElement>;
   start: () => Promise<void>;
   stop: () => Promise<void>;
   camera: PPGCameraState;
@@ -42,13 +42,25 @@ export interface UsePPGMeasurementResult {
     droppedFrames: number;
     width: number;
     height: number;
+    sampleIntervalMs: number;
+    sampleIntervalStdMs: number;
+    isActive: boolean;
   };
   rawSamples: PPGOpticalSample[];
   channels: FusedPPGChannels[];
   quality: PPGSignalQuality | null;
   beats: BeatDetectionResult | null;
   published: PublishedPPGMeasurement;
-  debug: object;
+  debug: {
+    active: boolean;
+    opticalSamples: number;
+    fusedSamples: number;
+    cameraStreamActive: boolean;
+    torchApplied: boolean;
+    frameIntervalMs: number;
+    frameIntervalStdMs: number;
+    lastUpdateMs: number;
+  };
 }
 
 function createEmptyCameraState(): PPGCameraState {
@@ -57,10 +69,18 @@ function createEmptyCameraState(): PPGCameraState {
     videoTrack: null,
     capabilities: null,
     settings: null,
+    constraints: null,
     torchAvailable: false,
     torchEnabled: false,
+    torchApplied: false,
     cameraReady: false,
+    streamActive: false,
+    measuredFps: 0,
+    width: 0,
+    height: 0,
+    selectedDeviceId: null,
     error: null,
+    lastError: null,
   };
 }
 
@@ -71,6 +91,10 @@ function createEmptyFrameStats(): FrameSamplerStats {
     droppedFrames: 0,
     width: 0,
     height: 0,
+    sampleIntervalMs: 0,
+    sampleIntervalStdMs: 0,
+    lastFrameTimeMs: 0,
+    isActive: false,
   };
 }
 
@@ -85,6 +109,7 @@ function emptyBeats(): BeatDetectionResult {
 
 export function usePPGMeasurement(): UsePPGMeasurementResult {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeRef = useRef(false);
   const lastUiUpdateRef = useRef(0);
   const lastVibratedBeatRef = useRef<number | null>(null);
@@ -114,7 +139,16 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const [quality, setQuality] = useState<PPGSignalQuality | null>(null);
   const [beats, setBeats] = useState<BeatDetectionResult | null>(null);
   const [published, setPublished] = useState<PublishedPPGMeasurement>(publishedRef.current);
-  const [debug, setDebug] = useState<object>({});
+  const [debug, setDebug] = useState<UsePPGMeasurementResult["debug"]>({
+    active: false,
+    opticalSamples: 0,
+    fusedSamples: 0,
+    cameraStreamActive: false,
+    torchApplied: false,
+    frameIntervalMs: 0,
+    frameIntervalStdMs: 0,
+    lastUpdateMs: 0,
+  });
 
   const publishUiSnapshot = useCallback((force = false) => {
     const now = performance.now();
@@ -128,11 +162,15 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     setQuality(qualityRef.current);
     setBeats(beatsRef.current);
     setPublished(publishedRef.current);
+    const samplerStats = frameStatsRef.current;
     setDebug({
       active: activeRef.current,
       opticalSamples: rawSamplesRef.current.length,
       fusedSamples: channelsRef.current.length,
-      torchAttempted: cameraControllerRef.current.hasTorchAttempted(),
+      cameraStreamActive: cameraRef.current.streamActive,
+      torchApplied: cameraRef.current.torchApplied,
+      frameIntervalMs: samplerStats.sampleIntervalMs,
+      frameIntervalStdMs: samplerStats.sampleIntervalStdMs,
       lastUpdateMs: Date.now(),
     });
   }, []);
@@ -234,7 +272,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     } catch {
       cameraRef.current = {
         ...cameraRef.current,
-        error: "No se pudo iniciar la reproduccion del video",
+        error: "Failed to start video playback",
       };
       publishedRef.current = createEmptyPublishedPPGMeasurement(cameraRef.current);
       activeRef.current = false;
