@@ -551,6 +551,19 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           <span className="text-white/55">SpO2 / confidence</span>
           <span>
             {fmt(oxygen.spo2, 0)}% / {fmt(oxygen.confidence * 100, 0)}%
+            <span
+              className={
+                "ml-1 rounded px-1 text-[9px] " +
+                (oxygen.calibrationBadge === "calibrated"
+                  ? "bg-emerald-400/20 text-emerald-300"
+                  : oxygen.calibrationBadge === "partial"
+                    ? "bg-amber-400/20 text-amber-300"
+                    : "bg-red-400/20 text-red-300")
+              }
+              title={`SpO2 calibration badge: ${oxygen.calibrationBadge}. Partial = generic-fallback gains, no clinical fit.`}
+            >
+              {oxygen.calibrationBadge}
+            </span>
           </span>
           <span className="text-white/55">can publish</span>
           <span className={measurement.published.canPublishVitals ? "text-emerald-400" : "text-amber-400"}>
