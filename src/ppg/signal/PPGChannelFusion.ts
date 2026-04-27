@@ -103,25 +103,7 @@ function firstPrincipalVector(rows: number[][]): number[] {
   return v;
 }
 
-function _unusedCorrelation(a: TimeSample[], b: TimeSample[]): number {
-  const n = Math.min(a.length, b.length);
-  if (n < 8) return 0;
-  const av = a.slice(-n).map((sample) => sample.value);
-  const bv = b.slice(-n).map((sample) => sample.value);
-  const meanA = mean(av);
-  const meanB = mean(bv);
-  let num = 0;
-  let denA = 0;
-  let denB = 0;
-  for (let i = 0; i < n; i += 1) {
-    const da = av[i] - meanA;
-    const db = bv[i] - meanB;
-    num += da * db;
-    denA += da * da;
-    denB += db * db;
-  }
-  return num / Math.sqrt(Math.max(1e-12, denA * denB));
-}
+// (correlation helper removed — dead code, audit 2026-04-27)
 
 export class PPGChannelFusion {
   private opticalSamples: PPGOpticalSample[] = [];
