@@ -133,20 +133,24 @@ function drawTrace(params: {
 
 function drawBeatMarkers(
   ctx: CanvasRenderingContext2D,
-  beatMarkers: Array<{ t: number; confidence: number }>,
+  beatMarkers: Array<{ t: number; confidence: number; onsetT?: number | null; troughT?: number | null }>,
+  withheldMarkers: Array<{ t: number; reason: string }>,
   tracePoints: TracePoint[],
   width: number,
   top: number,
   height: number,
   dpr: number,
 ): void {
-  if (beatMarkers.length === 0 || tracePoints.length < 2) return;
+  if (tracePoints.length < 2) return;
   const minT = tracePoints[0].t;
   const maxT = tracePoints[tracePoints.length - 1].t;
   const spanT = Math.max(1, maxT - minT);
+  const xOf = (t: number) => ((t - minT) / spanT) * width;
+
   for (const beat of beatMarkers) {
     if (beat.t < minT || beat.t > maxT) continue;
-    const x = ((beat.t - minT) / spanT) * width;
+    const x = xOf(beat.t);
+    // Peak marker (vertical line + dot)
     ctx.strokeStyle = `rgba(255,255,255,${0.22 + beat.confidence * 0.42})`;
     ctx.lineWidth = 1.2 * dpr;
     ctx.beginPath();
@@ -157,6 +161,45 @@ function drawBeatMarkers(
     ctx.beginPath();
     ctx.arc(x, top + height * 0.15, 3.2 * dpr, 0, Math.PI * 2);
     ctx.fill();
+    // Onset marker (small upward triangle, cyan)
+    if (beat.onsetT != null && beat.onsetT >= minT && beat.onsetT <= maxT) {
+      const ox = xOf(beat.onsetT);
+      ctx.fillStyle = "rgba(94,234,212,0.85)";
+      ctx.beginPath();
+      ctx.moveTo(ox, top + height * 0.78);
+      ctx.lineTo(ox - 3 * dpr, top + height * 0.86);
+      ctx.lineTo(ox + 3 * dpr, top + height * 0.86);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Trough marker (small downward triangle, magenta)
+    if (beat.troughT != null && beat.troughT >= minT && beat.troughT <= maxT) {
+      const tx = xOf(beat.troughT);
+      ctx.fillStyle = "rgba(244,114,182,0.78)";
+      ctx.beginPath();
+      ctx.moveTo(tx, top + height * 0.92);
+      ctx.lineTo(tx - 3 * dpr, top + height * 0.84);
+      ctx.lineTo(tx + 3 * dpr, top + height * 0.84);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // Withheld candidates: small red 'x' high in the band, with reason text
+  ctx.font = `${9 * dpr}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  for (const w of withheldMarkers) {
+    if (w.t < minT || w.t > maxT) continue;
+    const x = xOf(w.t);
+    ctx.strokeStyle = "rgba(248,113,113,0.55)";
+    ctx.lineWidth = 1.1 * dpr;
+    const y = top + height * 0.06;
+    const r = 4 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
+    ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(248,113,113,0.6)";
+    ctx.fillText(w.reason.slice(0, 6), x + 6 * dpr, y + 3 * dpr);
   }
 }
 
