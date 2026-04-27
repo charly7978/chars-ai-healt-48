@@ -425,7 +425,7 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
 
       {/* DIAGNOSTICS & CALIBRATION */}
       {(() => {
-        const diag = camera.diagnostics;
+        const diag = (importedEvidence?.cameraDiagnostics ?? camera.diagnostics) as typeof camera.diagnostics | null;
         if (!diag) return null;
         const calib = diag.calibration;
         const calibColor =
