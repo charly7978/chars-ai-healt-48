@@ -103,7 +103,7 @@ function firstPrincipalVector(rows: number[][]): number[] {
   return v;
 }
 
-function correlation(a: TimeSample[], b: TimeSample[]): number {
+function _unusedCorrelation(a: TimeSample[], b: TimeSample[]): number {
   const n = Math.min(a.length, b.length);
   if (n < 8) return 0;
   const av = a.slice(-n).map((sample) => sample.value);
