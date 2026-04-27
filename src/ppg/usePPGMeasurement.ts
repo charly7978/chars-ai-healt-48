@@ -625,9 +625,16 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         }
       }
 
+      // Sample produced — track contact state from the active ROI evidence.
+      updateRepositionPrompt(
+        sample.roiEvidence.contactState,
+        frame.timestampMs,
+        sample.roiEvidence.userGuidance ?? "",
+      );
+
       publishUiSnapshot();
     };
-  }, [publishUiSnapshot]);
+  }, [publishUiSnapshot, updateRepositionPrompt]);
 
   const start = useCallback(async () => {
     if (activeRef.current) {
