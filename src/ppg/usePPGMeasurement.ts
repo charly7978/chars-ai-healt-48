@@ -198,8 +198,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     publicationGateRef.current.reset();
     rawSamplesRef.current = [];
     channelsRef.current = [];
-    qualityRef.current = null;
-    beatsRef.current = null;
+    qualityRef.current = createEmptySignalQuality();
+    beatsRef.current = emptyBeats();
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraRef.current);
     lastVibratedBeatRef.current = null;
   }, []);
