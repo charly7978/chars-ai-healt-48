@@ -740,7 +740,7 @@ export class FingerOpticalROI {
     // (low_pressure still has good perfusion; only excessive/weak_contact veto).
     const pressureAcceptable = pressureState === "optimal" || pressureState === "low_pressure";
     const frameAcceptedNow =
-      (contactState === "stable" || contactState === "unstable") &&
+      contactState === "stable" &&
       contactScore >= 0.40 &&
       opticalContactScore >= 0.40 &&
       coverageScore >= 0.30 &&
