@@ -10,8 +10,28 @@ import {
   saveAdaptiveRecord,
 } from "../AdaptiveThresholdsStore";
 
-// jsdom provides window.localStorage in vitest's default env.
-beforeEach(() => clearAdaptiveStore());
+// Polyfill a minimal in-memory localStorage for the node test env so the
+// store exercises its real persistence path.
+function installMemoryLocalStorage(): void {
+  const store = new Map<string, string>();
+  const ls = {
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => { store.set(k, String(v)); },
+    removeItem: (k: string) => { store.delete(k); },
+    clear: () => store.clear(),
+    key: (i: number) => Array.from(store.keys())[i] ?? null,
+    get length() { return store.size; },
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).window = { localStorage: ls };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).localStorage = ls;
+}
+
+beforeEach(() => {
+  installMemoryLocalStorage();
+  clearAdaptiveStore();
+});
 
 describe("AdaptiveThresholdsStore", () => {
   it("round-trips a record clamped to safety floor", () => {
