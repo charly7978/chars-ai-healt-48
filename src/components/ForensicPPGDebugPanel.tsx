@@ -412,6 +412,16 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                     <span className="ml-1 text-[9px] text-white/40">
                       ({beats.beats.length} beats / using {rrCount} RR{rrCount === 1 ? "" : "s"})
                     </span>
+                    {rrHistory.length >= 2 && (
+                      <span
+                        className="ml-1 text-[9px] text-white/50"
+                        title="First → last value of the trend window used for the ▲/▼/▬ arrow"
+                      >
+                        [trend: {rrHistory[0].value.toFixed(2)}@{fmtClock(rrHistory[0].timestamp)} →{" "}
+                        {rrHistory[rrHistory.length - 1].value.toFixed(2)}@
+                        {fmtClock(rrHistory[rrHistory.length - 1].timestamp)}]
+                      </span>
+                    )}
                   </>
                 )}
               </span>
