@@ -32,7 +32,22 @@ export interface PublishedPPGMeasurement {
   oxygen: PublishedOxygenMeasurement;
   waveform: number[];
   waveformSource: "REAL_PPG" | "RAW_DEBUG_ONLY" | "NONE";
-  beatMarkers: Array<{ t: number; confidence: number }>;
+  beatMarkers: Array<{
+    t: number;
+    confidence: number;
+    onsetT?: number | null;
+    troughT?: number | null;
+  }>;
+  withheldBeatMarkers: Array<{ t: number; reason: string }>;
+  irregularityFlag: boolean;
+  estimatorBreakdown: {
+    peakBpm: number | null;
+    medianIbiBpm: number | null;
+    fftBpm: number | null;
+    autocorrBpm: number | null;
+    agreementBpm: number;
+    publicationException?: string;
+  };
   quality: PPGSignalQuality;
   evidence: {
     camera: PPGCameraState;
