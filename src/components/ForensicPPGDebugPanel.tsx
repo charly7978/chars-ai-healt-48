@@ -39,25 +39,29 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
   const frameStats = measurement.frameStats;
   const beats = measurement.beats;
 
-  // Track RR consistency history for trend arrow.
-  const rrConsistencyHistoryRef = useRef<number[]>([]);
+  // Track RR consistency history for trend arrow (with timestamps for auditability).
+  const rrConsistencyHistoryRef = useRef<{ value: number; timestamp: number }[]>([]);
   const rrCount = beats.rrIntervalsMs.length;
   if (rrCount >= 2 && Number.isFinite(quality.rrConsistency)) {
     const hist = rrConsistencyHistoryRef.current;
     const last = hist[hist.length - 1];
-    if (last === undefined || Math.abs(last - quality.rrConsistency) > 1e-6) {
-      hist.push(quality.rrConsistency);
+    if (last === undefined || Math.abs(last.value - quality.rrConsistency) > 1e-6) {
+      hist.push({ value: quality.rrConsistency, timestamp: Date.now() });
       if (hist.length > 5) hist.shift();
     }
   }
+  const rrHistory = rrConsistencyHistoryRef.current;
   const rrTrend: "up" | "down" | "flat" | null = (() => {
-    const hist = rrConsistencyHistoryRef.current;
-    if (hist.length < 2) return null;
-    const delta = hist[hist.length - 1] - hist[0];
+    if (rrHistory.length < 2) return null;
+    const delta = rrHistory[rrHistory.length - 1].value - rrHistory[0].value;
     if (delta > 0.02) return "up";
     if (delta < -0.02) return "down";
     return "flat";
   })();
+  const fmtClock = (ts: number) => {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+  };
 
   const exportJson = () => {
     const auditData = {
