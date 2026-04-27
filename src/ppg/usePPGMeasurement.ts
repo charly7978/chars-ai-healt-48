@@ -54,8 +54,8 @@ export interface UsePPGMeasurementResult {
   };
   rawSamples: PPGOpticalSample[];
   channels: FusedPPGChannels[];
-  quality: PPGSignalQuality | null;
-  beats: BeatDetectionResult | null;
+  quality: PPGSignalQuality;
+  beats: BeatDetectionResult;
   published: PublishedPPGMeasurement;
   debug: {
     active: boolean;
