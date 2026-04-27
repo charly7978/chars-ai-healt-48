@@ -10,6 +10,10 @@ export interface FingerOpticalEvidence {
   opticalDensity: { r: number; g: number; b: number };
   highSaturation: { r: number; g: number; b: number };
   lowSaturation: { r: number; g: number; b: number };
+  /** Per-channel ratio (0..1) of pixels usable for that channel after independent saturation masking */
+  usablePixelRatio: { r: number; g: number; b: number };
+  /** Best channel usable ratio — what the pipeline can actually rely on */
+  usablePixelRatioMax: number;
   spatialVariance: number;
   dcStability: number;
   dcTrend: number;
