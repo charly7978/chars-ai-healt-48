@@ -635,11 +635,13 @@ export class FingerOpticalROI {
     const perfusionScore = perfusionCount > 0 ? clamp01(perfusionAccum / perfusionCount) : 0;
     const motionScore = clamp01(1 - motionRisk);
     const opticalContactScore = clamp01(
-      coverageScore * 0.3 +
-        illuminationScore * 0.2 +
-        this.dcStability * 0.2 +
-        redDominance * 0.15 +
-        (usableTileCount / (TILE_GRID * TILE_GRID)) * 0.15,
+      coverageScore * 0.22 +
+        illuminationScore * 0.14 +
+        this.dcStability * 0.14 +
+        redDominance * 0.22 +
+        greenPulseAvailability * 0.10 +
+        textureScore * 0.08 +
+        (usableTileCount / (TILE_GRID * TILE_GRID)) * 0.10,
     );
 
     // Per-channel availability for downstream gates.
@@ -706,7 +708,9 @@ export class FingerOpticalROI {
     else if (opticalContactScore >= 0.35 && usableTileCount >= 6) contactState = "partial";
     else contactState = "searching";
 
-    if (usableTileCount < 6) reason.push("INSUFFICIENT_USABLE_TILES");
+    const minStableTiles = Math.ceil(TILE_GRID * TILE_GRID * 0.38);
+    const minPartialTiles = Math.ceil(TILE_GRID * TILE_GRID * 0.24);
+    if (usableTileCount < minPartialTiles) reason.push("INSUFFICIENT_USABLE_TILES");
     if (roiStabilityScore < 0.4) reason.push("ROI_UNSTABLE");
     if (contactState === "overexposed") reason.push("OVEREXPOSED");
     if (contactState === "underexposed") reason.push("UNDEREXPOSED");
@@ -725,6 +729,24 @@ export class FingerOpticalROI {
     else if (textureScore < 0.12 && coverageScore > 0.4) userGuidance = "No detecto un dedo real — recolocá el dedo.";
     else if (contactState === "stable") userGuidance = "";
     else userGuidance = "Buscando señal estable…";
+
+    const frameAcceptedNow =
+      contactState === "stable" &&
+      contactScore >= 0.62 &&
+      opticalContactScore >= 0.58 &&
+      coverageScore >= 0.42 &&
+      redDominance >= 0.22 &&
+      greenPulseAvailability >= 0.18 &&
+      usableTileCount >= minStableTiles &&
+      roiStabilityScore >= 0.55 &&
+      textureScore >= 0.12 &&
+      highClip < 0.18 &&
+      lowClip < 0.18 &&
+      this.dcStability >= 0.50 &&
+      motionRisk < 0.38 &&
+      pressureState === "optimal";
+    this.contactStableFrames = frameAcceptedNow ? this.contactStableFrames + 1 : 0;
+    const accepted = frameAcceptedNow && this.contactStableFrames >= 8;
 
     return {
       roi,
