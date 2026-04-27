@@ -425,6 +425,12 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                   ? `need ≥2 beats (have ${beats.beats.length})`
                   : beats.rrIntervalsMs.slice(-5).map((rr) => `${fmt(rr, 0)}ms`).join(", ")}
               </span>
+              {beats.beats.length >= 2 && rrCount < beats.beats.length - 1 && (
+                <div className="col-span-2 mt-1 rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-1 text-[10px] text-amber-300">
+                  ⚠ beat/RR mismatch: {beats.beats.length} beats but only {rrCount} RR interval{rrCount === 1 ? "" : "s"}{" "}
+                  (expected {beats.beats.length - 1}). Some beats were dropped from the RR series — RR consistency is waiting for a contiguous run.
+                </div>
+              )}
               </div>
             </>
           );
