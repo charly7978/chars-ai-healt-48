@@ -124,15 +124,28 @@ export class RadiometricPPGExtractor {
 
   processFrame(frame: RealFrame): PPGOpticalSample | null {
     if (!frame.imageData || frame.width <= 0 || frame.height <= 0) {
+      this.lastRejection = "NO_IMAGE_DATA";
       return null;
     }
 
     const evidence = this.roiAnalyzer.analyze(frame.imageData);
+    this.lastEvidence = evidence;
 
-    // HARD REJECT: Only process if ROI is accepted and has minimum contact
-    // This prevents generating noise from ambient light when no finger is present
-    // Threshold must match ROI acceptance criteria (contactScore >= 0.45)
-    if (!evidence.accepted || evidence.contactScore < 0.45) {
+    // ACQUISITION GATE (separate from publication):
+    // We only need physically-valid optical contact with the lens to keep
+    // building a buffer for diagnostics. Final medical-grade gating happens
+    // downstream in PPGPublicationGate. This avoids dropping the entire
+    // pipeline because of a transient ROI subscore at startup.
+    const meanLuma = 0.299 * evidence.meanRgb.r + 0.587 * evidence.meanRgb.g + 0.114 * evidence.meanRgb.b;
+    const acquisitionContactOk =
+      evidence.coverageScore >= 0.20 &&
+      meanLuma >= 25 &&
+      evidence.redDominance >= 0.05 &&
+      Math.max(evidence.highSaturation.r, evidence.highSaturation.g, evidence.highSaturation.b) < 0.55 &&
+      Math.max(evidence.lowSaturation.r, evidence.lowSaturation.g, evidence.lowSaturation.b) < 0.55;
+
+    if (!acquisitionContactOk) {
+      this.lastRejection = `ACQUISITION_GATE: cov=${evidence.coverageScore.toFixed(2)} luma=${meanLuma.toFixed(0)} red=${evidence.redDominance.toFixed(2)}`;
       return null;
     }
 
@@ -148,7 +161,7 @@ export class RadiometricPPGExtractor {
         const r = data[idx];
         const g = data[idx + 1];
         const b = data[idx + 2];
-        // Aggressive saturation masking
+        // Saturation masking
         if (r >= 252 || g >= 252 || b >= 252) continue;
         if (r <= 3 && g <= 3 && b <= 3) continue;
         if (r + g + b < 24) continue;
@@ -163,8 +176,10 @@ export class RadiometricPPGExtractor {
     }
 
     if (linearValues.r.length < 32) {
+      this.lastRejection = `INSUFFICIENT_VALID_PIXELS: ${linearValues.r.length}`;
       return null;
     }
+    this.lastRejection = null;
 
     // Calculate dt from real timestamps
     const dt = this.lastTimestamp > 0 ? frame.timestampMs - this.lastTimestamp : 1000 / frame.measuredFps;
