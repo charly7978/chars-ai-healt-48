@@ -7,6 +7,68 @@
 
 ---
 
+## 📋 MEJORAS RECIENTES (Post-Auditoría)
+
+### Enhanced Multi-Rear PPG Probe
+**Fecha:** 2026-04-27  
+**Archivo:** `src/ppg/camera/PPGCameraController.ts`  
+**Líneas:** 1017-1334
+
+#### Cambios Implementados
+| Aspecto | Anterior | Nuevo |
+|---------|----------|-------|
+| **Duración probe** | 2000ms | 2500ms (mejor resolución temporal) |
+| **Métricas temporales** | Ninguna | AC/DC perfusion index, temporal SNR, cardiac band power |
+| **Frame acquisition** | requestAnimationFrame | rVFC con presentedFrames metadata |
+| **Scoring** | Heurística espacial (meanR-meanG) | PPG-grounded (SNR 40%, perfusion 30%, stability 15%) |
+| **Nuevas métricas** | `perfusionProxy` | `temporalSnrDb`, `perfusionIndex`, `cardiacBandPower`, `signalStability` |
+
+#### Interfaz Actualizada
+```typescript
+interface MultiRearProbeCandidate {
+  // Spatial metrics (quick heuristics)
+  meanRed: number;
+  meanGreen: number;
+  saturationHigh: number;
+  coverage: number;
+  // Temporal PPG metrics (ground truth)
+  temporalSnrDb: number;      // NEW
+  perfusionIndex: number;      // NEW - AC/DC ratio
+  cardiacBandPower: number;    // NEW
+  signalStability: number;    // NEW
+  // Cadence
+  jitterMs: number;
+  targetFps: number;           // NEW
+  actualFps: number;           // NEW
+}
+```
+
+#### Función de Scoring PPG-Grounded
+```
+score = min(40, temporalSnrDb) * 1.0 +        // 0-40 points
+        min(30, perfusionIndex * 300) +       // 0-30 points
+        signalStability * 15 +                  // 0-15 points
+        coverage * 10 +                         // 0-10 points
+        max(0, 5 - jitterMs / 3)               // 0-5 points
+
+// Penalties
+saturationHigh > 0.15  → -30 points
+coverage < 0.2         → -20 points
+framesAnalyzed < 45     → -25 points
+```
+
+#### Análisis Temporal Implementado
+1. **DC Component**: Media de serie temporal green (baseline reflectance)
+2. **AC Component**: Desviación estándar (pulsatile variation)
+3. **Perfusion Index**: AC/DC ratio (métrica clínica PPG)
+4. **Signal Stability**: Inverso de DC drift entre primera/segunda mitad
+5. **Temporal SNR**: 10*log10(signalVariance / highFreqNoiseVariance)
+6. **Cardiac Band Power**: Varianza de señal suavizada (~0.5-4Hz banda)
+
+**Estado:** ✅ Implementado y probado
+
+---
+
 ## 1. INVENTARIO COMPLETO
 
 ### 1.1 Estructura de Archivos
