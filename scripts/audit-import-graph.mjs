@@ -2,243 +2,354 @@
 /**
  * Import-graph audit for the Forensic PPG monitor.
  *
- * Goals:
- *   1. Resolve every static + dynamic import correctly:
- *        - relative ('./x', '../x')
- *        - alias '@/...'  -> 'src/...'
- *        - extensions .ts .tsx .js .jsx .mjs .cjs
- *        - directory index files (index.ts/tsx/js/jsx)
- *   2. Build the reachable set from runtime entries (main.tsx, App.tsx,
- *      index.html script tags) AND from test entries (vitest globs).
- *   3. Classify every src/ file as one of:
- *        KEEP_PRODUCTION | KEEP_TEST | KEEP_DOC | KEEP_TYPES
- *        DELETE_DEAD     | MERGE_DUPLICATE | REWRITE_REQUIRED
- *      and write a machine-readable manifest to
- *      .audit/import-graph.json.
- *   4. Fail (exit 1) only on DELETE_DEAD / MERGE_DUPLICATE /
- *      REWRITE_REQUIRED. KEEP_* are informational.
+ * The audit is intentionally conservative: unresolved local imports and
+ * unclassified source modules fail the run. Bare package imports are inventoried
+ * as externals and are not treated as graph edges.
  */
 
-import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, writeFileSync } from 'fs';
-import { join, extname, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "fs";
+import { dirname, extname, join, relative } from "path";
+import { fileURLToPath } from "url";
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const ROOT_DIR  = join(__dirname, '..');
-const SRC_DIR   = join(ROOT_DIR, 'src');
-const OUT_DIR   = join(ROOT_DIR, '.audit');
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
+const ROOT_DIR = join(__dirname, "..");
+const SRC_DIR = join(ROOT_DIR, "src");
+const OUT_DIR = join(ROOT_DIR, ".audit");
 
-/* ---------------------------------------------------------------------- */
-/*  Configuration                                                          */
-/* ---------------------------------------------------------------------- */
+const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+const SRC_EXTENSIONS = new Set([...CODE_EXTENSIONS, ".d.ts", ".css", ".json"]);
+const RESOLVE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".jsx"];
+const INDEX_FILES = ["index.ts", "index.tsx", "index.js", "index.jsx"];
+const IGNORED_DIRS = new Set([".git", "node_modules", "dist", "build", ".vite", "coverage"]);
 
-const RUNTIME_ENTRIES = ['src/main.tsx', 'src/App.tsx'];
-const TEST_GLOBS      = ['src/**/__tests__/**/*.{ts,tsx}', 'src/**/*.{test,spec}.{ts,tsx}'];
+const EXPECTED_RUNTIME_ENTRY = "src/main.tsx";
 
-const SCAN_EXTENSIONS  = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
-const RESOLVE_ATTEMPTS = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-                          '/index.ts', '/index.tsx', '/index.js', '/index.jsx'];
+const ROOT_KEEP_DOC = new Set([
+  "README.md",
+]);
 
-// Files that legitimately exist but are NOT reached by static graph traversal.
-// Each entry is a substring match against the normalised path.
-const ALLOWLIST = [
-  'src/types/',           // ambient type declarations
-  'src/vite-env.d.ts',
-  'src/index.css',        // imported from main.tsx but not a JS module
-  'src/tailwind.config.lov.json', // Lovable visual editor metadata
+const ROOT_KEEP_PRODUCTION = new Set([
+  "index.html",
+  "package.json",
+  "package-lock.json",
+  "components.json",
+  "vite.config.ts",
+  "vitest.config.ts",
+  "tailwind.config.ts",
+  "postcss.config.js",
+  "eslint.config.js",
+  "tsconfig.json",
+  "tsconfig.app.json",
+  "tsconfig.node.json",
+]);
+
+const KEEP_DOC_PREFIXES = [
+  ".github/",
+  ".githooks/",
+  ".lovable/",
+  ".vscode/",
+  "docs/archive/",
+  "docs/",
 ];
 
-/* ---------------------------------------------------------------------- */
-/*  Helpers                                                                */
-/* ---------------------------------------------------------------------- */
+const KEEP_PRODUCTION_PREFIXES = ["scripts/"];
+const GENERATED_PREFIXES = [".audit/"];
+const TYPES_ALLOWLIST = ["src/types/", "src/vite-env.d.ts"];
 
-const norm = (p) => p.replace(/\\/g, '/');
+const norm = (p) => p.replace(/\\/g, "/");
+
+function walk(dir, base = "") {
+  const out = [];
+  for (const entry of readdirSync(dir)) {
+    if (IGNORED_DIRS.has(entry)) continue;
+    const full = join(dir, entry);
+    const rel = norm(base ? join(base, entry) : entry);
+    const st = statSync(full);
+    if (st.isDirectory()) out.push(...walk(full, rel));
+    else out.push(rel);
+  }
+  return out.sort();
+}
+
+function readText(rel) {
+  return readFileSync(join(ROOT_DIR, rel), "utf-8");
+}
+
+function isCodeFile(path) {
+  return CODE_EXTENSIONS.has(extname(path));
+}
+
+function isSourceInventoryFile(path) {
+  return path.startsWith("src/") && (SRC_EXTENSIONS.has(extname(path)) || path.endsWith(".d.ts"));
+}
 
 function tryResolve(basePath) {
-  for (const ext of RESOLVE_ATTEMPTS) {
-    const candidate = basePath + ext;
-    if (existsSync(join(ROOT_DIR, candidate))) {
-      const stat = statSync(join(ROOT_DIR, candidate));
-      if (stat.isFile()) return norm(candidate);
+  const normalizedBase = norm(basePath);
+  for (const ext of RESOLVE_EXTENSIONS) {
+    const candidate = normalizedBase + ext;
+    const full = join(ROOT_DIR, candidate);
+    if (existsSync(full) && statSync(full).isFile()) return norm(candidate);
+  }
+
+  const asDirectory = join(ROOT_DIR, normalizedBase);
+  if (existsSync(asDirectory) && statSync(asDirectory).isDirectory()) {
+    for (const indexFile of INDEX_FILES) {
+      const candidate = norm(join(normalizedBase, indexFile));
+      const full = join(ROOT_DIR, candidate);
+      if (existsSync(full) && statSync(full).isFile()) return candidate;
     }
   }
+
   return null;
 }
 
 function resolveImport(spec, fromFile) {
-  const clean = spec.replace(/^['"]|['"]$/g, '').split('?')[0];
-
-  if (clean.startsWith('.')) {
-    const base = norm(join(dirname(fromFile), clean));
-    return tryResolve(base);
-  }
-  if (clean.startsWith('@/')) {
-    const base = norm(join('src', clean.slice(2)));
-    return tryResolve(base);
-  }
-  // Bare specifier -> external dependency, ignore.
+  const clean = spec.split("?")[0].split("#")[0];
+  if (clean.startsWith(".")) return tryResolve(join(dirname(fromFile), clean));
+  if (clean.startsWith("@/")) return tryResolve(join("src", clean.slice(2)));
   return null;
 }
 
-function extractImports(content, filePath) {
-  const found = new Set();
+function extractImportSpecifiers(content) {
+  const specs = [];
+  const patterns = [
+    /\bimport\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?["']([^"']+)["']/g,
+    /\bexport\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)["']([^"']+)["']/g,
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
+  ];
 
-  // ES static imports / re-exports
-  const reEs = /(?:^|\s)(?:import|export)(?:\s+[^'"]*?\s+from)?\s*['"]([^'"]+)['"]/g;
-  // CommonJS require
-  const reCjs = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-  // Dynamic import
-  const reDyn = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  for (const re of patterns) {
+    let match;
+    while ((match = re.exec(content)) !== null) specs.push(match[1]);
+  }
+  return [...new Set(specs)];
+}
 
-  for (const re of [reEs, reCjs, reDyn]) {
-    let m;
-    while ((m = re.exec(content)) !== null) {
-      const spec = m[1];
-      if (spec.startsWith('node:')) continue;
-      const r = resolveImport(spec, filePath);
-      if (r) found.add(r);
+function extractExports(content) {
+  const exports = [];
+  const patterns = [
+    /\bexport\s+(?:default\s+)?(?:class|function|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g,
+    /\bexport\s*\{([^}]+)\}/g,
+  ];
+
+  let match;
+  while ((match = patterns[0].exec(content)) !== null) exports.push(match[1]);
+  while ((match = patterns[1].exec(content)) !== null) {
+    for (const raw of match[1].split(",")) {
+      const token = raw.trim().split(/\s+as\s+/i).pop()?.trim();
+      if (token) exports.push(token);
     }
   }
-  return [...found];
+  if (/\bexport\s+default\b/.test(content)) exports.push("default");
+  return [...new Set(exports)].sort();
 }
 
-function walk(dir, base, out) {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    const rel  = norm(join(base, entry));
-    const st   = statSync(full);
-    if (st.isDirectory()) walk(full, rel, out);
-    else out.push(rel);
+function resolveImportsForFile(file) {
+  const imports = [];
+  const external = [];
+  const unresolved = [];
+  const content = readText(file);
+
+  for (const spec of extractImportSpecifiers(content)) {
+    if (spec.startsWith("node:")) {
+      external.push(spec);
+      continue;
+    }
+
+    const resolved = resolveImport(spec, file);
+    if (resolved) {
+      imports.push({ specifier: spec, resolved });
+    } else if (spec.startsWith(".") || spec.startsWith("@/")) {
+      unresolved.push({ specifier: spec, from: file });
+    } else {
+      external.push(spec);
+    }
   }
+
+  return { imports, external: [...new Set(external)].sort(), unresolved };
 }
 
-function isAllowlisted(p) {
-  return ALLOWLIST.some((s) => p.includes(s));
+function htmlEntries() {
+  const htmlPath = "index.html";
+  if (!existsSync(join(ROOT_DIR, htmlPath))) return [];
+  const content = readText(htmlPath);
+  const entries = [];
+  const re = /<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["'][^>]*>/g;
+  let match;
+  while ((match = re.exec(content)) !== null) {
+    const src = match[1].replace(/^\//, "");
+    const resolved = tryResolve(src);
+    if (resolved) entries.push(resolved);
+  }
+  return entries;
 }
 
-function classifyTestFile(p) {
-  return p.includes('__tests__/') || /\.(test|spec)\.[jt]sx?$/.test(p);
-}
-
-/* ---------------------------------------------------------------------- */
-/*  Graph traversal                                                        */
-/* ---------------------------------------------------------------------- */
-
-function traverseFrom(entries) {
-  const queue   = [...entries];
+function traverse(entries, fileImports) {
+  const queue = [...entries];
   const visited = new Set();
-  const graph   = new Map();
+  const edges = {};
 
-  while (queue.length) {
-    const cur = queue.shift();
-    if (visited.has(cur)) continue;
-    visited.add(cur);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
 
-    const full = join(ROOT_DIR, cur);
-    if (!existsSync(full)) continue;
-    const ext = extname(cur);
-    if (!SCAN_EXTENSIONS.has(ext)) continue;
-
-    const content = readFileSync(full, 'utf-8');
-    const imports = extractImports(content, cur);
-    graph.set(cur, imports);
-    for (const dep of imports) if (!visited.has(dep)) queue.push(dep);
-  }
-  return { visited, graph };
-}
-
-/* ---------------------------------------------------------------------- */
-/*  Main                                                                   */
-/* ---------------------------------------------------------------------- */
-
-console.log('🔍 PPG Import Graph Audit\n');
-
-// 1. Inventory
-const allFiles = [];
-walk(SRC_DIR, 'src', allFiles);
-const allSrcModules = allFiles
-  .filter((p) => SCAN_EXTENSIONS.has(extname(p)) || p.endsWith('.d.ts') || p.endsWith('.json') || p.endsWith('.css'))
-  .map(norm)
-  .sort();
-console.log(`📁 src/ inventory: ${allSrcModules.length} files`);
-
-// 2. Reachable from runtime
-const runtime = traverseFrom(RUNTIME_ENTRIES);
-console.log(`🔗 reachable from runtime: ${runtime.visited.size}`);
-
-// 3. Reachable from tests (manual collection: vitest entries are every test file)
-const testEntries = allSrcModules.filter(classifyTestFile);
-const tests = traverseFrom(testEntries);
-console.log(`🧪 reachable from tests:   ${tests.visited.size}`);
-
-// 4. Classify
-const classification = {};
-for (const f of allSrcModules) {
-  if (f.endsWith('.d.ts'))                       classification[f] = 'KEEP_TYPES';
-  else if (classifyTestFile(f))                  classification[f] = 'KEEP_TEST';
-  else if (runtime.visited.has(f))               classification[f] = 'KEEP_PRODUCTION';
-  else if (tests.visited.has(f))                 classification[f] = 'KEEP_TEST';
-  else if (isAllowlisted(f))                     classification[f] = 'KEEP_DOC';
-  else                                           classification[f] = 'DELETE_DEAD';
-}
-
-// 5. Duplicate detection (same basename + identical SHA-like length+head signature)
-const byBase = new Map();
-for (const f of allSrcModules) {
-  if (!SCAN_EXTENSIONS.has(extname(f))) continue;
-  const k = f.split('/').pop();
-  if (!byBase.has(k)) byBase.set(k, []);
-  byBase.get(k).push(f);
-}
-for (const [, group] of byBase) {
-  if (group.length < 2) continue;
-  // Compare content; mark identical ones MERGE_DUPLICATE
-  const contents = group.map((g) => readFileSync(join(ROOT_DIR, g), 'utf-8'));
-  for (let i = 0; i < group.length; i++) {
-    for (let j = i + 1; j < group.length; j++) {
-      if (contents[i] === contents[j]) {
-        classification[group[i]] = 'MERGE_DUPLICATE';
-        classification[group[j]] = 'MERGE_DUPLICATE';
-      }
+    if (!isCodeFile(current)) continue;
+    const imports = fileImports[current]?.imports ?? [];
+    edges[current] = imports.map((entry) => entry.resolved);
+    for (const { resolved } of imports) {
+      if (!visited.has(resolved)) queue.push(resolved);
     }
   }
+
+  return { visited, edges };
 }
 
-// 6. Report
+function isTestFile(path) {
+  return path.includes("__tests__/") || /\.(test|spec)\.[jt]sx?$/.test(path);
+}
+
+function classifyRepoFile(file, srcClassification) {
+  if (srcClassification[file]) return srcClassification[file];
+  if (GENERATED_PREFIXES.some((prefix) => file.startsWith(prefix))) return "KEEP_DOC";
+  if (ROOT_KEEP_PRODUCTION.has(file)) return "KEEP_PRODUCTION";
+  if (ROOT_KEEP_DOC.has(file)) return "KEEP_DOC";
+  if (KEEP_DOC_PREFIXES.some((prefix) => file.startsWith(prefix))) return "KEEP_DOC";
+  if (KEEP_PRODUCTION_PREFIXES.some((prefix) => file.startsWith(prefix))) return "KEEP_PRODUCTION";
+  if (file.endsWith(".tsbuildinfo")) return "KEEP_DOC";
+  if (file.endsWith("/.gitkeep")) return "KEEP_DOC";
+  if (file.endsWith(".txt")) return "KEEP_DOC";
+  if (file.startsWith("src/")) return "REWRITE_REQUIRED";
+  return "KEEP_DOC";
+}
+
+function detectDuplicateFiles(files) {
+  const byContent = new Map();
+  for (const file of files.filter(isCodeFile)) {
+    const content = readText(file);
+    const key = `${content.length}:${content}`;
+    const group = byContent.get(key) ?? [];
+    group.push(file);
+    byContent.set(key, group);
+  }
+  return [...byContent.values()].filter((group) => group.length > 1);
+}
+
+console.log("PPG Import Graph Audit\n");
+
+const allFiles = walk(ROOT_DIR);
+const allSrcModules = allFiles.filter(isSourceInventoryFile);
+const codeFiles = allFiles.filter(isCodeFile);
+
+const fileImports = {};
+const fileExports = {};
+const unresolvedImports = [];
+for (const file of codeFiles) {
+  const resolved = resolveImportsForFile(file);
+  fileImports[file] = resolved;
+  unresolvedImports.push(...resolved.unresolved);
+  fileExports[file] = extractExports(readText(file));
+}
+
+const runtimeEntries = [...new Set([...htmlEntries(), EXPECTED_RUNTIME_ENTRY])].filter((entry) =>
+  existsSync(join(ROOT_DIR, entry)),
+);
+const testEntries = allSrcModules.filter(isTestFile);
+const runtime = traverse(runtimeEntries, fileImports);
+const tests = traverse(testEntries, fileImports);
+
+const srcClassification = {};
+for (const file of allSrcModules) {
+  if (TYPES_ALLOWLIST.some((entry) => file.includes(entry))) srcClassification[file] = "KEEP_TEST";
+  else if (isTestFile(file)) srcClassification[file] = "KEEP_TEST";
+  else if (runtime.visited.has(file)) srcClassification[file] = "KEEP_PRODUCTION";
+  else if (tests.visited.has(file)) srcClassification[file] = "KEEP_TEST";
+  else if (file.endsWith(".css") && runtime.visited.has(file)) srcClassification[file] = "KEEP_PRODUCTION";
+  else srcClassification[file] = "DELETE_DEAD";
+}
+
+const duplicateGroups = detectDuplicateFiles(allSrcModules);
+for (const group of duplicateGroups) {
+  for (const file of group) srcClassification[file] = "MERGE_DUPLICATE";
+}
+
+const classification = {};
+for (const file of allFiles) {
+  classification[file] = classifyRepoFile(file, srcClassification);
+}
+
 const buckets = {};
-for (const [f, tag] of Object.entries(classification)) {
-  (buckets[tag] ||= []).push(f);
-}
+for (const [file, tag] of Object.entries(classification)) (buckets[tag] ??= []).push(file);
+
+console.log(`Files inventoried: ${allFiles.length}`);
+console.log(`Code files:        ${codeFiles.length}`);
+console.log(`Runtime entries:   ${runtimeEntries.join(", ") || "(none)"}`);
+console.log(`Test entries:      ${testEntries.length}`);
+console.log(`Runtime reachable: ${runtime.visited.size}`);
+console.log(`Test reachable:    ${tests.visited.size}`);
+console.log(`Unresolved imports:${unresolvedImports.length}`);
+
 for (const tag of Object.keys(buckets).sort()) {
-  console.log(`\n[${tag}]  (${buckets[tag].length})`);
-  for (const f of buckets[tag].sort()) console.log(`   - ${f}`);
+  console.log(`\n[${tag}] (${buckets[tag].length})`);
+  for (const file of buckets[tag].sort()) console.log(`  - ${file}`);
 }
 
-// 7. Persist manifest
+if (unresolvedImports.length > 0) {
+  console.log("\n[UNRESOLVED_IMPORTS]");
+  for (const issue of unresolvedImports) {
+    console.log(`  - ${issue.from} -> ${issue.specifier}`);
+  }
+}
+
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(
-  join(OUT_DIR, 'import-graph.json'),
+  join(OUT_DIR, "import-graph.json"),
   JSON.stringify(
     {
       generatedAt: new Date().toISOString(),
-      runtimeEntries: RUNTIME_ENTRIES,
-      testEntries,
-      counts: Object.fromEntries(Object.entries(buckets).map(([k, v]) => [k, v.length])),
+      entrypoints: {
+        html: ["index.html"],
+        runtime: runtimeEntries,
+        tests: testEntries,
+        packageScripts: JSON.parse(readText("package.json")).scripts ?? {},
+      },
+      imports: fileImports,
+      exports: fileExports,
+      graphs: {
+        runtime: runtime.edges,
+        tests: tests.edges,
+      },
+      reachableFromRuntime: [...runtime.visited].sort(),
+      reachableFromTests: [...tests.visited].sort(),
+      unresolvedImports,
+      duplicateGroups,
+      counts: Object.fromEntries(Object.entries(buckets).map(([key, value]) => [key, value.length])),
       classification,
     },
     null,
     2,
   ),
 );
-console.log(`\n📝 Manifest written: .audit/import-graph.json`);
+console.log("\nManifest written: .audit/import-graph.json");
 
-// 8. Exit policy
-const blocking = ['DELETE_DEAD', 'MERGE_DUPLICATE', 'REWRITE_REQUIRED']
-  .flatMap((t) => buckets[t] || []);
+const blockingTags = new Set(["DELETE_DEAD", "MERGE_DUPLICATE", "REWRITE_REQUIRED"]);
+const blockingFiles = Object.entries(classification)
+  .filter(([, tag]) => blockingTags.has(tag))
+  .map(([file]) => file);
 
-if (blocking.length) {
-  console.log(`\n❌ AUDIT FAILED: ${blocking.length} files require action`);
+if (unresolvedImports.length > 0 || blockingFiles.length > 0) {
+  console.log(
+    `\nAUDIT FAILED: ${blockingFiles.length} classified files and ${unresolvedImports.length} unresolved imports require action`,
+  );
   process.exit(1);
 }
-console.log('\n✅ AUDIT PASSED');
-process.exit(0);
+
+console.log("\nAUDIT PASSED");

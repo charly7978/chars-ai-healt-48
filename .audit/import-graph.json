@@ -1,50 +1,925 @@
 {
-  "generatedAt": "2026-04-27T07:29:17.307Z",
-  "runtimeEntries": [
+  "generatedAt": "2026-04-27T14:02:42.314Z",
+  "entrypoints": {
+    "html": [
+      "index.html"
+    ],
+    "runtime": [
+      "src/main.tsx"
+    ],
+    "tests": [
+      "src/ppg/signal/__tests__/BeatDetector.test.ts",
+      "src/ppg/signal/__tests__/PPGFilters.test.ts"
+    ],
+    "packageScripts": {
+      "dev": "vite",
+      "build": "vite build",
+      "build:dev": "vite build --mode development",
+      "preview": "vite preview",
+      "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+      "lint": "eslint .",
+      "test": "vitest run",
+      "audit:no-simulation": "node scripts/audit-no-simulation.mjs",
+      "audit:graph": "node scripts/audit-import-graph.mjs",
+      "validate": "npm run typecheck && npm run lint && npm run audit:no-simulation && npm run audit:graph && npm run test && npm run build",
+      "verify": "npm run validate"
+    }
+  },
+  "imports": {
+    "eslint.config.js": {
+      "imports": [],
+      "external": [
+        "@eslint/js",
+        "eslint-plugin-react-hooks",
+        "eslint-plugin-react-refresh",
+        "globals",
+        "typescript-eslint"
+      ],
+      "unresolved": []
+    },
+    "postcss.config.js": {
+      "imports": [],
+      "external": [],
+      "unresolved": []
+    },
+    "scripts/audit-import-graph.mjs": {
+      "imports": [],
+      "external": [
+        "fs",
+        "path",
+        "url"
+      ],
+      "unresolved": []
+    },
+    "scripts/audit-no-simulation.mjs": {
+      "imports": [],
+      "external": [
+        "fs",
+        "path",
+        "url"
+      ],
+      "unresolved": []
+    },
+    "src/App.tsx": {
+      "imports": [
+        {
+          "specifier": "./pages/Index",
+          "resolved": "src/pages/Index.tsx"
+        },
+        {
+          "specifier": "./pages/NotFound",
+          "resolved": "src/pages/NotFound.tsx"
+        }
+      ],
+      "external": [
+        "react-router-dom"
+      ],
+      "unresolved": []
+    },
+    "src/main.tsx": {
+      "imports": [
+        {
+          "specifier": "./App.tsx",
+          "resolved": "src/App.tsx"
+        },
+        {
+          "specifier": "./index.css",
+          "resolved": "src/index.css"
+        }
+      ],
+      "external": [
+        "react-dom/client"
+      ],
+      "unresolved": []
+    },
+    "src/pages/Index.tsx": {
+      "imports": [
+        {
+          "specifier": "@/ppg",
+          "resolved": "src/ppg/index.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/pages/NotFound.tsx": {
+      "imports": [],
+      "external": [
+        "react",
+        "react-router-dom"
+      ],
+      "unresolved": []
+    },
+    "src/ppg/camera/FrameSampler.ts": {
+      "imports": [],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/camera/PpgCameraController.ts": {
+      "imports": [
+        {
+          "specifier": "../signal/PpgTypes",
+          "resolved": "src/ppg/signal/PpgTypes.ts"
+        },
+        {
+          "specifier": "./TorchController",
+          "resolved": "src/ppg/camera/TorchController.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/camera/TorchController.ts": {
+      "imports": [
+        {
+          "specifier": "../signal/PpgTypes",
+          "resolved": "src/ppg/signal/PpgTypes.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/camera/index.ts": {
+      "imports": [
+        {
+          "specifier": "./PpgCameraController",
+          "resolved": "src/ppg/camera/PpgCameraController.ts"
+        },
+        {
+          "specifier": "./TorchController",
+          "resolved": "src/ppg/camera/TorchController.ts"
+        },
+        {
+          "specifier": "./FrameSampler",
+          "resolved": "src/ppg/camera/FrameSampler.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/hooks/usePpgEngine.ts": {
+      "imports": [
+        {
+          "specifier": "../signal/PpgTypes",
+          "resolved": "src/ppg/signal/PpgTypes.ts"
+        },
+        {
+          "specifier": "../camera/PpgCameraController",
+          "resolved": "src/ppg/camera/PpgCameraController.ts"
+        },
+        {
+          "specifier": "../camera/FrameSampler",
+          "resolved": "src/ppg/camera/FrameSampler.ts"
+        },
+        {
+          "specifier": "../roi",
+          "resolved": "src/ppg/roi/index.ts"
+        },
+        {
+          "specifier": "../signal/PpgExtractor",
+          "resolved": "src/ppg/signal/PpgExtractor.ts"
+        },
+        {
+          "specifier": "../signal/PublicationGate",
+          "resolved": "src/ppg/signal/PublicationGate.ts"
+        },
+        {
+          "specifier": "../signal/BeatDetector",
+          "resolved": "src/ppg/signal/BeatDetector.ts"
+        }
+      ],
+      "external": [
+        "react"
+      ],
+      "unresolved": []
+    },
+    "src/ppg/index.ts": {
+      "imports": [
+        {
+          "specifier": "./camera",
+          "resolved": "src/ppg/camera/index.ts"
+        },
+        {
+          "specifier": "./radiometry",
+          "resolved": "src/ppg/radiometry/index.ts"
+        },
+        {
+          "specifier": "./roi",
+          "resolved": "src/ppg/roi/index.ts"
+        },
+        {
+          "specifier": "./signal",
+          "resolved": "src/ppg/signal/index.ts"
+        },
+        {
+          "specifier": "./signal/PpgTypes",
+          "resolved": "src/ppg/signal/PpgTypes.ts"
+        },
+        {
+          "specifier": "./hooks/usePpgEngine",
+          "resolved": "src/ppg/hooks/usePpgEngine.ts"
+        },
+        {
+          "specifier": "./ui",
+          "resolved": "src/ppg/ui/index.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/radiometry/OpticalDensity.ts": {
+      "imports": [
+        {
+          "specifier": "./SrgbLinearizer",
+          "resolved": "src/ppg/radiometry/SrgbLinearizer.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/radiometry/SrgbLinearizer.ts": {
+      "imports": [],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/radiometry/index.ts": {
+      "imports": [
+        {
+          "specifier": "./SrgbLinearizer",
+          "resolved": "src/ppg/radiometry/SrgbLinearizer.ts"
+        },
+        {
+          "specifier": "./OpticalDensity",
+          "resolved": "src/ppg/radiometry/OpticalDensity.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/roi/RoiScanner.ts": {
+      "imports": [
+        {
+          "specifier": "../signal/PpgTypes",
+          "resolved": "src/ppg/signal/PpgTypes.ts"
+        },
+        {
+          "specifier": "../radiometry/SrgbLinearizer",
+          "resolved": "src/ppg/radiometry/SrgbLinearizer.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/roi/RoiTracker.ts": {
+      "imports": [
+        {
+          "specifier": "../signal/PpgTypes",
+          "resolved": "src/ppg/signal/PpgTypes.ts"
+        },
+        {
+          "specifier": "./RoiScanner",
+          "resolved": "src/ppg/roi/RoiScanner.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/roi/index.ts": {
+      "imports": [
+        {
+          "specifier": "./RoiScanner",
+          "resolved": "src/ppg/roi/RoiScanner.ts"
+        },
+        {
+          "specifier": "./RoiTracker",
+          "resolved": "src/ppg/roi/RoiTracker.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/signal/BeatDetector.ts": {
+      "imports": [
+        {
+          "specifier": "./PPGFilters",
+          "resolved": "src/ppg/signal/PPGFilters.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/signal/PPGFilters.ts": {
+      "imports": [],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/signal/PpgExtractor.ts": {
+      "imports": [
+        {
+          "specifier": "./PpgTypes",
+          "resolved": "src/ppg/signal/PpgTypes.ts"
+        },
+        {
+          "specifier": "../radiometry/SrgbLinearizer",
+          "resolved": "src/ppg/radiometry/SrgbLinearizer.ts"
+        },
+        {
+          "specifier": "../radiometry/OpticalDensity",
+          "resolved": "src/ppg/radiometry/OpticalDensity.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/signal/PpgTypes.ts": {
+      "imports": [],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/signal/PublicationGate.ts": {
+      "imports": [
+        {
+          "specifier": "./PpgTypes",
+          "resolved": "src/ppg/signal/PpgTypes.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/signal/__tests__/BeatDetector.test.ts": {
+      "imports": [
+        {
+          "specifier": "../BeatDetector",
+          "resolved": "src/ppg/signal/BeatDetector.ts"
+        },
+        {
+          "specifier": "../PPGFilters",
+          "resolved": "src/ppg/signal/PPGFilters.ts"
+        }
+      ],
+      "external": [
+        "vitest"
+      ],
+      "unresolved": []
+    },
+    "src/ppg/signal/__tests__/PPGFilters.test.ts": {
+      "imports": [
+        {
+          "specifier": "../PPGFilters",
+          "resolved": "src/ppg/signal/PPGFilters.ts"
+        }
+      ],
+      "external": [
+        "vitest"
+      ],
+      "unresolved": []
+    },
+    "src/ppg/signal/index.ts": {
+      "imports": [
+        {
+          "specifier": "./PpgExtractor",
+          "resolved": "src/ppg/signal/PpgExtractor.ts"
+        },
+        {
+          "specifier": "./PublicationGate",
+          "resolved": "src/ppg/signal/PublicationGate.ts"
+        },
+        {
+          "specifier": "./BeatDetector",
+          "resolved": "src/ppg/signal/BeatDetector.ts"
+        },
+        {
+          "specifier": "./PPGFilters",
+          "resolved": "src/ppg/signal/PPGFilters.ts"
+        },
+        {
+          "specifier": "./PpgTypes",
+          "resolved": "src/ppg/signal/PpgTypes.ts"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/ppg/ui/CardiacMonitorCanvas.tsx": {
+      "imports": [
+        {
+          "specifier": "../hooks/usePpgEngine",
+          "resolved": "src/ppg/hooks/usePpgEngine.ts"
+        }
+      ],
+      "external": [
+        "react"
+      ],
+      "unresolved": []
+    },
+    "src/ppg/ui/FloatingVitalsOverlay.tsx": {
+      "imports": [
+        {
+          "specifier": "../hooks/usePpgEngine",
+          "resolved": "src/ppg/hooks/usePpgEngine.ts"
+        }
+      ],
+      "external": [
+        "lucide-react"
+      ],
+      "unresolved": []
+    },
+    "src/ppg/ui/index.ts": {
+      "imports": [
+        {
+          "specifier": "./CardiacMonitorCanvas",
+          "resolved": "src/ppg/ui/CardiacMonitorCanvas.tsx"
+        },
+        {
+          "specifier": "./FloatingVitalsOverlay",
+          "resolved": "src/ppg/ui/FloatingVitalsOverlay.tsx"
+        }
+      ],
+      "external": [],
+      "unresolved": []
+    },
+    "src/types/media-stream.d.ts": {
+      "imports": [],
+      "external": [],
+      "unresolved": []
+    },
+    "src/vite-env.d.ts": {
+      "imports": [],
+      "external": [],
+      "unresolved": []
+    },
+    "tailwind.config.ts": {
+      "imports": [],
+      "external": [
+        "tailwindcss"
+      ],
+      "unresolved": []
+    },
+    "vite.config.ts": {
+      "imports": [],
+      "external": [
+        "@vitejs/plugin-react-swc",
+        "lovable-tagger",
+        "path",
+        "vite"
+      ],
+      "unresolved": []
+    },
+    "vitest.config.ts": {
+      "imports": [],
+      "external": [
+        "path",
+        "vitest/config"
+      ],
+      "unresolved": []
+    }
+  },
+  "exports": {
+    "eslint.config.js": [
+      "default"
+    ],
+    "postcss.config.js": [
+      "default"
+    ],
+    "scripts/audit-import-graph.mjs": [],
+    "scripts/audit-no-simulation.mjs": [],
+    "src/App.tsx": [
+      "default"
+    ],
+    "src/main.tsx": [],
+    "src/pages/Index.tsx": [
+      "default"
+    ],
+    "src/pages/NotFound.tsx": [
+      "default"
+    ],
+    "src/ppg/camera/FrameSampler.ts": [
+      "AcquisitionMethod",
+      "FrameSampler",
+      "FrameSamplerStats",
+      "RealFrame",
+      "RealFrameCallback"
+    ],
+    "src/ppg/camera/PpgCameraController.ts": [
+      "CameraCallbacks",
+      "CameraConfig",
+      "PpgCameraController"
+    ],
+    "src/ppg/camera/TorchController.ts": [
+      "TorchController",
+      "TorchStatus"
+    ],
+    "src/ppg/camera/index.ts": [
+      "FrameSampler",
+      "PpgCameraController",
+      "TorchController",
+      "TorchControllerStatus",
+      "type AcquisitionMethod",
+      "type CameraCallbacks",
+      "type CameraConfig",
+      "type FrameSamplerStats",
+      "type RealFrame"
+    ],
+    "src/ppg/hooks/usePpgEngine.ts": [
+      "PpgEngineState",
+      "usePpgEngine"
+    ],
+    "src/ppg/index.ts": [
+      "BeatDetector",
+      "CardiacMonitorCanvas",
+      "DCBaselineTracker",
+      "DEFAULT_PPG_CONFIG",
+      "EngineState",
+      "FloatingVitalsOverlay",
+      "FrameSampler",
+      "PpgCameraController",
+      "PpgExtractor",
+      "PublicationGate",
+      "RoiScanner",
+      "RoiTracker",
+      "TorchController",
+      "calculateDCBaseline",
+      "calculateOD",
+      "calculatePerfusionIndex",
+      "createEmptyBeatDetection",
+      "createEmptyRoiEvidence",
+      "createEmptySignalQuality",
+      "determineRoiState",
+      "processImageData",
+      "srgbToLinear",
+      "type CameraCallbacks",
+      "type CameraConfig",
+      "type ExtractionResult",
+      "type GateInput",
+      "type OpticalDensity",
+      "type Rgb8",
+      "type RgbLinear",
+      "type RoiCandidate",
+      "type TimeSample",
+      "usePpgEngine"
+    ],
+    "src/ppg/radiometry/OpticalDensity.ts": [
+      "DCBaselineTracker",
+      "OpticalDensity",
+      "PpgChannels",
+      "calculateDCBaseline",
+      "calculateOD",
+      "calculatePerfusionIndex",
+      "calculateRatioOfRatios"
+    ],
+    "src/ppg/radiometry/SrgbLinearizer.ts": [
+      "Rgb8",
+      "RgbLinear",
+      "processImageData",
+      "srgbChannelToLinear",
+      "srgbToLinear"
+    ],
+    "src/ppg/radiometry/index.ts": [
+      "DCBaselineTracker",
+      "calculateDCBaseline",
+      "calculateOD",
+      "calculatePerfusionIndex",
+      "calculateRatioOfRatios",
+      "processImageData",
+      "srgbChannelToLinear",
+      "srgbToLinear",
+      "type OpticalDensity",
+      "type PpgChannels",
+      "type Rgb8",
+      "type RgbLinear"
+    ],
+    "src/ppg/roi/RoiScanner.ts": [
+      "RoiCandidate",
+      "RoiScanner",
+      "determineRoiState"
+    ],
+    "src/ppg/roi/RoiTracker.ts": [
+      "RoiTracker"
+    ],
+    "src/ppg/roi/index.ts": [
+      "RoiScanner",
+      "RoiTracker",
+      "determineRoiState",
+      "type RoiCandidate"
+    ],
+    "src/ppg/signal/BeatDetector.ts": [
+      "Beat",
+      "BeatDetectionResult",
+      "BeatDetector",
+      "BeatMorphology",
+      "BeatRejectionReason"
+    ],
+    "src/ppg/signal/PPGFilters.ts": [
+      "PPGFilterRing",
+      "ResampleResult",
+      "SpectralMetrics",
+      "TimeSample",
+      "autocorrBpm",
+      "bandpass",
+      "bandpassZeroPhase",
+      "calculateActualFs",
+      "clamp",
+      "detrendEma",
+      "detrendPolynomial",
+      "detrendRollingMedian",
+      "durationMs",
+      "hampel",
+      "highPassFilter",
+      "mad",
+      "mean",
+      "median",
+      "onePoleLowPass",
+      "preprocessPPGRobust",
+      "resampleUniform",
+      "robustNormalize",
+      "spectralMetrics",
+      "srgbToLinear",
+      "std",
+      "trimmedMean",
+      "validateWindow"
+    ],
+    "src/ppg/signal/PpgExtractor.ts": [
+      "ExtractionResult",
+      "PpgExtractor"
+    ],
+    "src/ppg/signal/PpgTypes.ts": [
+      "Beat",
+      "BeatDetectionResult",
+      "CameraStatus",
+      "DEFAULT_PPG_CONFIG",
+      "OpticalDensity",
+      "PpgConfig",
+      "PpgEngineState",
+      "PpgSample",
+      "PublicationGate",
+      "PublishedMeasurement",
+      "RealFrame",
+      "RgbSample",
+      "RoiEvidence",
+      "RoiRect",
+      "RoiState",
+      "SignalQuality",
+      "Spo2Calibration",
+      "TorchState",
+      "TorchStatus",
+      "createEmptyBeatDetection",
+      "createEmptyRoiEvidence",
+      "createEmptySignalQuality"
+    ],
+    "src/ppg/signal/PublicationGate.ts": [
+      "GateInput",
+      "PublicationGate"
+    ],
+    "src/ppg/signal/__tests__/BeatDetector.test.ts": [],
+    "src/ppg/signal/__tests__/PPGFilters.test.ts": [],
+    "src/ppg/signal/index.ts": [
+      "BeatDetector",
+      "DEFAULT_PPG_CONFIG",
+      "PpgExtractor",
+      "PublicationGate",
+      "createEmptyBeatDetection",
+      "createEmptyRoiEvidence",
+      "createEmptySignalQuality",
+      "type Beat",
+      "type BeatDetectionResult",
+      "type BeatMorphology",
+      "type BeatRejectionReason",
+      "type ExtractionResult",
+      "type GateInput"
+    ],
+    "src/ppg/ui/CardiacMonitorCanvas.tsx": [
+      "CardiacMonitorCanvas"
+    ],
+    "src/ppg/ui/FloatingVitalsOverlay.tsx": [
+      "FloatingVitalsOverlay"
+    ],
+    "src/ppg/ui/index.ts": [
+      "CardiacMonitorCanvas",
+      "FloatingVitalsOverlay"
+    ],
+    "src/types/media-stream.d.ts": [],
+    "src/vite-env.d.ts": [],
+    "tailwind.config.ts": [
+      "default"
+    ],
+    "vite.config.ts": [
+      "default"
+    ],
+    "vitest.config.ts": [
+      "default"
+    ]
+  },
+  "graphs": {
+    "runtime": {
+      "src/main.tsx": [
+        "src/App.tsx",
+        "src/index.css"
+      ],
+      "src/App.tsx": [
+        "src/pages/Index.tsx",
+        "src/pages/NotFound.tsx"
+      ],
+      "src/pages/Index.tsx": [
+        "src/ppg/index.ts"
+      ],
+      "src/pages/NotFound.tsx": [],
+      "src/ppg/index.ts": [
+        "src/ppg/camera/index.ts",
+        "src/ppg/radiometry/index.ts",
+        "src/ppg/roi/index.ts",
+        "src/ppg/signal/index.ts",
+        "src/ppg/signal/PpgTypes.ts",
+        "src/ppg/hooks/usePpgEngine.ts",
+        "src/ppg/ui/index.ts"
+      ],
+      "src/ppg/camera/index.ts": [
+        "src/ppg/camera/PpgCameraController.ts",
+        "src/ppg/camera/TorchController.ts",
+        "src/ppg/camera/FrameSampler.ts"
+      ],
+      "src/ppg/radiometry/index.ts": [
+        "src/ppg/radiometry/SrgbLinearizer.ts",
+        "src/ppg/radiometry/OpticalDensity.ts"
+      ],
+      "src/ppg/roi/index.ts": [
+        "src/ppg/roi/RoiScanner.ts",
+        "src/ppg/roi/RoiTracker.ts"
+      ],
+      "src/ppg/signal/index.ts": [
+        "src/ppg/signal/PpgExtractor.ts",
+        "src/ppg/signal/PublicationGate.ts",
+        "src/ppg/signal/BeatDetector.ts",
+        "src/ppg/signal/PPGFilters.ts",
+        "src/ppg/signal/PpgTypes.ts"
+      ],
+      "src/ppg/signal/PpgTypes.ts": [],
+      "src/ppg/hooks/usePpgEngine.ts": [
+        "src/ppg/signal/PpgTypes.ts",
+        "src/ppg/camera/PpgCameraController.ts",
+        "src/ppg/camera/FrameSampler.ts",
+        "src/ppg/roi/index.ts",
+        "src/ppg/signal/PpgExtractor.ts",
+        "src/ppg/signal/PublicationGate.ts",
+        "src/ppg/signal/BeatDetector.ts"
+      ],
+      "src/ppg/ui/index.ts": [
+        "src/ppg/ui/CardiacMonitorCanvas.tsx",
+        "src/ppg/ui/FloatingVitalsOverlay.tsx"
+      ],
+      "src/ppg/camera/PpgCameraController.ts": [
+        "src/ppg/signal/PpgTypes.ts",
+        "src/ppg/camera/TorchController.ts"
+      ],
+      "src/ppg/camera/TorchController.ts": [
+        "src/ppg/signal/PpgTypes.ts"
+      ],
+      "src/ppg/camera/FrameSampler.ts": [],
+      "src/ppg/radiometry/SrgbLinearizer.ts": [],
+      "src/ppg/radiometry/OpticalDensity.ts": [
+        "src/ppg/radiometry/SrgbLinearizer.ts"
+      ],
+      "src/ppg/roi/RoiScanner.ts": [
+        "src/ppg/signal/PpgTypes.ts",
+        "src/ppg/radiometry/SrgbLinearizer.ts"
+      ],
+      "src/ppg/roi/RoiTracker.ts": [
+        "src/ppg/signal/PpgTypes.ts",
+        "src/ppg/roi/RoiScanner.ts"
+      ],
+      "src/ppg/signal/PpgExtractor.ts": [
+        "src/ppg/signal/PpgTypes.ts",
+        "src/ppg/radiometry/SrgbLinearizer.ts",
+        "src/ppg/radiometry/OpticalDensity.ts"
+      ],
+      "src/ppg/signal/PublicationGate.ts": [
+        "src/ppg/signal/PpgTypes.ts"
+      ],
+      "src/ppg/signal/BeatDetector.ts": [
+        "src/ppg/signal/PPGFilters.ts"
+      ],
+      "src/ppg/signal/PPGFilters.ts": [],
+      "src/ppg/ui/CardiacMonitorCanvas.tsx": [
+        "src/ppg/hooks/usePpgEngine.ts"
+      ],
+      "src/ppg/ui/FloatingVitalsOverlay.tsx": [
+        "src/ppg/hooks/usePpgEngine.ts"
+      ]
+    },
+    "tests": {
+      "src/ppg/signal/__tests__/BeatDetector.test.ts": [
+        "src/ppg/signal/BeatDetector.ts",
+        "src/ppg/signal/PPGFilters.ts"
+      ],
+      "src/ppg/signal/__tests__/PPGFilters.test.ts": [
+        "src/ppg/signal/PPGFilters.ts"
+      ],
+      "src/ppg/signal/BeatDetector.ts": [
+        "src/ppg/signal/PPGFilters.ts"
+      ],
+      "src/ppg/signal/PPGFilters.ts": []
+    }
+  },
+  "reachableFromRuntime": [
+    "src/App.tsx",
+    "src/index.css",
     "src/main.tsx",
-    "src/App.tsx"
+    "src/pages/Index.tsx",
+    "src/pages/NotFound.tsx",
+    "src/ppg/camera/FrameSampler.ts",
+    "src/ppg/camera/PpgCameraController.ts",
+    "src/ppg/camera/TorchController.ts",
+    "src/ppg/camera/index.ts",
+    "src/ppg/hooks/usePpgEngine.ts",
+    "src/ppg/index.ts",
+    "src/ppg/radiometry/OpticalDensity.ts",
+    "src/ppg/radiometry/SrgbLinearizer.ts",
+    "src/ppg/radiometry/index.ts",
+    "src/ppg/roi/RoiScanner.ts",
+    "src/ppg/roi/RoiTracker.ts",
+    "src/ppg/roi/index.ts",
+    "src/ppg/signal/BeatDetector.ts",
+    "src/ppg/signal/PPGFilters.ts",
+    "src/ppg/signal/PpgExtractor.ts",
+    "src/ppg/signal/PpgTypes.ts",
+    "src/ppg/signal/PublicationGate.ts",
+    "src/ppg/signal/index.ts",
+    "src/ppg/ui/CardiacMonitorCanvas.tsx",
+    "src/ppg/ui/FloatingVitalsOverlay.tsx",
+    "src/ppg/ui/index.ts"
   ],
-  "testEntries": [
-    "src/ppg/camera/__tests__/AdaptiveThresholdsStore.test.ts",
-    "src/ppg/diagnostics/__tests__/NoFingerSelfTest.test.ts",
-    "src/ppg/publication/__tests__/PPGPublicationGate.test.ts",
+  "reachableFromTests": [
+    "src/ppg/signal/BeatDetector.ts",
+    "src/ppg/signal/PPGFilters.ts",
     "src/ppg/signal/__tests__/BeatDetector.test.ts",
     "src/ppg/signal/__tests__/PPGFilters.test.ts"
   ],
+  "unresolvedImports": [],
+  "duplicateGroups": [],
   "counts": {
-    "KEEP_PRODUCTION": 22,
-    "KEEP_TEST": 5,
-    "KEEP_TYPES": 2
+    "KEEP_DOC": 16,
+    "KEEP_PRODUCTION": 40,
+    "KEEP_TEST": 4
   },
   "classification": {
+    ".audit/import-graph.json": "KEEP_DOC",
+    ".githooks/pre-commit": "KEEP_DOC",
+    ".github/workflows/npm-gulp.yml": "KEEP_DOC",
+    ".gitignore": "KEEP_DOC",
+    ".lovable/plan.md": "KEEP_DOC",
+    ".vscode/extensions.json": "KEEP_DOC",
+    "README.md": "KEEP_DOC",
+    "components.json": "KEEP_PRODUCTION",
+    "docs/PPG_ACCEPTANCE_TESTS.md": "KEEP_DOC",
+    "docs/REPO_CLEAN_ROOM_AUDIT.md": "KEEP_DOC",
+    "docs/archive/ADVANCED_SYSTEM_REPORT.md": "KEEP_DOC",
+    "docs/archive/AUDIT_REPORT_FINAL.md": "KEEP_DOC",
+    "docs/archive/CONEXIONES_CORREGIDAS_REPORTE.md": "KEEP_DOC",
+    "docs/archive/DIAGNOSTIC_FIXES_REPORT.md": "KEEP_DOC",
+    "docs/archive/Environment changes - biochars-ai-60.txt": "KEEP_DOC",
+    "docs/medical-validation.md": "KEEP_DOC",
+    "eslint.config.js": "KEEP_PRODUCTION",
+    "index.html": "KEEP_PRODUCTION",
+    "package-lock.json": "KEEP_PRODUCTION",
+    "package.json": "KEEP_PRODUCTION",
+    "postcss.config.js": "KEEP_PRODUCTION",
+    "public/favicon.ico": "KEEP_DOC",
+    "scripts/audit-import-graph.mjs": "KEEP_PRODUCTION",
+    "scripts/audit-no-simulation.mjs": "KEEP_PRODUCTION",
     "src/App.tsx": "KEEP_PRODUCTION",
-    "src/components/ForensicPPGDebugPanel.tsx": "KEEP_PRODUCTION",
-    "src/components/FullScreenCardiacMonitor.tsx": "KEEP_PRODUCTION",
     "src/index.css": "KEEP_PRODUCTION",
     "src/main.tsx": "KEEP_PRODUCTION",
     "src/pages/Index.tsx": "KEEP_PRODUCTION",
     "src/pages/NotFound.tsx": "KEEP_PRODUCTION",
-    "src/ppg/camera/AdaptiveAcquisitionThresholds.ts": "KEEP_PRODUCTION",
-    "src/ppg/camera/AdaptiveThresholdsStore.ts": "KEEP_PRODUCTION",
-    "src/ppg/camera/CameraCalibrationProfile.ts": "KEEP_PRODUCTION",
     "src/ppg/camera/FrameSampler.ts": "KEEP_PRODUCTION",
-    "src/ppg/camera/PPGCameraController.ts": "KEEP_PRODUCTION",
-    "src/ppg/camera/__tests__/AdaptiveThresholdsStore.test.ts": "KEEP_TEST",
-    "src/ppg/diagnostics/NoFingerSelfTest.ts": "KEEP_PRODUCTION",
-    "src/ppg/diagnostics/__tests__/NoFingerSelfTest.test.ts": "KEEP_TEST",
-    "src/ppg/publication/PPGPublicationGate.ts": "KEEP_PRODUCTION",
-    "src/ppg/publication/__tests__/PPGPublicationGate.test.ts": "KEEP_TEST",
-    "src/ppg/roi/FingerOpticalROI.ts": "KEEP_PRODUCTION",
+    "src/ppg/camera/PpgCameraController.ts": "KEEP_PRODUCTION",
+    "src/ppg/camera/TorchController.ts": "KEEP_PRODUCTION",
+    "src/ppg/camera/index.ts": "KEEP_PRODUCTION",
+    "src/ppg/hooks/usePpgEngine.ts": "KEEP_PRODUCTION",
+    "src/ppg/index.ts": "KEEP_PRODUCTION",
+    "src/ppg/radiometry/OpticalDensity.ts": "KEEP_PRODUCTION",
+    "src/ppg/radiometry/SrgbLinearizer.ts": "KEEP_PRODUCTION",
+    "src/ppg/radiometry/index.ts": "KEEP_PRODUCTION",
+    "src/ppg/roi/RoiScanner.ts": "KEEP_PRODUCTION",
+    "src/ppg/roi/RoiTracker.ts": "KEEP_PRODUCTION",
+    "src/ppg/roi/index.ts": "KEEP_PRODUCTION",
     "src/ppg/signal/BeatDetector.ts": "KEEP_PRODUCTION",
-    "src/ppg/signal/PPGChannelFusion.ts": "KEEP_PRODUCTION",
     "src/ppg/signal/PPGFilters.ts": "KEEP_PRODUCTION",
-    "src/ppg/signal/PPGOxygenEstimator.ts": "KEEP_PRODUCTION",
-    "src/ppg/signal/PPGSignalQuality.ts": "KEEP_PRODUCTION",
-    "src/ppg/signal/RadiometricPPGExtractor.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/PpgExtractor.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/PpgTypes.ts": "KEEP_PRODUCTION",
+    "src/ppg/signal/PublicationGate.ts": "KEEP_PRODUCTION",
     "src/ppg/signal/__tests__/BeatDetector.test.ts": "KEEP_TEST",
     "src/ppg/signal/__tests__/PPGFilters.test.ts": "KEEP_TEST",
-    "src/ppg/usePPGMeasurement.ts": "KEEP_PRODUCTION",
-    "src/types/media-stream.d.ts": "KEEP_TYPES",
-    "src/vite-env.d.ts": "KEEP_TYPES"
+    "src/ppg/signal/index.ts": "KEEP_PRODUCTION",
+    "src/ppg/ui/CardiacMonitorCanvas.tsx": "KEEP_PRODUCTION",
+    "src/ppg/ui/FloatingVitalsOverlay.tsx": "KEEP_PRODUCTION",
+    "src/ppg/ui/index.ts": "KEEP_PRODUCTION",
+    "src/types/media-stream.d.ts": "KEEP_TEST",
+    "src/vite-env.d.ts": "KEEP_TEST",
+    "tailwind.config.ts": "KEEP_PRODUCTION",
+    "tsconfig.app.json": "KEEP_PRODUCTION",
+    "tsconfig.json": "KEEP_PRODUCTION",
+    "tsconfig.node.json": "KEEP_PRODUCTION",
+    "vite.config.ts": "KEEP_PRODUCTION",
+    "vitest.config.ts": "KEEP_PRODUCTION"
   }
 }

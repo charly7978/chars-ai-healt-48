@@ -60,7 +60,6 @@ export class PublicationGate implements IPublicationGate {
   blockReasons: string[] = [];
   currentStatus: PpgEngineState = "no_ppg_signal";
 
-  private lastEvaluationTime = 0;
   private evaluationHistory: Array<{ time: number; canPublish: boolean }> = [];
   private readonly requiredConsistentEvaluations = 3;
 
@@ -69,8 +68,6 @@ export class PublicationGate implements IPublicationGate {
    * Esta función es la única autoridad para publicación.
    */
   evaluate(input: GateInput): void {
-    const now = performance.now();
-    this.lastEvaluationTime = now;
     this.blockReasons = [];
 
     // 1. Verificar buffer suficiente
@@ -198,8 +195,10 @@ export class PublicationGate implements IPublicationGate {
     }
 
     // Acuerdo entre estimadores
-    if (beats.bpmTimeDomain !== null && beats.bpmFrequencyDomain !== null) {
-      const diff = Math.abs(beats.bpmTimeDomain - beats.bpmFrequencyDomain);
+    const timeDomainBpm = beats.bpmTimeDomain ?? beats.peakBpm ?? beats.medianIbiBpm ?? null;
+    const frequencyDomainBpm = beats.bpmFrequencyDomain ?? beats.fftBpm ?? beats.autocorrBpm ?? null;
+    if (timeDomainBpm !== null && frequencyDomainBpm !== null) {
+      const diff = Math.abs(timeDomainBpm - frequencyDomainBpm);
       if (diff > MAX_BPM_DEVIATION) {
         this.blockReasons.push(`BPM_DISAGREEMENT:${diff.toFixed(1)}BPM>${MAX_BPM_DEVIATION}BPM`);
         return false;
@@ -207,8 +206,9 @@ export class PublicationGate implements IPublicationGate {
     }
 
     // Consistencia RR razonable
-    if (beats.rrConsistency < 0.3) {
-      this.blockReasons.push(`RR_INCONSISTENT:${beats.rrConsistency.toFixed(2)}`);
+    const rrConsistency = beats.rrConsistency ?? this.calculateRrConsistency(beats.rrIntervalsMs ?? beats.rrIntervals ?? []);
+    if (rrConsistency < 0.3) {
+      this.blockReasons.push(`RR_INCONSISTENT:${rrConsistency.toFixed(2)}`);
       return false;
     }
 
@@ -241,23 +241,27 @@ export class PublicationGate implements IPublicationGate {
 
   private calculatePublishedBpm(beats: BeatDetectionResult): number | null {
     // Priorizar BPM con mejor confianza
-    if (beats.bpmTimeDomain !== null && beats.bpmFrequencyDomain !== null) {
+    const timeDomainBpm = beats.bpmTimeDomain ?? beats.peakBpm ?? beats.medianIbiBpm ?? null;
+    const frequencyDomainBpm = beats.bpmFrequencyDomain ?? beats.fftBpm ?? beats.autocorrBpm ?? null;
+    if (timeDomainBpm !== null && frequencyDomainBpm !== null) {
       // Promedio ponderado por confianza implícita
-      return (beats.bpmTimeDomain + beats.bpmFrequencyDomain) / 2;
+      return (timeDomainBpm + frequencyDomainBpm) / 2;
     }
     
-    return beats.bpmTimeDomain ?? beats.bpmFrequencyDomain ?? beats.bpm ?? null;
+    return timeDomainBpm ?? frequencyDomainBpm ?? beats.bpm ?? null;
   }
 
   private calculateBpmConfidence(beats: BeatDetectionResult, quality: SignalQuality): number {
     let confidence = 0;
     
     // Base de confianza del detector
-    confidence += beats.bpmConfidence * 0.4;
+    confidence += (beats.bpmConfidence ?? beats.confidence) * 0.4;
     
     // Bonus por acuerdo de estimadores
-    if (beats.bpmTimeDomain !== null && beats.bpmFrequencyDomain !== null) {
-      const diff = Math.abs(beats.bpmTimeDomain - beats.bpmFrequencyDomain);
+    const timeDomainBpm = beats.bpmTimeDomain ?? beats.peakBpm ?? beats.medianIbiBpm ?? null;
+    const frequencyDomainBpm = beats.bpmFrequencyDomain ?? beats.fftBpm ?? beats.autocorrBpm ?? null;
+    if (timeDomainBpm !== null && frequencyDomainBpm !== null) {
+      const diff = Math.abs(timeDomainBpm - frequencyDomainBpm);
       if (diff <= MAX_BPM_DEVIATION) {
         confidence += 0.3 * (1 - diff / MAX_BPM_DEVIATION);
       }
@@ -267,6 +271,16 @@ export class PublicationGate implements IPublicationGate {
     confidence += quality.sqiOverall * 0.3;
     
     return Math.min(1, Math.max(0, confidence));
+  }
+
+  private calculateRrConsistency(rrIntervalsMs: number[]): number {
+    const intervals = rrIntervalsMs.filter((value) => Number.isFinite(value) && value > 0);
+    if (intervals.length < 2) return 0;
+    const mean = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
+    if (mean <= 0) return 0;
+    const variance =
+      intervals.reduce((sum, value) => sum + (value - mean) * (value - mean), 0) / intervals.length;
+    return Math.max(0, Math.min(1, 1 - Math.sqrt(variance) / mean));
   }
 
   private updatePublishState(canPublish: boolean): void {

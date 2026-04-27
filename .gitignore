@@ -31,7 +31,6 @@ dist-ssr/
 *.sw?
 
 # Package managers
-package-lock.json
 yarn.lock
 bun.lock
 bun.lockb
@@ -39,6 +38,7 @@ bun.lockb
 # Build artifacts
 *.timestamp-*.mjs
 vite.config.ts.timestamp-*.mjs
+*.tsbuildinfo
 
 # Malware/mining - CRITICAL SECURITY
 Nueva carpeta/

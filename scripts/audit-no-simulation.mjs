@@ -33,6 +33,7 @@ const SUSPICIOUS = [
   { re: /\bsimulated\b/i,                    sev: 'ERROR',    msg: '"simulated" identifier' },
   { re: /\bsimulation\b/i,                   sev: 'ERROR',    msg: '"simulation" identifier' },
   { re: /\bsynthetic\b/i,                    sev: 'ERROR',    msg: '"synthetic" identifier' },
+  { re: /\bplaceholder\b/i,                  sev: 'ERROR',    msg: '"placeholder" identifier' },
   { re: /\bdemo[-_ ]?value\b/i,              sev: 'ERROR',    msg: '"demo value" literal' },
   { re: /\bplaceholder[-_ ]?(value|vital|bpm|spo2)\b/i, sev: 'ERROR', msg: '"placeholder vital" literal' },
 

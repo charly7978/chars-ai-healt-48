@@ -19,11 +19,18 @@ interface CardiacMonitorCanvasProps {
 export function CardiacMonitorCanvas({ state }: CardiacMonitorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveformRef = useRef<number[]>([]);
+  const engineStateRef = useRef(state.engineState);
+  const beatsRef = useRef(state.beats.beats);
 
   // Actualizar waveform ref cuando cambia el estado
   useEffect(() => {
     waveformRef.current = state.waveform;
   }, [state.waveform]);
+
+  useEffect(() => {
+    engineStateRef.current = state.engineState;
+    beatsRef.current = state.beats.beats;
+  }, [state.beats.beats, state.engineState]);
 
   // Render loop
   useEffect(() => {
@@ -90,7 +97,7 @@ export function CardiacMonitorCanvas({ state }: CardiacMonitorCanvasProps) {
       // Draw waveform
       const waveform = waveformRef.current;
       if (waveform.length > 1) {
-        ctx.strokeStyle = state.engineState === "ppg_valid" ? "#22d3ee" : "#64748b";  // cyan-400 vs slate-500
+        ctx.strokeStyle = engineStateRef.current === "ppg_valid" ? "#22d3ee" : "#64748b";  // cyan-400 vs slate-500
         ctx.lineWidth = 3;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
@@ -125,10 +132,11 @@ export function CardiacMonitorCanvas({ state }: CardiacMonitorCanvasProps) {
       }
 
       // Draw beat markers
-      if (state.beats?.beats?.length > 0) {
+      const beats = beatsRef.current;
+      if (beats.length > 0) {
         ctx.fillStyle = "#10b981";  // emerald-500
         
-        state.beats.beats.forEach((beat) => {
+        beats.forEach((beat) => {
           // Solo dibujar si está en el rango visible
           const age = Date.now() - beat.t;
           if (age < 1000) {  // Último segundo

@@ -193,9 +193,9 @@ export class RoiTracker {
       validPixelRatio: candidate.validPixelRatio,
       saturationRatio: candidate.saturationRatio,
       darkRatio: candidate.darkRatio,
-      meanR: candidate.redDominance * (candidate.redDominance > 0 ? 0.5 : 0),  // Approx
-      meanG: 0.3,  // Placeholder - se calcula real en extractor
-      meanB: 0.2,
+      meanR: 0,
+      meanG: 0,
+      meanB: 0,
       redDominance: candidate.redDominance,
       temporalVariance: candidate.temporalVariance,
       perfusionProxy: candidate.perfusionProxy,
