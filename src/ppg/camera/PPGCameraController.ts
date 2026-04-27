@@ -354,6 +354,8 @@ export class PPGCameraController {
   }
 
   async start(): Promise<PPGCameraState> {
+    const t0 = performance.now();
+    const startedAt = new Date().toISOString();
     const diagnostics = emptyDiagnostics();
     this.state = emptyState(null, this.lastError, diagnostics);
     this.frameCount = 0;
@@ -364,21 +366,48 @@ export class PPGCameraController {
         throw new Error("Camera API not supported by this browser");
       }
 
-      // Phase 1 — minimal permission grant so device labels become visible.
+      // Phase 1 — permission priming. Try `exact: environment` first
+      // (forensic requirement: never silently fall back to the front camera).
+      // Retry with `ideal` only to recover device labels for enumeration;
+      // Phase 3 still enforces rear selection by deviceId.
       let priming: MediaStream | null = null;
       try {
         priming = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
+          video: { facingMode: { exact: "environment" } },
           audio: false,
+        });
+        diagnostics.attempts.push({
+          label: "permission-priming-exact-environment",
+          constraints: { video: { facingMode: { exact: "environment" } }, audio: false },
+          outcome: "success",
         });
       } catch (e) {
         diagnostics.attempts.push({
-          label: "permission-priming",
-          constraints: { video: { facingMode: { ideal: "environment" } }, audio: false },
+          label: "permission-priming-exact-environment",
+          constraints: { video: { facingMode: { exact: "environment" } }, audio: false },
           outcome: "failure",
           errorName: (e as Error).name,
           errorMessage: (e as Error).message,
         });
+        try {
+          priming = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: "environment" } },
+            audio: false,
+          });
+          diagnostics.attempts.push({
+            label: "permission-priming-ideal-environment",
+            constraints: { video: { facingMode: { ideal: "environment" } }, audio: false },
+            outcome: "success",
+          });
+        } catch (e2) {
+          diagnostics.attempts.push({
+            label: "permission-priming-ideal-environment",
+            constraints: { video: { facingMode: { ideal: "environment" } }, audio: false },
+            outcome: "failure",
+            errorName: (e2 as Error).name,
+            errorMessage: (e2 as Error).message,
+          });
+        }
       }
 
       // Phase 2 — enumerate and score devices.
@@ -389,27 +418,45 @@ export class PPGCameraController {
         .sort((a, b) => b.score - a.score);
       diagnostics.enumeratedDevices = profiles;
 
-      // Release the priming stream before opening the chosen one.
       priming?.getTracks().forEach((t) => {
-        try {
-          t.stop();
-        } catch {
-          /* noop */
-        }
+        try { t.stop(); } catch { /* noop */ }
       });
 
-      const bestRear = profiles.find(
+      // Phase 2.5 — multi-rear PPG probe (only when ≥2 viable candidates).
+      const rearCandidates = profiles.filter(
         (p) =>
           p.facingModeDetected === "environment" &&
           p.penalties.ultraWide === 0 &&
           p.penalties.frontCamera === 0,
       );
-      if (bestRear) {
-        bestRear.selectedReason = "best-rear-non-ultrawide";
+      let probeReport: MultiRearProbeReport;
+      let preferredDeviceId: string | null = rearCandidates[0]?.deviceId ?? null;
+
+      if (rearCandidates.length >= 2) {
+        probeReport = await this.runMultiRearProbe(rearCandidates, diagnostics);
+        if (probeReport.winnerDeviceId) {
+          preferredDeviceId = probeReport.winnerDeviceId;
+          const winner = profiles.find((p) => p.deviceId === probeReport.winnerDeviceId);
+          if (winner) winner.selectedReason = "multi-rear-probe-winner";
+        }
+      } else {
+        probeReport = {
+          ran: false,
+          reason:
+            rearCandidates.length === 0
+              ? "no-rear-non-ultrawide-candidates"
+              : "single-candidate",
+          candidates: [],
+          winnerDeviceId: null,
+        };
+        if (rearCandidates[0] && !rearCandidates[0].selectedReason) {
+          rearCandidates[0].selectedReason = "best-rear-non-ultrawide";
+        }
       }
+      diagnostics.multiRearProbe = probeReport;
 
       // Phase 3 — open with progressive constraints, logging every attempt.
-      let opened = await this.openCamera(diagnostics, bestRear?.deviceId ?? null);
+      let opened = await this.openCamera(diagnostics, preferredDeviceId);
 
       let videoTrack = opened.stream.getVideoTracks()[0] ?? null;
       if (!videoTrack) {
@@ -457,7 +504,6 @@ export class PPGCameraController {
       if (matchedProfile && !matchedProfile.selectedReason) {
         matchedProfile.selectedReason = opened.selectedReason;
       }
-      // Mark all other enumerated profiles as rejected with reason.
       const chosenId = diagnostics.selectedDevice.deviceId;
       for (const p of profiles) {
         if (p.deviceId !== chosenId && p.selectedReason === null) {
@@ -466,7 +512,6 @@ export class PPGCameraController {
           }
         }
       }
-
 
       // Phase 4 — capture capabilities/settings.
       let capabilities: MediaTrackCapabilities | null = null;
@@ -481,20 +526,35 @@ export class PPGCameraController {
 
       // Phase 5 — apply fine optical constraints, recording each outcome.
       await this.applyFineConstraints(videoTrack, capabilities, diagnostics);
-
-      // Re-read settings after fine tuning.
       settings = videoTrack.getSettings();
       diagnostics.settings = settings;
 
+      // Torch — collapse to a single non-ambiguous resolution.
       const torchCap = capabilities?.torch === true;
       diagnostics.torchStatus.available = torchCap;
       const torchEntry = diagnostics.fineConstraints.find((c) => c.key === "torch");
-      const torchEnabled =
-        torchEntry?.status === "applied" &&
-        (settings?.torch === true || settings?.fillLightMode === "flash");
+      const torchReadback =
+        settings?.torch === true || settings?.fillLightMode === "flash";
       const torchApplied = torchEntry?.status === "applied";
+      const torchEnabled = torchApplied === true && torchReadback;
       diagnostics.torchStatus.requested = torchEntry?.attempted === true;
-      diagnostics.torchStatus.appliedReadback = torchEnabled === true;
+      diagnostics.torchStatus.appliedReadback = torchReadback;
+      diagnostics.torchStatus.resolved = !torchCap
+        ? "unsupported"
+        : torchEntry?.status === "failed"
+          ? "denied"
+          : torchApplied && torchReadback
+            ? "applied"
+            : torchApplied && !torchReadback
+              ? "ignored-by-browser"
+              : "unsupported";
+
+      // AUTO_CAMERA_CONTROL_UNAVAILABLE marker.
+      const opticalKeys = ["torch", "exposureMode", "focusMode", "whiteBalanceMode"];
+      const everyOpticalUnsupported = diagnostics.fineConstraints
+        .filter((c) => (opticalKeys as string[]).includes(c.key))
+        .every((c) => c.status === "unsupported");
+      diagnostics.autoCameraControlUnavailable = everyOpticalUnsupported;
 
       // Phase 6 — calibration lookup.
       const lookup = lookupCalibrationProfile({
@@ -514,6 +574,30 @@ export class PPGCameraController {
 
       const width = settings?.width ?? 0;
       const height = settings?.height ?? 0;
+      const rearVerified =
+        diagnostics.selectedDevice?.facingModeDetected === "environment" ||
+        opened.constraints?.facingMode !== undefined;
+
+      const reportSeed: CameraAcquisitionReport = {
+        startedAt,
+        durationMs: Math.round(performance.now() - t0),
+        rearVerified,
+        torchVerified: diagnostics.torchStatus.resolved === "applied",
+        fpsReal: settings?.frameRate ?? 0,
+        width,
+        height,
+        selectedDeviceId: settings?.deviceId ?? null,
+        selectedDeviceLabel: videoTrack.label,
+        selectionReason: diagnostics.selectedDevice?.selectedReason ?? opened.selectedReason,
+        warmupFrames: 0,
+        warmupJitterMs: 0,
+        warmupFpsStdMs: 0,
+        acquisitionReady: false,
+        notReadyReasons: ["awaiting-warmup"],
+        multiRearProbe: probeReport,
+        autoCameraControlUnavailable: diagnostics.autoCameraControlUnavailable,
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      };
 
       this.state = {
         stream: opened.stream,
@@ -523,8 +607,11 @@ export class PPGCameraController {
         constraints: opened.constraints,
         torchAvailable: torchCap,
         torchEnabled,
-        torchApplied,
+        torchApplied: torchApplied === true,
         cameraReady: true,
+        acquisitionReady: false,
+        notReadyReasons: ["awaiting-warmup"],
+        acquisitionReport: reportSeed,
         streamActive: videoTrack.readyState === "live",
         measuredFps: settings?.frameRate ?? 0,
         width,
@@ -541,6 +628,8 @@ export class PPGCameraController {
         fps: settings?.frameRate,
         torch: diagnostics.torchStatus,
         calibration: diagnostics.calibration,
+        autoCameraControlUnavailable: diagnostics.autoCameraControlUnavailable,
+        multiRearProbe: probeReport,
       });
 
       return this.getState();
