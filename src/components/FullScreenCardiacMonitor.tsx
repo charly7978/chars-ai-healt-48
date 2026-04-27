@@ -563,7 +563,16 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
           <div>
             <div className="text-slate-500">AGREEMENT</div>
             <div className="font-mono text-slate-100">
-              {measurement.published.quality.estimatorAgreementBpm.toFixed(1)} BPM
+              Δ{measurement.published.estimatorBreakdown.agreementBpm.toFixed(1)}
+              {" · P"}
+              {measurement.published.estimatorBreakdown.peakBpm?.toFixed(0) ?? "--"}
+              {" F"}
+              {measurement.published.estimatorBreakdown.fftBpm?.toFixed(0) ?? "--"}
+              {" A"}
+              {measurement.published.estimatorBreakdown.autocorrBpm?.toFixed(0) ?? "--"}
+              {measurement.published.irregularityFlag && (
+                <span className="ml-1 rounded bg-amber-500/20 px-1 text-amber-200">IRR</span>
+              )}
             </div>
           </div>
           <div>
