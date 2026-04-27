@@ -36,6 +36,15 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
   const debug = measurement.debug;
   const reasons = measurement.published.quality.reasons;
   const frameStats = measurement.frameStats;
+  const beats = measurement.beats ?? {
+    bpm: null,
+    fftBpm: null,
+    autocorrBpm: null,
+    estimatorAgreementBpm: undefined as number | undefined,
+    beats: [] as unknown[],
+    rejectedCandidates: 0,
+    rrIntervalsMs: [] as number[],
+  };
 
   const exportJson = () => {
     const auditData = {
