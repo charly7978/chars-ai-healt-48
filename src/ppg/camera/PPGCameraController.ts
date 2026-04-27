@@ -16,6 +16,13 @@ const REQUESTED_VIDEO: MediaTrackConstraints = {
   frameRate: { ideal: 60, min: 30 },
 };
 
+type TorchCapabilities = MediaTrackCapabilities & { torch?: boolean };
+type TorchConstraintSet = MediaTrackConstraintSet & { torch?: boolean };
+
+function torchConstraint(enabled: boolean): MediaTrackConstraints {
+  return { advanced: [{ torch: enabled } as TorchConstraintSet] };
+}
+
 function emptyState(error: string | null = null): PPGCameraState {
   return {
     stream: null,
@@ -91,15 +98,13 @@ export class PPGCameraController {
         capabilities = null;
       }
 
-      const torchAvailable = Boolean((capabilities as any)?.torch);
+      const torchAvailable = Boolean((capabilities as TorchCapabilities | null)?.torch);
       let torchEnabled = false;
       this.torchAttempted = true;
 
       if (torchAvailable) {
         try {
-          await videoTrack.applyConstraints({
-            advanced: [{ torch: true } as any],
-          });
+          await videoTrack.applyConstraints(torchConstraint(true));
           torchEnabled = true;
         } catch {
           torchEnabled = false;
@@ -136,11 +141,9 @@ export class PPGCameraController {
 
     if (track && track.readyState === "live") {
       try {
-        const capabilities = track.getCapabilities() as any;
+        const capabilities = track.getCapabilities() as TorchCapabilities;
         if (capabilities?.torch) {
-          await track.applyConstraints({
-            advanced: [{ torch: false } as any],
-          });
+          await track.applyConstraints(torchConstraint(false));
         }
       } catch {
         // Torch shutdown is best-effort; track.stop below is authoritative.

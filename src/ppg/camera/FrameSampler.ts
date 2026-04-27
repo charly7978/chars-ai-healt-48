@@ -18,6 +18,21 @@ export interface FrameSamplerStats {
 
 export type RealFrameCallback = (frame: RealFrame) => void;
 
+interface BrowserVideoFrameMetadata {
+  mediaTime?: number;
+  presentedFrames?: number;
+}
+
+type BrowserVideoFrameCallback = (
+  now: number,
+  metadata: BrowserVideoFrameMetadata,
+) => void;
+
+type VideoElementWithFrameCallbacks = HTMLVideoElement & {
+  requestVideoFrameCallback: (callback: BrowserVideoFrameCallback) => number;
+  cancelVideoFrameCallback: (handle: number) => void;
+};
+
 export class FrameSampler {
   private running = false;
   private video: HTMLVideoElement | null = null;
@@ -66,7 +81,7 @@ export class FrameSampler {
     this.running = false;
     if (this.requestId !== null && this.video) {
       if ("cancelVideoFrameCallback" in HTMLVideoElement.prototype) {
-        (this.video as any).cancelVideoFrameCallback(this.requestId);
+        (this.video as VideoElementWithFrameCallbacks).cancelVideoFrameCallback(this.requestId);
       } else {
         cancelAnimationFrame(this.requestId);
       }
@@ -80,8 +95,8 @@ export class FrameSampler {
     if (!this.running || !this.video) return;
 
     if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
-      this.requestId = (this.video as any).requestVideoFrameCallback(
-        (now: number, metadata: any) => this.handleFrame(now, metadata),
+      this.requestId = (this.video as VideoElementWithFrameCallbacks).requestVideoFrameCallback(
+        (now: number, metadata: BrowserVideoFrameMetadata) => this.handleFrame(now, metadata),
       );
       return;
     }
@@ -89,7 +104,7 @@ export class FrameSampler {
     this.requestId = requestAnimationFrame((now) => this.handleFrame(now));
   }
 
-  private handleFrame(now: number, metadata?: any): void {
+  private handleFrame(now: number, metadata?: BrowserVideoFrameMetadata): void {
     if (!this.running || !this.video || !this.callback) return;
 
     const videoWidth = this.video.videoWidth;

@@ -8,6 +8,10 @@ import {
   type PPGSignalQuality,
 } from "../signal/PPGSignalQuality";
 import { durationMs, preprocessPPG, type TimeSample } from "../signal/PPGFilters";
+import {
+  estimateCameraSpO2,
+  type PublishedOxygenMeasurement,
+} from "../signal/PPGOxygenEstimator";
 
 export type PublicationState =
   | "CAMERA_STARTING"
@@ -25,6 +29,7 @@ export interface PublishedPPGMeasurement {
   canVibrateBeat: boolean;
   bpm: number | null;
   bpmConfidence: number;
+  oxygen: PublishedOxygenMeasurement;
   waveform: number[];
   waveformSource: "REAL_PPG" | "RAW_DEBUG_ONLY" | "NONE";
   beatMarkers: Array<{ t: number; confidence: number }>;
@@ -37,7 +42,7 @@ export interface PublishedPPGMeasurement {
   message: string;
 }
 
-const NO_SIGNAL_MESSAGE = "SIN SEÑAL PPG VERIFICABLE";
+const NO_SIGNAL_MESSAGE = "SIN SENAL PPG VERIFICABLE";
 
 function waveformFromSeries(series: TimeSample[], maxPoints = 520): number[] {
   if (series.length < 3) return [];
@@ -55,6 +60,13 @@ export function createEmptyPublishedPPGMeasurement(
     canVibrateBeat: false,
     bpm: null,
     bpmConfidence: 0,
+    oxygen: {
+      spo2: null,
+      confidence: 0,
+      canPublish: false,
+      method: "NONE",
+      reasons: ["NO_PPG_PUBLICATION"],
+    },
     waveform: [],
     waveformSource: "NONE",
     beatMarkers: [],
@@ -207,12 +219,19 @@ export class PPGPublicationGate {
         ? "RAW_DEBUG_ONLY"
         : "NONE";
 
+    const oxygen = estimateCameraSpO2({
+      samples: opticalSamples,
+      quality,
+      canPublishVitals,
+    });
+
     return {
       state,
       canPublishVitals,
       canVibrateBeat,
       bpm: canPublishVitals && beats.bpm !== null ? Math.round(beats.bpm) : null,
       bpmConfidence: canPublishVitals ? beats.confidence : 0,
+      oxygen,
       waveform: waveformSource === "NONE" ? [] : waveformFromSeries(selectedSeries),
       waveformSource,
       beatMarkers: canPublishVitals
@@ -220,7 +239,7 @@ export class PPGPublicationGate {
         : [],
       quality: {
         ...quality,
-        reasons: [...new Set([...quality.reasons, ...reasons])],
+        reasons: [...new Set([...quality.reasons, ...reasons, ...oxygen.reasons])],
       },
       evidence: { camera, roi, channels },
       message: canPublishVitals ? "PPG VALIDADA" : NO_SIGNAL_MESSAGE,

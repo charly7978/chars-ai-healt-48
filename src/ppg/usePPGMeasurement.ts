@@ -260,10 +260,12 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   }, [publishUiSnapshot, resetProcessors]);
 
   useEffect(() => {
+    const sampler = frameSamplerRef.current;
+    const cameraController = cameraControllerRef.current;
     return () => {
       activeRef.current = false;
-      frameSamplerRef.current.stop();
-      void cameraControllerRef.current.stop();
+      sampler.stop();
+      void cameraController.stop();
     };
   }, []);
 

@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState } from "react";
-import { Activity, Bug, Play, Square } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  Bug,
+  Camera,
+  Flashlight,
+  Play,
+  RadioTower,
+  Square,
+} from "lucide-react";
 import type { UsePPGMeasurementResult } from "@/ppg/usePPGMeasurement";
 import ForensicPPGDebugPanel from "./ForensicPPGDebugPanel";
 
@@ -7,22 +15,153 @@ interface FullScreenCardiacMonitorProps {
   measurement: UsePPGMeasurementResult;
 }
 
-function normalizeWaveform(values: number[], height: number): number[] {
-  if (values.length === 0) return [];
-  const sorted = [...values].filter(Number.isFinite).sort((a, b) => a - b);
-  if (sorted.length === 0) return [];
-  const p10 = sorted[Math.floor((sorted.length - 1) * 0.1)];
-  const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)];
-  const mid = (p10 + p90) / 2;
-  const range = Math.max(0.25, p90 - p10);
-  const usable = height * 0.72;
-  return values.map((value) => height / 2 - ((value - mid) / range) * usable);
+type TracePoint = { t: number; value: number };
+
+function percentile(values: number[], p: number): number {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (sorted.length === 0) return 0;
+  return sorted[Math.floor((sorted.length - 1) * p)];
 }
 
-function drawMonitor(
-  canvas: HTMLCanvasElement,
-  published: UsePPGMeasurementResult["published"],
+function normalizeY(values: number[], top: number, height: number): number[] {
+  if (values.length === 0) return [];
+  const p05 = percentile(values, 0.05);
+  const p95 = percentile(values, 0.95);
+  const mid = (p05 + p95) / 2;
+  const span = Math.max(0.25, p95 - p05);
+  return values.map((value) => top + height / 2 - ((value - mid) / span) * height * 0.82);
+}
+
+function drawGrid(ctx: CanvasRenderingContext2D, width: number, height: number, dpr: number): void {
+  ctx.fillStyle = "#020506";
+  ctx.fillRect(0, 0, width, height);
+
+  const minorX = 38 * dpr;
+  const minorY = 30 * dpr;
+  ctx.lineWidth = 1 * dpr;
+  ctx.strokeStyle = "rgba(26, 232, 184, 0.055)";
+  ctx.beginPath();
+  for (let x = 0; x <= width; x += minorX) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+  }
+  for (let y = 0; y <= height; y += minorY) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(26, 232, 184, 0.13)";
+  ctx.beginPath();
+  for (let x = 0; x <= width; x += minorX * 5) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+  }
+  for (let y = 0; y <= height; y += minorY * 5) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+  }
+  ctx.stroke();
+}
+
+function drawTrace(params: {
+  ctx: CanvasRenderingContext2D;
+  points: TracePoint[];
+  top: number;
+  height: number;
+  width: number;
+  color: string;
+  lineWidth: number;
+  dpr: number;
+  glow?: string;
+  label?: string;
+}): void {
+  const { ctx, points, top, height, width, color, lineWidth, dpr, glow, label } = params;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.10)";
+  ctx.lineWidth = 1 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(0, top + height / 2);
+  ctx.lineTo(width, top + height / 2);
+  ctx.stroke();
+
+  if (label) {
+    ctx.fillStyle = "rgba(214, 255, 242, 0.46)";
+    ctx.font = `${10 * dpr}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.fillText(label, 14 * dpr, top + 15 * dpr);
+  }
+
+  if (points.length < 2) return;
+  const y = normalizeY(points.map((point) => point.value), top, height);
+  const minT = points[0].t;
+  const maxT = points[points.length - 1].t;
+  const spanT = Math.max(1, maxT - minT);
+
+  ctx.save();
+  if (glow) {
+    ctx.shadowColor = glow;
+    ctx.shadowBlur = 10 * dpr;
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth * dpr;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  for (let i = 0; i < points.length; i += 1) {
+    const x = ((points[i].t - minT) / spanT) * width;
+    if (i === 0) ctx.moveTo(x, y[i]);
+    else ctx.lineTo(x, y[i]);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBeatMarkers(
+  ctx: CanvasRenderingContext2D,
+  beatMarkers: Array<{ t: number; confidence: number }>,
+  tracePoints: TracePoint[],
+  width: number,
+  top: number,
+  height: number,
+  dpr: number,
 ): void {
+  if (beatMarkers.length === 0 || tracePoints.length < 2) return;
+  const minT = tracePoints[0].t;
+  const maxT = tracePoints[tracePoints.length - 1].t;
+  const spanT = Math.max(1, maxT - minT);
+  for (const beat of beatMarkers) {
+    if (beat.t < minT || beat.t > maxT) continue;
+    const x = ((beat.t - minT) / spanT) * width;
+    ctx.strokeStyle = `rgba(255,255,255,${0.22 + beat.confidence * 0.42})`;
+    ctx.lineWidth = 1.2 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(x, top + height * 0.1);
+    ctx.lineTo(x, top + height * 0.9);
+    ctx.stroke();
+    ctx.fillStyle = "#eafff4";
+    ctx.beginPath();
+    ctx.arc(x, top + height * 0.15, 3.2 * dpr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function mainTrace(measurement: UsePPGMeasurementResult): TracePoint[] {
+  if (measurement.published.waveform.length > 1) {
+    const lastT = measurement.channels[measurement.channels.length - 1]?.t ?? performance.now();
+    const step = 1000 / Math.max(15, measurement.frameStats.measuredFps || 30);
+    const start = lastT - measurement.published.waveform.length * step;
+    return measurement.published.waveform.map((value, index) => ({
+      t: start + index * step,
+      value,
+    }));
+  }
+  return measurement.channels.slice(-520).map((sample) => ({
+    t: sample.t,
+    value: sample.selected,
+  }));
+}
+
+function drawMonitor(canvas: HTMLCanvasElement, measurement: UsePPGMeasurementResult): void {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const width = Math.max(1, Math.floor(rect.width * dpr));
@@ -31,84 +170,106 @@ function drawMonitor(
     canvas.width = width;
     canvas.height = height;
   }
-
   const ctx = canvas.getContext("2d", { alpha: false });
   if (!ctx) return;
 
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, width, height);
+  drawGrid(ctx, width, height, dpr);
 
-  ctx.strokeStyle = "rgba(20, 184, 166, 0.10)";
-  ctx.lineWidth = Math.max(1, dpr);
-  const gridX = Math.max(44 * dpr, width / 24);
-  const gridY = Math.max(36 * dpr, height / 14);
-  ctx.beginPath();
-  for (let x = 0; x <= width; x += gridX) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
-  }
-  for (let y = 0; y <= height; y += gridY) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
-  }
-  ctx.stroke();
+  const topReserve = 86 * dpr;
+  const bottomReserve = 128 * dpr;
+  const channelBand = Math.max(92 * dpr, height * 0.18);
+  const mainTop = topReserve;
+  const mainHeight = Math.max(200 * dpr, height - topReserve - bottomReserve - channelBand);
+  const channelTop = mainTop + mainHeight + 12 * dpr;
+  const trace = mainTrace(measurement);
+  const official = measurement.published.waveformSource === "REAL_PPG";
+  const debugTrace = measurement.published.waveformSource === "RAW_DEBUG_ONLY";
 
-  ctx.strokeStyle = "rgba(255,255,255,0.16)";
-  ctx.beginPath();
-  ctx.moveTo(0, height / 2);
-  ctx.lineTo(width, height / 2);
-  ctx.stroke();
+  drawTrace({
+    ctx,
+    points: trace,
+    top: mainTop,
+    height: mainHeight,
+    width,
+    color: official ? "#19ff88" : debugTrace ? "rgba(251,191,36,0.56)" : "rgba(148,163,184,0.18)",
+    lineWidth: official ? 2.25 : 1.55,
+    glow: official ? "rgba(25,255,136,0.58)" : undefined,
+    label: official ? "REAL PPG LOCKED" : debugTrace ? "RAW DEBUG - NOT A VITAL WAVEFORM" : "NO VERIFIED PPG",
+    dpr,
+  });
 
-  if (published.waveform.length < 2) return;
-
-  const yValues = normalizeWaveform(published.waveform, height);
-  const xStep = width / Math.max(1, yValues.length - 1);
-  ctx.beginPath();
-  for (let i = 0; i < yValues.length; i += 1) {
-    const x = i * xStep;
-    const y = yValues[i];
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  if (official) {
+    drawBeatMarkers(ctx, measurement.published.beatMarkers, trace, width, mainTop, mainHeight, dpr);
   }
 
-  if (published.waveformSource === "REAL_PPG") {
-    ctx.shadowColor = "rgba(16, 255, 122, 0.60)";
-    ctx.shadowBlur = 10 * dpr;
-    ctx.strokeStyle = "#10ff7a";
-    ctx.lineWidth = 2.4 * dpr;
-  } else {
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = "rgba(250, 204, 21, 0.34)";
-    ctx.lineWidth = 1.4 * dpr;
-  }
-  ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  if (published.waveformSource === "RAW_DEBUG_ONLY") {
-    ctx.fillStyle = "rgba(250, 204, 21, 0.42)";
-    ctx.font = `${12 * dpr}px ui-monospace, SFMono-Regular, Menlo, monospace`;
-    ctx.fillText("RAW DEBUG", 18 * dpr, 34 * dpr);
-  }
+  const recentChannels = measurement.channels.slice(-260);
+  const laneHeight = channelBand / 3;
+  drawTrace({
+    ctx,
+    points: recentChannels.map((sample) => ({ t: sample.t, value: sample.g1 })),
+    top: channelTop,
+    height: laneHeight,
+    width,
+    color: "rgba(45,212,191,0.74)",
+    lineWidth: 1.1,
+    label: "G1 GREEN OD",
+    dpr,
+  });
+  drawTrace({
+    ctx,
+    points: recentChannels.map((sample) => ({ t: sample.t, value: sample.g2 })),
+    top: channelTop + laneHeight,
+    height: laneHeight,
+    width,
+    color: "rgba(96,165,250,0.68)",
+    lineWidth: 1,
+    label: "G2 CHROM OD",
+    dpr,
+  });
+  drawTrace({
+    ctx,
+    points: recentChannels.map((sample) => ({ t: sample.t, value: sample.g3 })),
+    top: channelTop + laneHeight * 2,
+    height: laneHeight,
+    width,
+    color: "rgba(244,114,182,0.62)",
+    lineWidth: 1,
+    label: "G3 PCA/POS",
+    dpr,
+  });
 }
 
-export default function FullScreenCardiacMonitor({
-  measurement,
-}: FullScreenCardiacMonitorProps) {
+function shortReason(reasons: string[]): string {
+  if (reasons.length === 0) return "OK";
+  return reasons.slice(-3).join(" | ");
+}
+
+export default function FullScreenCardiacMonitor({ measurement }: FullScreenCardiacMonitorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [debugOpen, setDebugOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const active = measurement.camera.cameraReady;
   const bpm = measurement.published.bpm;
+  const oxygen = measurement.published.oxygen;
+  const latestSample = measurement.rawSamples[measurement.rawSamples.length - 1];
+  const latestChannel = measurement.channels[measurement.channels.length - 1];
+  const reasons = measurement.published.quality.reasons;
+
+  const sessionLabel = useMemo(() => {
+    const width = measurement.camera.settings?.width ?? measurement.frameStats.width;
+    const height = measurement.camera.settings?.height ?? measurement.frameStats.height;
+    return `${width || 0}x${height || 0} / ${measurement.frameStats.measuredFps.toFixed(1)} FPS`;
+  }, [measurement.camera.settings, measurement.frameStats]);
 
   useEffect(() => {
     let raf = 0;
     const render = () => {
-      if (canvasRef.current) drawMonitor(canvasRef.current, measurement.published);
+      if (canvasRef.current) drawMonitor(canvasRef.current, measurement);
       raf = requestAnimationFrame(render);
     };
     render();
     return () => cancelAnimationFrame(raf);
-  }, [measurement.published]);
+  }, [measurement]);
 
   const toggle = async () => {
     if (busy) return;
@@ -122,7 +283,7 @@ export default function FullScreenCardiacMonitor({
   };
 
   return (
-    <main className="fixed inset-0 h-[100svh] w-screen overflow-hidden bg-black text-white">
+    <main className="fixed inset-0 h-[100svh] w-screen overflow-hidden bg-[#020506] text-slate-100">
       <video
         ref={measurement.videoRef}
         className="pointer-events-none fixed left-0 top-0 h-px w-px opacity-0"
@@ -132,57 +293,136 @@ export default function FullScreenCardiacMonitor({
       />
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
 
-      <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[56vw] flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-white/82">
-        <span className="rounded bg-black/42 px-2 py-1 backdrop-blur-sm">
-          CAM {measurement.camera.cameraReady ? "READY" : "OFF"}
-        </span>
-        <span className="rounded bg-black/42 px-2 py-1 backdrop-blur-sm">
-          TORCH{" "}
-          {measurement.camera.torchAvailable
-            ? measurement.camera.torchEnabled
-              ? "ON"
-              : "OFF"
-            : "N/A"}
-        </span>
-        <span className="rounded bg-black/42 px-2 py-1 backdrop-blur-sm">
-          {measurement.frameStats.measuredFps.toFixed(1)} FPS
-        </span>
-        <span className="rounded bg-black/42 px-2 py-1 backdrop-blur-sm">
-          {measurement.frameStats.width}x{measurement.frameStats.height}
-        </span>
-      </div>
+      <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-[76px] items-center justify-between border-b border-emerald-300/10 bg-black/55 px-3 backdrop-blur-md">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-200/86">
+            <RadioTower className="h-3.5 w-3.5" />
+            FORENSIC PPG ACQUISITION
+          </div>
+          <div className="mt-1 truncate font-mono text-[11px] text-slate-300/70">
+            CAMERA FRAME REAL - RGB LINEAR - OD - G1/G2/G3 - SQI - PUBLICATION GATE
+          </div>
+        </div>
 
-      <div className="pointer-events-none absolute right-4 top-3 z-10 text-right">
-        {measurement.published.canPublishVitals && bpm !== null ? (
+        <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide">
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
+            <Camera className="h-3.5 w-3.5 text-cyan-300" />
+            {active ? "CAM LIVE" : "CAM OFF"}
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
+            <Flashlight className="h-3.5 w-3.5 text-amber-300" />
+            {measurement.camera.torchAvailable
+              ? measurement.camera.torchEnabled
+                ? "TORCH ON"
+                : "TORCH OFF"
+              : "TORCH N/A"}
+          </span>
+          <span className="rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
+            {sessionLabel}
+          </span>
+        </div>
+      </header>
+
+      <aside className="pointer-events-none absolute right-3 top-[86px] z-20 w-[min(38vw,350px)] space-y-2">
+        <div className="rounded border border-emerald-300/14 bg-black/62 p-3 backdrop-blur-md">
+          <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-slate-400">
+            <span>HEART RATE</span>
+            <span>{measurement.published.state}</span>
+          </div>
+          <div className="flex items-end justify-between">
+            <div className="font-mono text-[clamp(56px,10vw,104px)] font-semibold leading-none text-emerald-300">
+              {measurement.published.canPublishVitals && bpm !== null ? bpm : "--"}
+            </div>
+            <div className="pb-2 text-right">
+              <div className="text-lg font-semibold text-slate-200">BPM</div>
+              <div className="font-mono text-xs text-slate-400">
+                CONF {(measurement.published.bpmConfidence * 100).toFixed(0)}%
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded border border-cyan-300/14 bg-black/62 p-3 backdrop-blur-md">
+          <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-slate-400">
+            <span>OXYGEN</span>
+            <span>{oxygen.method}</span>
+          </div>
+          <div className="flex items-end justify-between">
+            <div className="font-mono text-[clamp(42px,7vw,72px)] font-semibold leading-none text-cyan-200">
+              {oxygen.canPublish && oxygen.spo2 !== null ? oxygen.spo2 : "--"}
+            </div>
+            <div className="pb-1 text-right">
+              <div className="text-lg font-semibold text-slate-200">SpO2 %</div>
+              <div className="font-mono text-xs text-slate-400">
+                CONF {(oxygen.confidence * 100).toFixed(0)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <section className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 border-t border-emerald-300/10 bg-black/70 px-3 py-2 backdrop-blur-md">
+        <div className="grid grid-cols-2 gap-2 text-[10px] uppercase tracking-wide text-slate-300 sm:grid-cols-4 lg:grid-cols-8">
           <div>
-            <div className="text-[clamp(44px,12vw,92px)] font-semibold leading-none text-emerald-300">
-              {bpm}
-            </div>
-            <div className="text-sm font-medium uppercase tracking-[0.24em] text-white/72">
-              BPM
+            <div className="text-slate-500">SQI</div>
+            <div className="font-mono text-emerald-200">
+              {measurement.published.quality.totalScore.toFixed(0)} / {measurement.published.quality.grade}
             </div>
           </div>
-        ) : (
-          <div className="rounded bg-black/42 px-2 py-1 text-xs uppercase tracking-wide text-white/54 backdrop-blur-sm">
-            BPM --
+          <div>
+            <div className="text-slate-500">SELECTED</div>
+            <div className="truncate font-mono text-cyan-200">{latestChannel?.selectedName ?? "--"}</div>
           </div>
-        )}
+          <div>
+            <div className="text-slate-500">CONTACT</div>
+            <div className="font-mono text-slate-100">
+              {(measurement.published.evidence.roi.contactScore * 100).toFixed(0)}%
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-500">PERFUSION</div>
+            <div className="font-mono text-slate-100">
+              {measurement.published.quality.acDcPerfusionIndex.toFixed(3)}
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-500">RGB RAW</div>
+            <div className="font-mono text-slate-100">
+              {latestSample
+                ? `${latestSample.raw.r.toFixed(0)},${latestSample.raw.g.toFixed(0)},${latestSample.raw.b.toFixed(0)}`
+                : "--"}
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-500">OD RGB</div>
+            <div className="font-mono text-slate-100">
+              {latestSample
+                ? `${latestSample.od.r.toFixed(3)},${latestSample.od.g.toFixed(3)},${latestSample.od.b.toFixed(3)}`
+                : "--"}
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-500">AGREEMENT</div>
+            <div className="font-mono text-slate-100">
+              {measurement.published.quality.estimatorAgreementBpm.toFixed(1)} BPM
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-500">REJECT</div>
+            <div className="truncate font-mono text-amber-200">{shortReason(reasons)}</div>
+          </div>
+        </div>
+      </section>
+
+      <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 text-emerald-500/[0.035]">
+        <Activity className="h-[42vh] w-[42vh]" strokeWidth={0.5} />
       </div>
 
-      <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[58vw] rounded bg-black/42 px-2 py-1 text-[11px] uppercase tracking-wide text-white/80 backdrop-blur-sm">
-        SQI {measurement.published.quality.totalScore.toFixed(0)} /{" "}
-        {measurement.published.quality.grade} | {measurement.published.state}
-      </div>
-
-      <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 max-w-[72vw] -translate-x-1/2 rounded bg-black/42 px-3 py-1 text-center text-xs font-semibold uppercase tracking-wide text-white/82 backdrop-blur-sm">
-        {measurement.published.message}
-      </div>
-
-      <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
+      <div className="absolute bottom-[74px] right-3 z-30 flex items-center gap-2">
         <button
           type="button"
           onClick={() => setDebugOpen((open) => !open)}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-white/12 bg-black/55 text-white/86 backdrop-blur-sm transition hover:bg-white/12"
+          className="inline-flex h-11 w-11 items-center justify-center rounded border border-white/12 bg-black/72 text-white/90 backdrop-blur-md transition hover:bg-white/12"
           aria-label="Debug"
         >
           <Bug className="h-4 w-4" />
@@ -191,19 +431,19 @@ export default function FullScreenCardiacMonitor({
           type="button"
           onClick={toggle}
           disabled={busy}
-          className="inline-flex h-10 items-center gap-2 rounded-md border border-white/12 bg-emerald-500/18 px-3 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-emerald-500/28 disabled:opacity-55"
+          className="inline-flex h-11 items-center gap-2 rounded border border-emerald-300/20 bg-emerald-400/14 px-4 text-sm font-semibold uppercase tracking-wide text-white backdrop-blur-md transition hover:bg-emerald-400/24 disabled:opacity-55"
         >
           {active ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
           {active ? "Stop" : "Start"}
         </button>
       </div>
 
-      <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 text-emerald-500/10">
-        <Activity className="h-[34vh] w-[34vh]" strokeWidth={0.6} />
+      <div className="pointer-events-none absolute bottom-[82px] left-3 z-20 max-w-[calc(100vw-180px)] rounded border border-white/10 bg-black/64 px-3 py-2 font-mono text-xs uppercase tracking-wide text-slate-200 backdrop-blur-md">
+        {measurement.published.message}
       </div>
 
       {debugOpen && (
-        <div className="absolute bottom-16 right-3 z-30">
+        <div className="absolute bottom-[132px] right-3 z-40">
           <ForensicPPGDebugPanel measurement={measurement} />
         </div>
       )}

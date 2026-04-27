@@ -18,13 +18,19 @@ function rgb(value?: { r: number; g: number; b: number }): string {
   return `${fmt(value.r, 1)}, ${fmt(value.g, 1)}, ${fmt(value.b, 1)}`;
 }
 
+type DebugCapabilities = MediaTrackCapabilities & {
+  torch?: boolean;
+  frameRate?: { max?: number };
+};
+
 export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugPanelProps) {
   const latestSample = measurement.rawSamples[measurement.rawSamples.length - 1];
   const latestChannels = measurement.channels[measurement.channels.length - 1];
   const quality = measurement.quality ?? measurement.published.quality;
   const evidence = measurement.published.evidence;
+  const oxygen = measurement.published.oxygen;
   const cameraSettings = measurement.camera.settings;
-  const cameraCapabilities = measurement.camera.capabilities as any;
+  const cameraCapabilities = measurement.camera.capabilities as DebugCapabilities | null;
   const reasons = measurement.published.quality.reasons;
 
   return (
@@ -99,6 +105,13 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         </span>
         <span className="text-white/55">publication</span>
         <span>{measurement.published.state}</span>
+        <span className="text-white/55">oxygen</span>
+        <span>
+          {fmt(oxygen.spo2, 1)} / {(oxygen.confidence * 100).toFixed(0)}% /{" "}
+          {String(oxygen.canPublish)}
+        </span>
+        <span className="text-white/55">oxygen method</span>
+        <span>{oxygen.method}</span>
         <span className="text-white/55">can publish/vibrate</span>
         <span>
           {String(measurement.published.canPublishVitals)} /{" "}
