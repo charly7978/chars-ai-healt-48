@@ -418,13 +418,29 @@ export class FingerOpticalROI {
       redDominance * 0.15,
     );
 
-    // Pressure risk (excessive saturation or compression indicators)
+    // Per-channel saturation aliases (spec name).
+    const redSaturationRatio = highSaturation.r;
+    const greenSaturationRatio = highSaturation.g;
+    const blueSaturationRatio = highSaturation.b;
+    // Pixels with ALL three channels clipped high (true destructive saturation).
+    // We compute it from per-channel high-sat counts assuming worst-case
+    // co-occurrence is bounded by the smallest channel ratio.
+    const clippedPixelRatio = Math.min(highSaturation.r, highSaturation.g, highSaturation.b);
+
+    // Pressure risk (excessive saturation or compression indicators).
+    // We deliberately keep the legacy scalar AND the new enum below.
     const extremeSat = highClip > 0.15 || lowClip > 0.2;
     const lowVariance = spatialVariance < 0.001 && meanLuma > 200;
     const pressureRisk = clamp01((extremeSat ? 0.6 : 0) + (lowVariance ? 0.4 : 0));
 
-    // Build rejection reasons
-    const reason: string[] = [];
+    // Build rejection reasons (closed enum).
+    const reason: FingerRejectionReason[] = [];
+
+    // Per-channel saturation reasons (independent — green can survive even if
+    // red is blown out by the flash, but we still want the diagnostic).
+    if (redSaturationRatio > 0.35) reason.push("RED_CHANNEL_SATURATED");
+    if (greenSaturationRatio > 0.35) reason.push("GREEN_CHANNEL_SATURATED");
+    if (blueSaturationRatio > 0.35) reason.push("BLUE_CHANNEL_SATURATED");
 
     // Hard rejection criteria
     if (coverageScore < 0.3) reason.push("COVERAGE_TOO_LOW");
@@ -432,14 +448,16 @@ export class FingerOpticalROI {
     if (highClip > 0.2) reason.push("HIGH_SATURATION_DESTRUCTIVE");
     if (lowClip > 0.25) reason.push("LOW_SATURATION_BLOCKED");
     if (this.dcStability < 0.35) reason.push("DC_UNSTABLE_MOTION");
-    if (motionRisk > 0.5) reason.push("MOTION_DETECTED");
-    if (pressureRisk > 0.6) reason.push("PRESSURE_RISK");
+    if (luminanceDelta > 0.05) reason.push("LUMINANCE_JITTER");
     if (redDominance < 0.15) reason.push("NOT_FINGER_LIKE");
     if (validCount < 100) reason.push("INSUFFICIENT_VALID_PIXELS");
 
     // Soft warnings
     if (coverageScore < 0.5) reason.push("COVERAGE_LOW");
     if (greenPulseAvailability < 0.3) reason.push("GREEN_PULSE_WEAK");
+
+    // NOTE: motion / pressure / texture / centroid reasons are pushed AFTER
+    // the tile pass below, where those metrics are computed.
 
     // Acceptance criteria
     const accepted =
