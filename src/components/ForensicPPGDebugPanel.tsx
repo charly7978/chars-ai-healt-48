@@ -336,6 +336,30 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         </div>
       </div>
 
+      {/* PIPELINE STAGE BLOCK */}
+      <div className="mb-3 border-l-2 border-rose-500/50 pl-2">
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-rose-300">Pipeline stage</div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <span className="text-white/55">camera</span>
+          <span className={camera.cameraReady ? "text-emerald-400" : "text-red-400"}>
+            {camera.cameraReady ? "READY" : "NOT_READY"}
+          </span>
+          <span className="text-white/55">finger acquisition</span>
+          <span className={measurement.rawSamples.length > 0 ? "text-emerald-400" : "text-red-400"}>
+            {measurement.rawSamples.length > 0 ? `${measurement.rawSamples.length} samples` : "NO_SAMPLE"}
+          </span>
+          <span className="text-white/55">selected channel</span>
+          <span>{latestChannels?.selectedName ?? "--"}</span>
+          <span className="text-white/55">beats accepted</span>
+          <span>{measurement.beats?.beats.length ?? 0}</span>
+          <span className="text-white/55">publication state</span>
+          <span>{measurement.published.state}</span>
+        </div>
+        <div className="mt-2 text-[10px] text-rose-200">
+          {measurement.published.message}
+        </div>
+      </div>
+
       {/* REJECTION REASONS */}
       <div className="mt-3 border-t border-red-500/30 pt-2">
         <div className="mb-1 flex items-center justify-between">
