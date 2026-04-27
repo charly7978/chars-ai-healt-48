@@ -546,10 +546,26 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           )}
           {importedEvidence && (
             <div className="rounded border border-sky-400/40 bg-sky-500/10 p-2 text-[10px] text-sky-200">
-              Showing IMPORTED evidence from{" "}
-              <span className="font-semibold">{importedEvidence.timestamp ?? "unknown time"}</span>{" "}
-              (schema v{importedEvidence.evidenceSchemaVersion ?? "?"}). Live diagnostics paused
-              below.
+              <div>
+                Showing IMPORTED evidence from{" "}
+                <span className="font-semibold">{importedEvidence.timestamp ?? "unknown time"}</span>{" "}
+                (schema v{importedEvidence.evidenceSchemaVersion ?? "?"}). Live diagnostics paused
+                below.
+              </div>
+              {importedEvidence.__migration?.appliedSteps?.length > 0 && (
+                <div className="mt-1 text-[9px] text-sky-300/80">
+                  Migrated from {String(importedEvidence.__migration.fromVersion)} →{" "}
+                  v{importedEvidence.evidenceSchemaVersion}:{" "}
+                  {importedEvidence.__migration.appliedSteps.join("; ")}
+                </div>
+              )}
+              {importedEvidence.__migration?.warnings?.length > 0 && (
+                <ul className="mt-1 list-disc pl-4 text-[9px] text-amber-200">
+                  {importedEvidence.__migration.warnings.map((w: string) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </div>
