@@ -651,17 +651,58 @@ export class FingerOpticalROI {
       b: usablePixelRatio.b >= 0.4 && highSaturation.b < 0.3 && lowSaturation.b < 0.3,
     };
 
+    // ── Pressure state (multi-metric vote, NEVER a single signal) ─────────
+    // We track an EMA of the green AC/DC ratio as the perfusion indicator.
+    const greenAcDc = greenRange / Math.max(1, meanRgb.g); // crude AC/DC proxy
+    this.smoothedGreenAcDc = this.smoothedGreenAcDc * 0.8 + greenAcDc * 0.2;
+    const perfusionAcDc = this.smoothedGreenAcDc;
+
+    let pressureState: FingerPressureState;
+    const isExcessive =
+      (redSaturationRatio > 0.4 && greenSaturationRatio > 0.3) ||
+      (lowVariance && perfusionAcDc < 0.02);
+    const isHigh =
+      !isExcessive &&
+      ((redSaturationRatio > 0.25 && perfusionAcDc < 0.04) ||
+        (meanLuma > 215 && perfusionAcDc < 0.05));
+    const isWeak =
+      coverageScore < 0.3 ||
+      meanLuma < 45 ||
+      (redDominance < 0.2 && coverageScore < 0.45);
+    const isLow =
+      !isWeak &&
+      !isHigh &&
+      !isExcessive &&
+      (perfusionAcDc < 0.025 || coverageScore < 0.45);
+    if (isExcessive) pressureState = "excessive_pressure";
+    else if (isHigh) pressureState = "high_pressure";
+    else if (isWeak) pressureState = "weak_contact";
+    else if (isLow) pressureState = "low_pressure";
+    else pressureState = "optimal";
+
+    if (pressureState === "excessive_pressure") reason.push("EXCESSIVE_PRESSURE");
+    if (pressureState === "weak_contact") reason.push("WEAK_CONTACT");
+    if (pressureRisk > 0.6) reason.push("PRESSURE_RISK");
+
+    // Motion / texture / centroid reasons (now that those metrics exist).
+    if (motionRisk > 0.5) reason.push("MOTION_DETECTED");
+    if (centroidDrift > 0.35) reason.push("CENTROID_DRIFT");
+    if (textureScore < 0.1 && coverageScore > 0.4) reason.push("FLAT_SURFACE_NO_TEXTURE");
+
     // High-level contact state (does NOT replace `accepted` — it adds nuance).
     let contactState: FingerContactState;
     if (highClip > 0.35 && meanLuma > 220) contactState = "overexposed";
     else if (meanLuma < 25 || coverageScore < 0.15) contactState = "underexposed";
     else if (redDominance < 0.1 && coverageScore < 0.25) contactState = "absent";
-    else if (motionRisk > 0.5 || roiStabilityScore < 0.35) contactState = "motion_rejected";
+    else if (motionRisk > 0.5 || roiStabilityScore < 0.35 || centroidDrift > 0.4)
+      contactState = "motion_rejected";
     else if (
       opticalContactScore >= 0.55 &&
       usableTileCount >= 12 &&
       roiStabilityScore >= 0.6 &&
-      this.dcStability >= 0.5
+      this.dcStability >= 0.5 &&
+      textureScore >= 0.15 &&
+      pressureState === "optimal"
     )
       contactState = "stable";
     else if (opticalContactScore >= 0.35 && usableTileCount >= 6) contactState = "partial";
@@ -673,6 +714,20 @@ export class FingerOpticalROI {
     if (contactState === "underexposed") reason.push("UNDEREXPOSED");
     if (contactState === "motion_rejected") reason.push("MOTION_REJECTED");
 
+    // ── User guidance (actionable, single sentence in Spanish) ───────────
+    let userGuidance = "";
+    if (contactState === "absent") userGuidance = "Cubrí la cámara con el dedo.";
+    else if (contactState === "underexposed") userGuidance = "Cubrí la cámara — no llega luz.";
+    else if (contactState === "overexposed") userGuidance = "Aflojá la presión — la cámara está saturada.";
+    else if (pressureState === "excessive_pressure") userGuidance = "Demasiada presión — aflojá un poco.";
+    else if (pressureState === "high_pressure") userGuidance = "Presionás de más — aflojá levemente.";
+    else if (pressureState === "weak_contact") userGuidance = "Apoyá mejor el dedo sobre la cámara.";
+    else if (pressureState === "low_pressure") userGuidance = "Hacé un poco más de presión.";
+    else if (centroidDrift > 0.3 || motionRisk > 0.4) userGuidance = "Mantené el dedo quieto.";
+    else if (textureScore < 0.12 && coverageScore > 0.4) userGuidance = "No detecto un dedo real — recolocá el dedo.";
+    else if (contactState === "stable") userGuidance = "";
+    else userGuidance = "Buscando señal estable…";
+
     return {
       roi,
       meanRgb,
@@ -683,11 +738,20 @@ export class FingerOpticalROI {
       opticalDensity,
       highSaturation,
       lowSaturation,
+      redSaturationRatio,
+      greenSaturationRatio,
+      blueSaturationRatio,
+      clippedPixelRatio,
       usablePixelRatio,
       usablePixelRatioMax,
       spatialVariance,
+      uniformityScore,
+      textureScore,
       dcStability: this.dcStability,
       dcTrend,
+      luminanceDelta,
+      centroidDrift,
+      motionArtifactScore,
       coverageScore,
       illuminationScore,
       contactScore,
@@ -707,6 +771,8 @@ export class FingerOpticalROI {
       opticalContactScore,
       channelUsable,
       contactState,
+      pressureState,
+      userGuidance,
     };
   }
 }
