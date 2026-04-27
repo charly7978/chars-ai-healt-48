@@ -302,7 +302,61 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     beatsRef.current = emptyBeats();
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraRef.current);
     lastVibratedBeatRef.current = null;
+    nonStableSinceMsRef.current = null;
+    repositionAttemptRef.current = 0;
+    lastContactStateRef.current = "absent";
+    repositionRef.current = {
+      active: false,
+      sinceMs: 0,
+      lastContactState: "absent",
+      attempt: 0,
+      message: "",
+    };
   }, []);
+
+  /**
+   * Track whether contact has been non-stable for too long. We never restart
+   * the camera — we just surface a reposition prompt to the user. As soon as
+   * contactState returns to "stable" we clear the prompt and bump the attempt
+   * counter for telemetry.
+   */
+  const updateRepositionPrompt = useCallback(
+    (contactState: string, nowMs: number, userGuidance: string) => {
+      lastContactStateRef.current = contactState;
+      if (contactState === "stable") {
+        if (repositionRef.current.active) {
+          repositionAttemptRef.current += 1;
+        }
+        nonStableSinceMsRef.current = null;
+        repositionRef.current = {
+          active: false,
+          sinceMs: 0,
+          lastContactState: contactState,
+          attempt: repositionAttemptRef.current,
+          message: "",
+        };
+        return;
+      }
+      if (nonStableSinceMsRef.current === null) {
+        nonStableSinceMsRef.current = nowMs;
+      }
+      const elapsed = nowMs - nonStableSinceMsRef.current;
+      const shouldPrompt = elapsed >= REPOSITION_PROMPT_AFTER_MS;
+      const baseMsg = userGuidance && userGuidance.length > 0
+        ? userGuidance
+        : "Reubicá el dedo cubriendo bien la cámara y el flash.";
+      repositionRef.current = {
+        active: shouldPrompt,
+        sinceMs: elapsed,
+        lastContactState: contactState,
+        attempt: repositionAttemptRef.current,
+        message: shouldPrompt
+          ? `Sin contacto estable hace ${(elapsed / 1000).toFixed(0)}s. ${baseMsg}`
+          : "",
+      };
+    },
+    [],
+  );
 
   const processFrame = useCallback(() => {
     return (frame: RealFrame) => {
