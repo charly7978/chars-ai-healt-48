@@ -12,6 +12,47 @@ export type FingerContactState =
   | "underexposed"
   | "motion_rejected";
 
+/**
+ * Pressure proxy state. Drives user guidance ("press more / less / hold still").
+ * Derived from a multi-metric vote — never from a single signal.
+ */
+export type FingerPressureState =
+  | "weak_contact"      // dedo apoyado muy flojo o levantado
+  | "low_pressure"      // contacto presente pero perfusión pobre
+  | "optimal"           // dentro del sweet spot fisiológico
+  | "high_pressure"     // bloqueando perfusión, AC/DC bajando
+  | "excessive_pressure"; // saturación + variabilidad casi cero
+
+/**
+ * Reason codes returned in `evidence.reason`. Documented as a closed enum to
+ * prevent silent drift between detector and UI/guidance layers.
+ */
+export type FingerRejectionReason =
+  | "COVERAGE_TOO_LOW"
+  | "COVERAGE_LOW"
+  | "ILLUMINATION_INVALID"
+  | "RED_CHANNEL_SATURATED"
+  | "GREEN_CHANNEL_SATURATED"
+  | "BLUE_CHANNEL_SATURATED"
+  | "HIGH_SATURATION_DESTRUCTIVE"
+  | "LOW_SATURATION_BLOCKED"
+  | "DC_UNSTABLE_MOTION"
+  | "MOTION_DETECTED"
+  | "PRESSURE_RISK"
+  | "EXCESSIVE_PRESSURE"
+  | "WEAK_CONTACT"
+  | "NOT_FINGER_LIKE"
+  | "FLAT_SURFACE_NO_TEXTURE"
+  | "INSUFFICIENT_VALID_PIXELS"
+  | "INSUFFICIENT_USABLE_TILES"
+  | "ROI_UNSTABLE"
+  | "CENTROID_DRIFT"
+  | "LUMINANCE_JITTER"
+  | "GREEN_PULSE_WEAK"
+  | "OVEREXPOSED"
+  | "UNDEREXPOSED"
+  | "MOTION_REJECTED";
+
 export interface TileStat {
   index: number;
   rect: { x: number; y: number; width: number; height: number };
@@ -32,11 +73,28 @@ export interface FingerOpticalEvidence {
   opticalDensity: { r: number; g: number; b: number };
   highSaturation: { r: number; g: number; b: number };
   lowSaturation: { r: number; g: number; b: number };
+  // Per-channel saturation aliases (preferred names in spec). Same data
+  // as highSaturation.{r,g,b} but exposed flat for downstream readers.
+  redSaturationRatio: number;
+  greenSaturationRatio: number;
+  blueSaturationRatio: number;
+  /** Pixels where ALL three channels are simultaneously clipped. */
+  clippedPixelRatio: number;
   usablePixelRatio: { r: number; g: number; b: number };
   usablePixelRatioMax: number;
   spatialVariance: number;
+  /** Spatial uniformity (1 = perfectly uniform). */
+  uniformityScore: number;
+  /** Mean |∇L| over green channel — distinguishes finger texture from a flat surface. */
+  textureScore: number;
   dcStability: number;
   dcTrend: number;
+  /** |luma_t − luma_{t-1}| / 255, capped to [0,1]. */
+  luminanceDelta: number;
+  /** Pixel distance of usable-tile centroid from frame center, normalised by min(w,h)/2. */
+  centroidDrift: number;
+  /** Composite motion artifact score (luminanceDelta + centroidDrift + dcTrend). */
+  motionArtifactScore: number;
   coverageScore: number;
   illuminationScore: number;
   contactScore: number;
@@ -44,7 +102,7 @@ export interface FingerOpticalEvidence {
   greenPulseAvailability: number;
   pressureRisk: number;
   motionRisk: number;
-  reason: string[];
+  reason: FingerRejectionReason[];
   accepted: boolean;
   tiles: TileStat[];
   usableTileCount: number;
@@ -56,6 +114,9 @@ export interface FingerOpticalEvidence {
   opticalContactScore: number;
   channelUsable: { r: boolean; g: boolean; b: boolean };
   contactState: FingerContactState;
+  pressureState: FingerPressureState;
+  /** Human-readable, actionable hint for the UI. Empty string if no guidance needed. */
+  userGuidance: string;
 }
 
 const TILE_GRID = 5; // 5×5 tile grid
