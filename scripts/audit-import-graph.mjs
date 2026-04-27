@@ -186,7 +186,10 @@ function collectAllSourceFiles(dir, base = 'src') {
 
 function isAllowlisted(filePath) {
   for (const allowed of ALLOWLIST) {
-    if (filePath.startsWith(allowed.replace(/\/$/, ''))) {
+    const needle = allowed.replace(/\/$/, '');
+    // Path-prefix match (e.g. "src/types/") OR substring match
+    // (e.g. "__tests__/", ".test.", ".spec.").
+    if (filePath.startsWith(needle) || filePath.includes(needle)) {
       return true;
     }
   }
