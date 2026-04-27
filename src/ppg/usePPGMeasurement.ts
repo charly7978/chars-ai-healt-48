@@ -687,6 +687,14 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         acquisitionMethod: restored.acquisitionMethod,
         torchApplied: restored.torchApplied,
       });
+      calibrationRef.current = {
+        loaded: true,
+        key: adaptiveKey,
+        sessions: restored.sessions,
+        ageMs: Date.now() - restored.updatedAt,
+        sensorNoiseDb: restored.observed.sensorNoiseDb,
+        acquisitionMethod: restored.acquisitionMethod,
+      };
       // eslint-disable-next-line no-console
       console.info(
         "[usePPGMeasurement] Hot-started adaptive thresholds for",
@@ -694,6 +702,15 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         "sessions=",
         restored.sessions,
       );
+    } else {
+      calibrationRef.current = {
+        loaded: false,
+        key: adaptiveKey,
+        sessions: 0,
+        ageMs: null,
+        sensorNoiseDb: null,
+        acquisitionMethod: null,
+      };
     }
 
     publishUiSnapshot(true);
