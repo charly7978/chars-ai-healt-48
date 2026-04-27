@@ -597,6 +597,20 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const stop = useCallback(async () => {
     activeRef.current = false;
     frameSamplerRef.current.stop();
+    // Persist final adaptive snapshot before tearing down (only if engine
+    // converged during this session — exportRecord() returns null otherwise).
+    if (adaptivePersistKeyRef.current) {
+      const exported = adaptiveThresholdsRef.current.exportRecord();
+      if (exported) {
+        const cam = cameraRef.current;
+        saveAdaptiveRecord({
+          key: adaptivePersistKeyRef.current,
+          deviceId: cam.selectedDeviceId,
+          cameraLabel: cam.diagnostics?.selectedDevice?.label ?? "",
+          ...exported,
+        });
+      }
+    }
     await cameraControllerRef.current.stop();
     if (videoRef.current) {
       videoRef.current.pause();
