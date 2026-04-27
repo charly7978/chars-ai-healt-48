@@ -119,7 +119,7 @@ export interface FingerOpticalEvidence {
   userGuidance: string;
 }
 
-const TILE_GRID = 5; // 5×5 tile grid
+const TILE_GRID = 7; // 7×7 adaptive tile grid: stricter spatial proof of finger contact
 
 type Channel = "r" | "g" | "b";
 
@@ -169,6 +169,7 @@ export class FingerOpticalROI {
 
   // Smoothed AC/DC ratio on the green channel — used by the pressure model.
   private smoothedGreenAcDc = 0;
+  private contactStableFrames = 0;
 
   reset(): void {
     this.previousLuma = null;
@@ -179,6 +180,7 @@ export class FingerOpticalROI {
     this.previousUsableTileMask = null;
     this.previousCentroid = null;
     this.smoothedGreenAcDc = 0;
+    this.contactStableFrames = 0;
   }
 
   analyze(imageData: ImageData): FingerOpticalEvidence {
