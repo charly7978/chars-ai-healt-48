@@ -18,6 +18,149 @@ interface FullScreenCardiacMonitorProps {
   measurement: UsePPGMeasurementResult;
 }
 
+/* ------------------------------------------------------------------ */
+/*           Withheld-beat legend: stable color + marker map          */
+/* ------------------------------------------------------------------ */
+
+type WithheldMarker = "x" | "circle" | "square" | "triangle" | "diamond" | "bar" | "plus" | "ring";
+type WithheldStyle = { color: string; marker: WithheldMarker; label: string };
+
+const REJECTION_STYLES: Record<string, WithheldStyle> = {
+  AMPLITUDE_BELOW_THRESHOLD: { color: "rgba(248,113,113,0.85)", marker: "x", label: "AMP<THR" },
+  PROMINENCE_BELOW_MAD:      { color: "rgba(251,146,60,0.85)",  marker: "circle", label: "PROM<MAD" },
+  PULSE_WIDTH_OUT_OF_RANGE:  { color: "rgba(250,204,21,0.85)",  marker: "square", label: "WIDTH OOR" },
+  RR_OUT_OF_RANGE:           { color: "rgba(192,132,252,0.9)",  marker: "diamond", label: "RR OOR" },
+  DICROTIC_DOUBLE_PEAK:      { color: "rgba(244,114,182,0.9)",  marker: "ring", label: "DICROTIC" },
+  MOTION_ARTIFACT:           { color: "rgba(56,189,248,0.9)",   marker: "triangle", label: "MOTION" },
+  REFRACTORY_VIOLATION:      { color: "rgba(34,197,94,0.85)",   marker: "bar", label: "REFRACT" },
+  MORPHOLOGY_INVALID:        { color: "rgba(148,163,184,0.85)", marker: "plus", label: "MORPH" },
+};
+const FALLBACK_STYLE: WithheldStyle = { color: "rgba(148,163,184,0.7)", marker: "x", label: "OTHER" };
+const styleFor = (reason: string): WithheldStyle => REJECTION_STYLES[reason] ?? FALLBACK_STYLE;
+
+function drawMarkerGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  marker: WithheldMarker,
+  color: string,
+  dpr: number,
+) {
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 1.2 * dpr;
+  const r = size;
+  switch (marker) {
+    case "x":
+      ctx.beginPath();
+      ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
+      ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r);
+      ctx.stroke();
+      break;
+    case "plus":
+      ctx.beginPath();
+      ctx.moveTo(x - r, y); ctx.lineTo(x + r, y);
+      ctx.moveTo(x, y - r); ctx.lineTo(x, y + r);
+      ctx.stroke();
+      break;
+    case "circle":
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    case "ring":
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+    case "square":
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      break;
+    case "diamond":
+      ctx.beginPath();
+      ctx.moveTo(x, y - r); ctx.lineTo(x + r, y);
+      ctx.lineTo(x, y + r); ctx.lineTo(x - r, y);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    case "triangle":
+      ctx.beginPath();
+      ctx.moveTo(x, y - r);
+      ctx.lineTo(x - r, y + r);
+      ctx.lineTo(x + r, y + r);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    case "bar":
+      ctx.fillRect(x - r * 0.4, y - r, r * 0.8, r * 2);
+      break;
+  }
+}
+
+function drawWithheldLegend(
+  ctx: CanvasRenderingContext2D,
+  withheld: Array<{ t: number; reason: string }>,
+  width: number,
+  top: number,
+  height: number,
+  dpr: number,
+) {
+  // Aggregate counts per reason for the current window.
+  const counts = new Map<string, number>();
+  for (const w of withheld) counts.set(w.reason, (counts.get(w.reason) ?? 0) + 1);
+  // Always render the full legend (even with 0 counts) so the operator
+  // learns the color/marker mapping. Sort: present reasons first by count.
+  const allReasons = Object.keys(REJECTION_STYLES);
+  const sorted = allReasons.sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0));
+
+  const padX = 10 * dpr;
+  const padY = 8 * dpr;
+  const rowH = 14 * dpr;
+  const swatch = 5 * dpr;
+  const fontPx = 10 * dpr;
+  ctx.font = `${fontPx}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  // Width = max label width + counts
+  let maxText = 0;
+  for (const reason of sorted) {
+    const s = styleFor(reason);
+    const c = counts.get(reason) ?? 0;
+    const text = `${s.label}  ${c}`;
+    maxText = Math.max(maxText, ctx.measureText(text).width);
+  }
+  const boxW = padX * 2 + swatch * 2 + 8 * dpr + maxText;
+  const boxH = padY * 2 + rowH * sorted.length + 14 * dpr; // +title
+
+  const x0 = width - boxW - 12 * dpr;
+  const y0 = top + height - boxH - 8 * dpr;
+
+  // Background panel
+  ctx.fillStyle = "rgba(2,5,6,0.78)";
+  ctx.strokeStyle = "rgba(255,255,255,0.10)";
+  ctx.lineWidth = 1 * dpr;
+  ctx.fillRect(x0, y0, boxW, boxH);
+  ctx.strokeRect(x0, y0, boxW, boxH);
+
+  // Title
+  ctx.fillStyle = "rgba(214,255,242,0.7)";
+  ctx.fillText("WITHHELD BEATS — WINDOW", x0 + padX, y0 + padY + 9 * dpr);
+
+  // Rows
+  for (let i = 0; i < sorted.length; i += 1) {
+    const reason = sorted[i];
+    const s = styleFor(reason);
+    const c = counts.get(reason) ?? 0;
+    const y = y0 + padY + 14 * dpr + (i + 0.5) * rowH;
+    drawMarkerGlyph(ctx, x0 + padX + swatch, y, swatch, s.marker, s.color, dpr);
+    ctx.fillStyle = c > 0 ? "rgba(241,245,249,0.95)" : "rgba(148,163,184,0.55)";
+    ctx.fillText(`${s.label}`, x0 + padX + swatch * 2 + 8 * dpr, y + 3.5 * dpr);
+    ctx.fillStyle = c > 0 ? s.color : "rgba(148,163,184,0.45)";
+    const cText = String(c);
+    const cw = ctx.measureText(cText).width;
+    ctx.fillText(cText, x0 + boxW - padX - cw, y + 3.5 * dpr);
+  }
+}
+
 type TracePoint = { t: number; value: number };
 
 function percentile(values: number[], p: number): number {
