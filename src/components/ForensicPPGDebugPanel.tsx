@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type { UsePPGMeasurementResult } from "@/ppg/usePPGMeasurement";
 
 interface ForensicPPGDebugPanelProps {
@@ -37,6 +38,26 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
   const reasons = measurement.published.quality.reasons;
   const frameStats = measurement.frameStats;
   const beats = measurement.beats;
+
+  // Track RR consistency history for trend arrow.
+  const rrConsistencyHistoryRef = useRef<number[]>([]);
+  const rrCount = beats.rrIntervalsMs.length;
+  if (rrCount >= 2 && Number.isFinite(quality.rrConsistency)) {
+    const hist = rrConsistencyHistoryRef.current;
+    const last = hist[hist.length - 1];
+    if (last === undefined || Math.abs(last - quality.rrConsistency) > 1e-6) {
+      hist.push(quality.rrConsistency);
+      if (hist.length > 5) hist.shift();
+    }
+  }
+  const rrTrend: "up" | "down" | "flat" | null = (() => {
+    const hist = rrConsistencyHistoryRef.current;
+    if (hist.length < 2) return null;
+    const delta = hist[hist.length - 1] - hist[0];
+    if (delta > 0.02) return "up";
+    if (delta < -0.02) return "down";
+    return "flat";
+  })();
 
   const exportJson = () => {
     const auditData = {
@@ -356,20 +377,23 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                 RR consistency ⓘ
               </span>
               <span
-                key={`rr-${beats.rrIntervalsMs.length}`}
+                key={`rr-${rrCount}`}
                 className={
-                  beats.rrIntervalsMs.length < 2
+                  rrCount < 2
                     ? "animate-fade-in italic text-white/40"
-                    : "animate-fade-in"
+                    : "animate-scale-in rounded px-1 ring-1 ring-emerald-300/40 bg-emerald-300/10"
                 }
               >
-                {beats.rrIntervalsMs.length < 2 ? (
-                  `need ≥2 beats (have ${beats.beats.length})`
+                {rrCount < 2 ? (
+                  `need ≥2 beats (have ${beats.beats.length} beats / ${rrCount} RRs)`
                 ) : (
                   <>
                     {fmt(quality.rrConsistency, 2)}
+                    {rrTrend === "up" && <span className="ml-1 text-emerald-400">▲</span>}
+                    {rrTrend === "down" && <span className="ml-1 text-red-400">▼</span>}
+                    {rrTrend === "flat" && <span className="ml-1 text-white/40">▬</span>}
                     <span className="ml-1 text-[9px] text-white/40">
-                      (using {beats.rrIntervalsMs.length} RR{beats.rrIntervalsMs.length === 1 ? "" : "s"})
+                      ({beats.beats.length} beats / using {rrCount} RR{rrCount === 1 ? "" : "s"})
                     </span>
                   </>
                 )}
