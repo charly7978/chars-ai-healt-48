@@ -186,6 +186,78 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         </div>
       </div>
 
+      {/* DIAGNOSTICS & CALIBRATION */}
+      {(() => {
+        const diag = camera.diagnostics;
+        if (!diag) return null;
+        const calib = diag.calibration;
+        const calibColor =
+          calib.status === "calibrated"
+            ? "text-emerald-400"
+            : calib.status === "partial"
+              ? "text-amber-300"
+              : "text-red-400";
+        const sel = diag.selectedDevice;
+        return (
+          <div className="mb-3 border-l-2 border-fuchsia-500/50 pl-2">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-fuchsia-300">
+              Diagnostics &amp; Calibration
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <span className="text-white/55">selected device</span>
+              <span className="truncate" title={sel?.label ?? ""}>
+                {sel?.label || "--"}
+              </span>
+              <span className="text-white/55">selected reason</span>
+              <span className="text-cyan-300">{sel?.selectedReason ?? "--"}</span>
+              <span className="text-white/55">facing / score</span>
+              <span>
+                {sel?.facingModeDetected ?? "--"} / {fmt(sel?.score ?? 0, 0)}
+              </span>
+              <span className="text-white/55">enumerated devices</span>
+              <span>{diag.enumeratedDevices.length}</span>
+              <span className="text-white/55">attempts ok / fail</span>
+              <span>
+                {diag.attempts.filter((a) => a.outcome === "success").length} /{" "}
+                {diag.attempts.filter((a) => a.outcome === "failure").length}
+              </span>
+              <span className="text-white/55">failed constraints</span>
+              <span className={diag.failedConstraints.length ? "text-red-400" : "text-emerald-400"}>
+                {diag.failedConstraints.length === 0 ? "none" : diag.failedConstraints.join(", ")}
+              </span>
+              <span className="text-white/55">fine constraints</span>
+              <span className="text-[9px]">
+                {diag.fineConstraints
+                  .map(
+                    (c) =>
+                      `${c.key}:${c.status === "applied" ? "✓" : c.status === "unsupported" ? "—" : "✗"}`,
+                  )
+                  .join(" ")}
+              </span>
+              <span className="text-white/55">torch readback</span>
+              <span className={diag.torchStatus.appliedReadback ? "text-emerald-400" : "text-amber-400"}>
+                avail:{String(diag.torchStatus.available)} req:
+                {String(diag.torchStatus.requested)} on:
+                {String(diag.torchStatus.appliedReadback)}
+              </span>
+              <span className="text-white/55">fps target / measured</span>
+              <span>
+                {diag.fpsTarget} / {fmt(diag.fpsMeasured, 1)}
+              </span>
+              <span className="text-white/55">calibration status</span>
+              <span className={calibColor} title={calib.reason}>
+                {calib.status.toUpperCase()}
+                {calib.profileKey ? ` (${calib.profileKey})` : ""}
+              </span>
+              <span className="text-white/55">SpO2 publishable</span>
+              <span className={calib.canPublishSpO2 ? "text-emerald-400" : "text-red-400"}>
+                {String(calib.canPublishSpO2)}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* SAMPLER SECTION */}
       <div className="mb-3 border-l-2 border-blue-500/50 pl-2">
         <div className="mb-1 text-[10px] uppercase tracking-wider text-blue-300">Sampler</div>
@@ -479,6 +551,19 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           <span className="text-white/55">SpO2 / confidence</span>
           <span>
             {fmt(oxygen.spo2, 0)}% / {fmt(oxygen.confidence * 100, 0)}%
+            <span
+              className={
+                "ml-1 rounded px-1 text-[9px] " +
+                (oxygen.calibrationBadge === "calibrated"
+                  ? "bg-emerald-400/20 text-emerald-300"
+                  : oxygen.calibrationBadge === "partial"
+                    ? "bg-amber-400/20 text-amber-300"
+                    : "bg-red-400/20 text-red-300")
+              }
+              title={`SpO2 calibration badge: ${oxygen.calibrationBadge}. Partial = generic-fallback gains, no clinical fit.`}
+            >
+              {oxygen.calibrationBadge}
+            </span>
           </span>
           <span className="text-white/55">can publish</span>
           <span className={measurement.published.canPublishVitals ? "text-emerald-400" : "text-amber-400"}>

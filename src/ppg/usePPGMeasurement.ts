@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import {
   PPGCameraController,
+  createEmptyPPGCameraState,
   type PPGCameraState,
 } from "./camera/PPGCameraController";
 import {
@@ -74,24 +75,7 @@ export interface UsePPGMeasurementResult {
 }
 
 function createEmptyCameraState(): PPGCameraState {
-  return {
-    stream: null,
-    videoTrack: null,
-    capabilities: null,
-    settings: null,
-    constraints: null,
-    torchAvailable: false,
-    torchEnabled: false,
-    torchApplied: false,
-    cameraReady: false,
-    streamActive: false,
-    measuredFps: 0,
-    width: 0,
-    height: 0,
-    selectedDeviceId: null,
-    error: null,
-    lastError: null,
-  };
+  return createEmptyPPGCameraState();
 }
 
 function createEmptyFrameStats(): FrameSamplerStats {
@@ -214,8 +198,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     publicationGateRef.current.reset();
     rawSamplesRef.current = [];
     channelsRef.current = [];
-    qualityRef.current = null;
-    beatsRef.current = null;
+    qualityRef.current = createEmptySignalQuality();
+    beatsRef.current = emptyBeats();
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraRef.current);
     lastVibratedBeatRef.current = null;
   }, []);
