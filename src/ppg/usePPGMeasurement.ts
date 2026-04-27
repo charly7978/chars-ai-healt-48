@@ -240,7 +240,27 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       }
 
       const sample = extractorRef.current.processFrame(frame);
+
+      // Always refresh ROI evidence for diagnostics, even if frame rejected.
+      const lastEvidence = extractorRef.current.getLastEvidence();
+      const lastRejection = extractorRef.current.getLastRejection();
+
       if (!sample) {
+        // Refresh published.evidence.roi so HUD reflects current camera state
+        if (lastEvidence) {
+          const prev = publishedRef.current;
+          publishedRef.current = {
+            ...prev,
+            evidence: {
+              ...prev.evidence,
+              camera: cameraRef.current,
+              roi: lastEvidence,
+            },
+            message: lastRejection
+              ? `SIN MUESTRA PPG: ${lastRejection}`
+              : prev.message,
+          };
+        }
         publishUiSnapshot();
         return;
       }
@@ -279,7 +299,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         const lastBeat = beatResult.beats[beatResult.beats.length - 1];
         if (
           lastBeat &&
-          lastBeat.confidence >= 0.75 &&
+          lastBeat.confidence >= 0.7 &&
           lastVibratedBeatRef.current !== lastBeat.t
         ) {
           lastVibratedBeatRef.current = lastBeat.t;
