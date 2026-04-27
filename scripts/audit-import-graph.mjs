@@ -22,42 +22,27 @@ const ENTRY_POINTS = [
   'src/App.tsx',
 ];
 
-// Allowlist - files that are allowed to be unreachable
+// Allowlist - files that are allowed to be unreachable from the runtime entry.
+// We KEEP this list MINIMAL: anything genuinely used by the pipeline must be
+// reachable through static imports.
 const ALLOWLIST = new Set([
-  // Type definitions
+  // Type-only declarations
   'src/types/',
   'src/vite-env.d.ts',
-  
-  // Test utilities (should be imported by tests, not main)
-  'src/test/',
-  'src/__mocks__/',
-  
-  // Service workers (registered dynamically)
+
+  // Tests are intentionally not reached from the runtime entry — they have
+  // their own runner (vitest). They MUST live under __tests__/.
+  '__tests__/',
+  '.test.',
+  '.spec.',
+
+  // Service workers / web workers (loaded at runtime, not via static import)
   'src/serviceWorker.ts',
   'src/sw.ts',
-  
-  // Workers (loaded dynamically)
   'src/workers/',
-  
-  // Assets that are imported dynamically
+
+  // Static assets imported dynamically
   'src/assets/',
-  
-  // All PPG pipeline files - these ARE imported through the chain
-  // but the static analysis may not detect dynamic/hooked imports
-  'src/components/ForensicPPGDebugPanel.tsx',
-  'src/components/FullScreenCardiacMonitor.tsx',
-  'src/hooks/use-mobile.tsx',
-  'src/ppg/camera/FrameSampler.ts',
-  'src/ppg/camera/PPGCameraController.ts',
-  'src/ppg/publication/PPGPublicationGate.ts',
-  'src/ppg/roi/FingerOpticalROI.ts',
-  'src/ppg/signal/BeatDetector.ts',
-  'src/ppg/signal/PPGChannelFusion.ts',
-  'src/ppg/signal/PPGFilters.ts',
-  'src/ppg/signal/PPGOxygenEstimator.ts',
-  'src/ppg/signal/PPGSignalQuality.ts',
-  'src/ppg/signal/RadiometricPPGExtractor.ts',
-  'src/ppg/usePPGMeasurement.ts',
 ]);
 
 // Extensions to scan
@@ -113,10 +98,9 @@ function extractImports(content, filePath) {
   let match;
   while ((match = es6Regex.exec(content)) !== null) {
     const importPath = match[1];
-    if (!importPath.startsWith('node:') && !importPath.startsWith('.')) {
-      // External dependency - skip
-      continue;
-    }
+    // Skip pure node: protocol; let resolveImport decide for everything else
+    // (it will return null for bare external packages).
+    if (importPath.startsWith('node:')) continue;
     const resolved = resolveImport(importPath, filePath);
     if (resolved) {
       imports.push(resolved);
