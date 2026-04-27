@@ -285,7 +285,29 @@ function drawMonitor(canvas: HTMLCanvasElement, measurement: UsePPGMeasurementRe
   }
 
   if (official) {
-    drawBeatMarkers(ctx, measurement.published.beatMarkers, trace, width, mainTop, mainHeight, dpr);
+    drawBeatMarkers(
+      ctx,
+      measurement.published.beatMarkers,
+      measurement.published.withheldBeatMarkers ?? [],
+      trace,
+      width,
+      mainTop,
+      mainHeight,
+      dpr,
+    );
+  } else {
+    // Even if not official, surface withheld candidates so the operator sees
+    // *why* publication is suppressed.
+    drawBeatMarkers(
+      ctx,
+      [],
+      measurement.published.withheldBeatMarkers ?? [],
+      trace,
+      width,
+      mainTop,
+      mainHeight,
+      dpr,
+    );
   }
 
   const recentChannels = measurement.channels.slice(-260);
