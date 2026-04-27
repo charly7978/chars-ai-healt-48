@@ -57,8 +57,8 @@ export class TorchController {
     this.track = track;
     this.callbacks = callbacks;
     
-    // Verificar disponibilidad
-    const capabilities = track.getCapabilities();
+    // Verificar disponibilidad (torch es propiedad no estándar pero soportada en móviles)
+    const capabilities = track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean };
     const available = !!capabilities.torch;
     
     this.status = {
