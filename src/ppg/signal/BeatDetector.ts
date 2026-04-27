@@ -213,9 +213,9 @@ export class BeatDetector {
       beats,
       bpm,
       rrIntervalsMs,
-      confidence: clamp(meanBeatConfidence * 0.6 + rrConsistency * 0.4, 0, 1),
-      fftBpm,
-      autocorrBpm,
+      confidence: clamp((meanBeatConfidence * 0.6 + rrConsistency * 0.4) * confidenceFactor, 0, 1),
+      fftBpm: fftBpmValue,
+      autocorrBpm: autocorrBpmValue,
       estimatorAgreementBpm,
       rejectedCandidates: rejectedCount,
     };
