@@ -36,6 +36,15 @@ import {
   AdaptiveAcquisitionThresholds,
   type AdaptiveProfileSnapshot,
 } from "./camera/AdaptiveAcquisitionThresholds";
+import {
+  buildAdaptiveKey,
+  loadAdaptiveRecord,
+  saveAdaptiveRecord,
+} from "./camera/AdaptiveThresholdsStore";
+import {
+  NoFingerSelfTest,
+  type NoFingerSelfTestReport,
+} from "./diagnostics/NoFingerSelfTest";
 
 export interface UsePPGMeasurementResult {
   videoRef: RefObject<HTMLVideoElement>;
@@ -83,6 +92,7 @@ export interface UsePPGMeasurementResult {
     channelSelectionReason: string;
     lastUpdateMs: number;
     adaptive: AdaptiveProfileSnapshot;
+    noFingerSelfTest: NoFingerSelfTestReport;
   };
 }
 
@@ -147,6 +157,9 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const qualityAnalyzerRef = useRef(new PPGSignalQualityAnalyzer());
   const publicationGateRef = useRef(new PPGPublicationGate());
   const adaptiveThresholdsRef = useRef(new AdaptiveAcquisitionThresholds());
+  const noFingerSelfTestRef = useRef(new NoFingerSelfTest());
+  const adaptivePersistKeyRef = useRef<string | null>(null);
+  const lastAdaptivePersistAtRef = useRef(0);
 
   const cameraRef = useRef<PPGCameraState>(createEmptyCameraState());
   const rawSamplesRef = useRef<PPGOpticalSample[]>([]);
@@ -189,6 +202,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     channelSelectionReason: "--",
     lastUpdateMs: 0,
     adaptive: adaptiveThresholdsRef.current.snapshot(),
+    noFingerSelfTest: noFingerSelfTestRef.current.report(),
   });
 
   const publishUiSnapshot = useCallback((force = false) => {
@@ -219,6 +233,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       channelSelectionReason: latestChannel?.selectionReason ?? "--",
       lastUpdateMs: Date.now(),
       adaptive: adaptiveThresholdsRef.current.snapshot(),
+      noFingerSelfTest: noFingerSelfTestRef.current.report(),
     });
   }, []);
 
@@ -228,6 +243,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     beatDetectorRef.current.reset();
     publicationGateRef.current.reset();
     adaptiveThresholdsRef.current.reset();
+    noFingerSelfTestRef.current.reset();
     rawSamplesRef.current = [];
     channelsRef.current = [];
     qualityRef.current = createEmptySignalQuality();
@@ -400,6 +416,12 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
             staleSinceMs,
             staleBadge: prev.lastValidTimestamp === null ? "never" : staleSinceMs <= 6000 ? "stale" : "expired",
           };
+          // Forensic self-test: confirm gate stays closed under no-finger.
+          noFingerSelfTestRef.current.observe({
+            t: frame.timestampMs,
+            roi: lastEvidence,
+            published: publishedRef.current,
+          });
         }
         publishUiSnapshot();
         return;
@@ -436,6 +458,35 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       beatsRef.current = beatResult;
       qualityRef.current = signalQuality;
       publishedRef.current = publishedMeasurement;
+
+      // Forensic self-test on the active path too: even when ROI is accepted
+      // we re-classify the scene optically. If hemoglobin signature is missing
+      // but the gate published vitals, that's logged as a violation.
+      noFingerSelfTestRef.current.observe({
+        t: frame.timestampMs,
+        roi: sample.roiEvidence,
+        published: publishedMeasurement,
+      });
+
+      // Periodic persistence of derived adaptive thresholds (every 4s, only
+      // when the engine has converged). On the next session this hot-starts
+      // the gate — same device, same camera, no warmup wait.
+      if (
+        adaptivePersistKeyRef.current &&
+        frame.timestampMs - lastAdaptivePersistAtRef.current > 4000
+      ) {
+        const exported = adaptiveThresholdsRef.current.exportRecord();
+        if (exported) {
+          const cam = cameraRef.current;
+          saveAdaptiveRecord({
+            key: adaptivePersistKeyRef.current,
+            deviceId: cam.selectedDeviceId,
+            cameraLabel: cam.diagnostics?.selectedDevice?.label ?? "",
+            ...exported,
+          });
+          lastAdaptivePersistAtRef.current = frame.timestampMs;
+        }
+      }
 
       if (publishedMeasurement.canVibrateBeat) {
         const lastBeat = beatResult.beats[beatResult.beats.length - 1];
@@ -483,6 +534,36 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
 
     cameraRef.current = cameraState;
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraState);
+
+    // Hot-start adaptive thresholds from any prior record for this device +
+    // camera. The hydrated record provides the threshold floor; runtime EMA
+    // and live observeFrame() calls will continue tightening from there.
+    const cameraLabel = cameraState.diagnostics?.selectedDevice?.label ?? "";
+    const adaptiveKey = buildAdaptiveKey({
+      deviceId: cameraState.selectedDeviceId,
+      cameraLabel,
+    });
+    adaptivePersistKeyRef.current = adaptiveKey;
+    lastAdaptivePersistAtRef.current = 0;
+    const restored = loadAdaptiveRecord(adaptiveKey);
+    if (restored) {
+      adaptiveThresholdsRef.current.hydrate({
+        thresholds: restored.thresholds,
+        sensorNoiseDb: restored.observed.sensorNoiseDb,
+        p10MeasuredFps: restored.observed.p10MeasuredFps,
+        p90JitterMs: restored.observed.p90JitterMs,
+        acquisitionMethod: restored.acquisitionMethod,
+        torchApplied: restored.torchApplied,
+      });
+      // eslint-disable-next-line no-console
+      console.info(
+        "[usePPGMeasurement] Hot-started adaptive thresholds for",
+        adaptiveKey,
+        "sessions=",
+        restored.sessions,
+      );
+    }
+
     publishUiSnapshot(true);
 
     if (!cameraState.stream) {
@@ -516,6 +597,20 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const stop = useCallback(async () => {
     activeRef.current = false;
     frameSamplerRef.current.stop();
+    // Persist final adaptive snapshot before tearing down (only if engine
+    // converged during this session — exportRecord() returns null otherwise).
+    if (adaptivePersistKeyRef.current) {
+      const exported = adaptiveThresholdsRef.current.exportRecord();
+      if (exported) {
+        const cam = cameraRef.current;
+        saveAdaptiveRecord({
+          key: adaptivePersistKeyRef.current,
+          deviceId: cam.selectedDeviceId,
+          cameraLabel: cam.diagnostics?.selectedDevice?.label ?? "",
+          ...exported,
+        });
+      }
+    }
     await cameraControllerRef.current.stop();
     if (videoRef.current) {
       videoRef.current.pause();

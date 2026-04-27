@@ -1016,6 +1016,44 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         </div>
       </div>
 
+      {/* NO-FINGER SELF-TEST — forensic proof gate stays closed without finger */}
+      <div className="mb-3 border-l-2 border-rose-500/50 pl-2">
+        <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-rose-300">
+          <span>No-finger self-test</span>
+          <span
+            className={
+              debug.noFingerSelfTest.falsePositives === 0
+                ? "rounded bg-emerald-500/30 px-1 text-emerald-200"
+                : "rounded bg-red-500/40 px-1 text-red-100"
+            }
+          >
+            {debug.noFingerSelfTest.falsePositives === 0 ? "PASS" : `FAIL ×${debug.noFingerSelfTest.falsePositives}`}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <span className="text-white/55">samples</span>
+          <span>{debug.noFingerSelfTest.totalSamples}</span>
+          <span className="text-white/55">no-finger / finger</span>
+          <span>
+            {debug.noFingerSelfTest.noFingerSamples} / {debug.noFingerSelfTest.fingerLikelySamples}
+          </span>
+          <span className="text-white/55">correct blocks</span>
+          <span className="text-emerald-300">{debug.noFingerSelfTest.correctBlocks}</span>
+          <span className="text-white/55">false positives</span>
+          <span className={debug.noFingerSelfTest.falsePositives === 0 ? "text-emerald-300" : "text-red-300"}>
+            {debug.noFingerSelfTest.falsePositives}
+          </span>
+          {debug.noFingerSelfTest.lastViolationReason && (
+            <>
+              <span className="text-white/55">last violation</span>
+              <span className="truncate text-[9px] text-red-300" title={debug.noFingerSelfTest.lastViolationReason}>
+                {debug.noFingerSelfTest.lastViolationReason}
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* SIGNAL SECTION */}
       <div className="mb-3 border-l-2 border-emerald-500/50 pl-2">
         <div className="mb-1 text-[10px] uppercase tracking-wider text-emerald-300">Signal</div>
