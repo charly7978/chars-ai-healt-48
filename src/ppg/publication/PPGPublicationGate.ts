@@ -60,6 +60,23 @@ export interface PublishedPPGMeasurement {
   goodWindowStreak: number;
   lastValidTimestamp: number | null;
   rejectedBeatCandidates: number;
+  /**
+   * Stale-publication contract:
+   *   - `bpm` above is ALWAYS the freshly validated value (or null if the
+   *     current window does not pass the gate). It is NEVER backfilled.
+   *   - `lastValidBpm` mirrors the last gate-approved BPM. UI may display
+   *     it dimmed when `staleBadge !== "fresh"`.
+   *   - `staleSinceMs` = (now − lastValidTimestamp). 0 when fresh, growing
+   *     while we wait for the next valid window.
+   *   - `staleBadge` discrete state for the UI:
+   *       "fresh"   → current window valid
+   *       "stale"   → 0 < staleSinceMs ≤ 6000
+   *       "expired" → staleSinceMs > 6000  (do not trust)
+   *       "never"   → no valid window has ever been published in this session
+   */
+  lastValidBpm: number | null;
+  staleSinceMs: number;
+  staleBadge: "fresh" | "stale" | "expired" | "never";
 }
 
 const NO_SIGNAL_MESSAGE = "SIN SENAL PPG VERIFICABLE";
