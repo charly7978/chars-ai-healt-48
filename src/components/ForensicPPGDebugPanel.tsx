@@ -370,8 +370,22 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
               <span
                 className="cursor-help text-white/55 underline decoration-dotted decoration-white/30 underline-offset-2"
                 title={
-                  "RR consistency: 1 − normalized stdev of consecutive RR intervals (1.0 = perfectly regular). " +
-                  "Requires ≥2 accepted beats so at least one RR interval exists; ≥4 RR intervals recommended for a stable estimate."
+                  "RR consistency: 1 − normalized stdev of consecutive RR intervals (1.0 = perfectly regular).\n" +
+                  "Requires ≥2 accepted beats so at least one RR interval exists; ≥4 RR intervals recommended for a stable estimate.\n\n" +
+                  "Trend arrows compare the oldest vs. newest value in the last 5 updates:\n" +
+                  "  ▲ improving  (delta > +0.02)\n" +
+                  "  ▼ degrading  (delta < −0.02)\n" +
+                  "  ▬ stable     (|delta| ≤ 0.02)\n\n" +
+                  `Trend window (${rrConsistencyHistoryRef.current.length}/5): ` +
+                  (rrConsistencyHistoryRef.current.length === 0
+                    ? "empty"
+                    : rrConsistencyHistoryRef.current.map((v) => v.toFixed(2)).join(" → ")) +
+                  (rrConsistencyHistoryRef.current.length >= 2
+                    ? `\nDelta: ${(
+                        rrConsistencyHistoryRef.current[rrConsistencyHistoryRef.current.length - 1] -
+                        rrConsistencyHistoryRef.current[0]
+                      ).toFixed(3)}`
+                    : "")
                 }
               >
                 RR consistency ⓘ
