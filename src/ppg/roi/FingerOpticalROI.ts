@@ -1,5 +1,27 @@
 import { clamp, srgbToLinear, trimmedMean } from "../signal/PPGFilters";
 
+/**
+ * High-level finger-contact state derived from the per-tile analysis.
+ */
+export type FingerContactState =
+  | "absent"
+  | "searching"
+  | "partial"
+  | "stable"
+  | "overexposed"
+  | "underexposed"
+  | "motion_rejected";
+
+export interface TileStat {
+  index: number;
+  rect: { x: number; y: number; width: number; height: number };
+  meanRgb: { r: number; g: number; b: number };
+  highClip: number;
+  lowClip: number;
+  pulsatileCandidateScore: number;
+  usable: boolean;
+}
+
 export interface FingerOpticalEvidence {
   roi: { x: number; y: number; width: number; height: number };
   meanRgb: { r: number; g: number; b: number };
@@ -10,9 +32,7 @@ export interface FingerOpticalEvidence {
   opticalDensity: { r: number; g: number; b: number };
   highSaturation: { r: number; g: number; b: number };
   lowSaturation: { r: number; g: number; b: number };
-  /** Per-channel ratio (0..1) of pixels usable for that channel after independent saturation masking */
   usablePixelRatio: { r: number; g: number; b: number };
-  /** Best channel usable ratio — what the pipeline can actually rely on */
   usablePixelRatioMax: number;
   spatialVariance: number;
   dcStability: number;
@@ -26,7 +46,19 @@ export interface FingerOpticalEvidence {
   motionRisk: number;
   reason: string[];
   accepted: boolean;
+  tiles: TileStat[];
+  usableTileCount: number;
+  tileCount: number;
+  roiStabilityScore: number;
+  perfusionScore: number;
+  saturationScore: number;
+  motionScore: number;
+  opticalContactScore: number;
+  channelUsable: { r: boolean; g: boolean; b: boolean };
+  contactState: FingerContactState;
 }
+
+const TILE_GRID = 5; // 5×5 tile grid
 
 type Channel = "r" | "g" | "b";
 
