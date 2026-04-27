@@ -159,8 +159,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   });
   const [rawSamples, setRawSamples] = useState<PPGOpticalSample[]>([]);
   const [channels, setChannels] = useState<FusedPPGChannels[]>([]);
-  const [quality, setQuality] = useState<PPGSignalQuality | null>(null);
-  const [beats, setBeats] = useState<BeatDetectionResult | null>(null);
+  const [quality, setQuality] = useState<PPGSignalQuality>(qualityRef.current);
+  const [beats, setBeats] = useState<BeatDetectionResult>(beatsRef.current);
   const [published, setPublished] = useState<PublishedPPGMeasurement>(publishedRef.current);
   const [debug, setDebug] = useState<UsePPGMeasurementResult["debug"]>({
     active: false,
