@@ -78,6 +78,27 @@ export interface UsePPGMeasurementResult {
   quality: PPGSignalQuality;
   beats: BeatDetectionResult;
   published: PublishedPPGMeasurement;
+  /** Hot-start calibration info loaded from persistence (null if first run for this device/camera). */
+  calibration: {
+    loaded: boolean;
+    key: string | null;
+    sessions: number;
+    ageMs: number | null;
+    sensorNoiseDb: number | null;
+    acquisitionMethod: string | null;
+  };
+  /**
+   * Reposition prompt: triggered when contactState stays non-stable for >= N seconds.
+   * Pipeline keeps running — we never auto-restart the camera; we only ask the user
+   * to reposition the finger. Cleared as soon as contact returns to stable.
+   */
+  repositionPrompt: {
+    active: boolean;
+    sinceMs: number;
+    lastContactState: string;
+    attempt: number;
+    message: string;
+  };
   debug: {
     active: boolean;
     opticalSamples: number;
@@ -160,6 +181,29 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const noFingerSelfTestRef = useRef(new NoFingerSelfTest());
   const adaptivePersistKeyRef = useRef<string | null>(null);
   const lastAdaptivePersistAtRef = useRef(0);
+  // Reposition prompt: tracks how long contactState has been non-stable.
+  const nonStableSinceMsRef = useRef<number | null>(null);
+  const repositionAttemptRef = useRef(0);
+  const lastContactStateRef = useRef<string>("absent");
+  // Calibration hot-start info (populated on start() if a record was restored).
+  const calibrationRef = useRef<UsePPGMeasurementResult["calibration"]>({
+    loaded: false,
+    key: null,
+    sessions: 0,
+    ageMs: null,
+    sensorNoiseDb: null,
+    acquisitionMethod: null,
+  });
+  const repositionRef = useRef<UsePPGMeasurementResult["repositionPrompt"]>({
+    active: false,
+    sinceMs: 0,
+    lastContactState: "absent",
+    attempt: 0,
+    message: "",
+  });
+
+  /** Threshold (ms) of continuous non-stable contact before prompting reposition. */
+  const REPOSITION_PROMPT_AFTER_MS = 4000;
 
   const cameraRef = useRef<PPGCameraState>(createEmptyCameraState());
   const rawSamplesRef = useRef<PPGOpticalSample[]>([]);
@@ -188,6 +232,12 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const [quality, setQuality] = useState<PPGSignalQuality>(qualityRef.current);
   const [beats, setBeats] = useState<BeatDetectionResult>(beatsRef.current);
   const [published, setPublished] = useState<PublishedPPGMeasurement>(publishedRef.current);
+  const [calibration, setCalibration] = useState<UsePPGMeasurementResult["calibration"]>(
+    calibrationRef.current,
+  );
+  const [repositionPrompt, setRepositionPrompt] = useState<UsePPGMeasurementResult["repositionPrompt"]>(
+    repositionRef.current,
+  );
   const [debug, setDebug] = useState<UsePPGMeasurementResult["debug"]>({
     active: false,
     opticalSamples: 0,
@@ -217,6 +267,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     setQuality(qualityRef.current);
     setBeats(beatsRef.current);
     setPublished(publishedRef.current);
+    setCalibration(calibrationRef.current);
+    setRepositionPrompt(repositionRef.current);
     const samplerStats = frameStatsRef.current;
     const latestChannel = channelsRef.current[channelsRef.current.length - 1];
     setDebug({
@@ -250,7 +302,61 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     beatsRef.current = emptyBeats();
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraRef.current);
     lastVibratedBeatRef.current = null;
+    nonStableSinceMsRef.current = null;
+    repositionAttemptRef.current = 0;
+    lastContactStateRef.current = "absent";
+    repositionRef.current = {
+      active: false,
+      sinceMs: 0,
+      lastContactState: "absent",
+      attempt: 0,
+      message: "",
+    };
   }, []);
+
+  /**
+   * Track whether contact has been non-stable for too long. We never restart
+   * the camera — we just surface a reposition prompt to the user. As soon as
+   * contactState returns to "stable" we clear the prompt and bump the attempt
+   * counter for telemetry.
+   */
+  const updateRepositionPrompt = useCallback(
+    (contactState: string, nowMs: number, userGuidance: string) => {
+      lastContactStateRef.current = contactState;
+      if (contactState === "stable") {
+        if (repositionRef.current.active) {
+          repositionAttemptRef.current += 1;
+        }
+        nonStableSinceMsRef.current = null;
+        repositionRef.current = {
+          active: false,
+          sinceMs: 0,
+          lastContactState: contactState,
+          attempt: repositionAttemptRef.current,
+          message: "",
+        };
+        return;
+      }
+      if (nonStableSinceMsRef.current === null) {
+        nonStableSinceMsRef.current = nowMs;
+      }
+      const elapsed = nowMs - nonStableSinceMsRef.current;
+      const shouldPrompt = elapsed >= REPOSITION_PROMPT_AFTER_MS;
+      const baseMsg = userGuidance && userGuidance.length > 0
+        ? userGuidance
+        : "Reubicá el dedo cubriendo bien la cámara y el flash.";
+      repositionRef.current = {
+        active: shouldPrompt,
+        sinceMs: elapsed,
+        lastContactState: contactState,
+        attempt: repositionAttemptRef.current,
+        message: shouldPrompt
+          ? `Sin contacto estable hace ${(elapsed / 1000).toFixed(0)}s. ${baseMsg}`
+          : "",
+      };
+    },
+    [],
+  );
 
   const processFrame = useCallback(() => {
     return (frame: RealFrame) => {
@@ -379,6 +485,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
           staleSinceMs,
           staleBadge: prev.lastValidTimestamp === null ? "never" : staleSinceMs <= 6000 ? "stale" : "expired",
         };
+        // Acquisition not ready → no contact yet. Track for reposition prompt.
+        updateRepositionPrompt("absent", frame.timestampMs, "");
         publishUiSnapshot();
         return;
       }
@@ -434,6 +542,12 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
             published: publishedRef.current,
           });
         }
+        // Track contact state for reposition prompt (absent / partial / searching / etc.).
+        updateRepositionPrompt(
+          lastEvidence?.contactState ?? "absent",
+          frame.timestampMs,
+          lastEvidence?.userGuidance ?? "",
+        );
         publishUiSnapshot();
         return;
       }
@@ -511,9 +625,16 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         }
       }
 
+      // Sample produced — track contact state from the active ROI evidence.
+      updateRepositionPrompt(
+        sample.roiEvidence.contactState,
+        frame.timestampMs,
+        sample.roiEvidence.userGuidance ?? "",
+      );
+
       publishUiSnapshot();
     };
-  }, [publishUiSnapshot]);
+  }, [publishUiSnapshot, updateRepositionPrompt]);
 
   const start = useCallback(async () => {
     if (activeRef.current) {
@@ -566,6 +687,14 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         acquisitionMethod: restored.acquisitionMethod,
         torchApplied: restored.torchApplied,
       });
+      calibrationRef.current = {
+        loaded: true,
+        key: adaptiveKey,
+        sessions: restored.sessions,
+        ageMs: Date.now() - restored.updatedAt,
+        sensorNoiseDb: restored.observed.sensorNoiseDb,
+        acquisitionMethod: restored.acquisitionMethod,
+      };
       // eslint-disable-next-line no-console
       console.info(
         "[usePPGMeasurement] Hot-started adaptive thresholds for",
@@ -573,6 +702,15 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         "sessions=",
         restored.sessions,
       );
+    } else {
+      calibrationRef.current = {
+        loaded: false,
+        key: adaptiveKey,
+        sessions: 0,
+        ageMs: null,
+        sensorNoiseDb: null,
+        acquisitionMethod: null,
+      };
     }
 
     publishUiSnapshot(true);
@@ -655,6 +793,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     quality,
     beats,
     published,
+    calibration,
+    repositionPrompt,
     debug,
   };
 }
