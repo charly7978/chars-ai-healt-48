@@ -470,8 +470,8 @@ export class PPGCameraController {
     diagnostics.settings = settings;
 
     // Phase 4 — apply torch FIRST and aggressively (still inside the
-    // user-activation window). Try three strategies sequentially and verify
-    // via getSettings() readback.
+    // user-activation window). Try multiple browser variants and verify via
+    // readback, then protect the torch from later fine-constraint calls.
     const torchCap = capabilities?.torch === true;
     diagnostics.torchStatus.available = torchCap;
     let torchApplied = false;
@@ -480,6 +480,7 @@ export class PPGCameraController {
       const strategies: { label: string; constraints: MediaTrackConstraints }[] = [
         { label: "advanced.torch", constraints: { advanced: [{ torch: true } as TorchConstraintSet] } },
         { label: "top-level.torch", constraints: { torch: true } as MediaTrackConstraints & { torch?: boolean } },
+        { label: "advanced.torch-fillLight", constraints: { advanced: [{ torch: true, fillLightMode: "flash" } as MediaTrackConstraintSet] } },
         { label: "fillLightMode.flash", constraints: { advanced: [{ fillLightMode: "flash" } as MediaTrackConstraintSet] } },
       ];
       for (const strat of strategies) {
@@ -528,10 +529,11 @@ export class PPGCameraController {
           ? "ignored-by-browser"
           : "denied";
 
-    // Phase 5 — apply remaining fine optical constraints (best-effort, async
-    // is OK now: gesture window already used for torch).
+    // Phase 5 — apply remaining fine optical constraints WITHOUT re-applying
+    // torch. Re-applying mixed constraints after a successful torch readback
+    // makes some Chromium/WebView builds briefly turn the LED off/on.
     try {
-      await this.applyFineConstraints(videoTrack, capabilities, diagnostics);
+      await this.applyFineConstraints(videoTrack, capabilities, diagnostics, false);
     } catch (e) {
       console.warn("[PPGCamera] applyFineConstraints failed:", e);
     }
