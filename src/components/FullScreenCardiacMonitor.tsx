@@ -647,6 +647,19 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
           <span className="rounded border border-white/10 bg-white/[0.045] px-2 py-1 text-slate-200">
             {sessionLabel}
           </span>
+          {measurement.calibration.loaded && (
+            <span
+              className="inline-flex items-center gap-1 rounded border border-cyan-300/30 bg-cyan-500/10 px-2 py-1 text-cyan-200"
+              title={`Calibración persistida — ${measurement.calibration.sessions} sesiones | edad ${
+                measurement.calibration.ageMs !== null
+                  ? Math.round(measurement.calibration.ageMs / 60000) + "min"
+                  : "--"
+              }`}
+            >
+              <CheckCircle className="h-3.5 w-3.5 text-cyan-300" />
+              CAL · {measurement.calibration.sessions}s
+            </span>
+          )}
         </div>
       </header>
 
@@ -661,6 +674,22 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
           aria-live="polite"
         >
           {measurement.published.evidence.roi.userGuidance}
+        </div>
+      )}
+
+      {measurement.repositionPrompt.active && (
+        <div
+          className="pointer-events-none absolute left-1/2 top-[96px] z-30 w-[min(82vw,460px)] -translate-x-1/2 rounded-lg border border-red-400/50 bg-red-500/15 px-4 py-2 text-center text-sm font-semibold text-red-100 shadow-lg backdrop-blur-md"
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="flex items-center justify-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-red-300" />
+            <span>REUBICÁ EL DEDO</span>
+          </div>
+          <div className="mt-0.5 text-xs font-normal text-red-200/90">
+            {measurement.repositionPrompt.message}
+          </div>
         </div>
       )}
 
