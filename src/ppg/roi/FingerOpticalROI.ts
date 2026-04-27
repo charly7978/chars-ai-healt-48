@@ -1,5 +1,27 @@
 import { clamp, srgbToLinear, trimmedMean } from "../signal/PPGFilters";
 
+/**
+ * High-level finger-contact state derived from the per-tile analysis.
+ */
+export type FingerContactState =
+  | "absent"
+  | "searching"
+  | "partial"
+  | "stable"
+  | "overexposed"
+  | "underexposed"
+  | "motion_rejected";
+
+export interface TileStat {
+  index: number;
+  rect: { x: number; y: number; width: number; height: number };
+  meanRgb: { r: number; g: number; b: number };
+  highClip: number;
+  lowClip: number;
+  pulsatileCandidateScore: number;
+  usable: boolean;
+}
+
 export interface FingerOpticalEvidence {
   roi: { x: number; y: number; width: number; height: number };
   meanRgb: { r: number; g: number; b: number };
@@ -10,9 +32,7 @@ export interface FingerOpticalEvidence {
   opticalDensity: { r: number; g: number; b: number };
   highSaturation: { r: number; g: number; b: number };
   lowSaturation: { r: number; g: number; b: number };
-  /** Per-channel ratio (0..1) of pixels usable for that channel after independent saturation masking */
   usablePixelRatio: { r: number; g: number; b: number };
-  /** Best channel usable ratio — what the pipeline can actually rely on */
   usablePixelRatioMax: number;
   spatialVariance: number;
   dcStability: number;
@@ -26,7 +46,19 @@ export interface FingerOpticalEvidence {
   motionRisk: number;
   reason: string[];
   accepted: boolean;
+  tiles: TileStat[];
+  usableTileCount: number;
+  tileCount: number;
+  roiStabilityScore: number;
+  perfusionScore: number;
+  saturationScore: number;
+  motionScore: number;
+  opticalContactScore: number;
+  channelUsable: { r: boolean; g: boolean; b: boolean };
+  contactState: FingerContactState;
 }
+
+const TILE_GRID = 5; // 5×5 tile grid
 
 type Channel = "r" | "g" | "b";
 
@@ -66,12 +98,17 @@ export class FingerOpticalROI {
   private baselineLinear: { r: number; g: number; b: number } | null = null;
   private baselineAlpha = 0.02; // Slow adaptation
 
+  // Tile usability mask from the previous frame, used to compute roiStabilityScore
+  // (intersection-over-union of usable tiles).
+  private previousUsableTileMask: boolean[] | null = null;
+
   reset(): void {
     this.previousLuma = null;
     this.dcStability = 1;
     this.lumaHistory = [];
     this.frameCount = 0;
     this.baselineLinear = null;
+    this.previousUsableTileMask = null;
   }
 
   analyze(imageData: ImageData): FingerOpticalEvidence {
@@ -345,6 +382,159 @@ export class FingerOpticalROI {
       motionRisk < 0.5 &&
       pressureRisk < 0.5;
 
+    // ── Tile grid (TILE_GRID×TILE_GRID) ─────────────────────────────────────
+    // Single, sparse pass over each tile. Used to:
+    //   - locate the cleanest sub-region (future ROI smoothing)
+    //   - compute usableTileCount and roiStabilityScore
+    //   - produce a per-tile heatmap for the debug UI
+    //   - veto frames where contact is only on a couple of tiles
+    const tiles: TileStat[] = [];
+    const tileMask: boolean[] = new Array(TILE_GRID * TILE_GRID).fill(false);
+    const tileW = Math.max(1, Math.floor(width / TILE_GRID));
+    const tileH = Math.max(1, Math.floor(height / TILE_GRID));
+    const tileStep = Math.max(1, Math.floor(Math.sqrt((tileW * tileH) / 200))); // ~200 samples/tile
+    let perfusionAccum = 0;
+    let perfusionCount = 0;
+
+    for (let ty = 0; ty < TILE_GRID; ty++) {
+      for (let tx = 0; tx < TILE_GRID; tx++) {
+        const x0 = tx * tileW;
+        const y0 = ty * tileH;
+        const x1 = tx === TILE_GRID - 1 ? width : x0 + tileW;
+        const y1 = ty === TILE_GRID - 1 ? height : y0 + tileH;
+
+        let tileR = 0;
+        let tileG = 0;
+        let tileB = 0;
+        let tilePixels = 0;
+        let tileHigh = 0;
+        let tileLow = 0;
+        let tileGmin = 255;
+        let tileGmax = 0;
+
+        for (let yy = y0; yy < y1; yy += tileStep) {
+          const rowBase = yy * width * 4;
+          for (let xx = x0; xx < x1; xx += tileStep) {
+            const idx = rowBase + xx * 4;
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+            tileR += r;
+            tileG += g;
+            tileB += b;
+            tilePixels++;
+            const maxCh = r > g ? (r > b ? r : b) : g > b ? g : b;
+            const minCh = r < g ? (r < b ? r : b) : g < b ? g : b;
+            if (maxCh >= 250) tileHigh++;
+            if (minCh <= 4) tileLow++;
+            if (g < tileGmin) tileGmin = g;
+            if (g > tileGmax) tileGmax = g;
+          }
+        }
+
+        const tileMean = {
+          r: tilePixels ? tileR / tilePixels : 0,
+          g: tilePixels ? tileG / tilePixels : 0,
+          b: tilePixels ? tileB / tilePixels : 0,
+        };
+        const tileHighRatio = tilePixels ? tileHigh / tilePixels : 0;
+        const tileLowRatio = tilePixels ? tileLow / tilePixels : 0;
+
+        // Pulsatile candidate: prefers tiles with healthy red dominance,
+        // moderate brightness, and a non-trivial green dynamic range.
+        const tileRedDom = tileMean.r / Math.max(1, tileMean.r + tileMean.g + tileMean.b);
+        const tileBright = (tileMean.r + tileMean.g + tileMean.b) / 3;
+        const greenSpan = Math.max(0, tileGmax - tileGmin) / 64; // normalised
+        const candidate = clamp01(
+          (tileRedDom > 0.34 ? 1 : tileRedDom / 0.34) * 0.4 +
+            (tileBright > 60 && tileBright < 230 ? 1 : 0) * 0.3 +
+            Math.min(1, greenSpan) * 0.3,
+        );
+        // Adaptive validity: tile must not be saturated/clipped, must be at
+        // least moderately bright and pass the candidate threshold.
+        const usable =
+          tileHighRatio < 0.25 &&
+          tileLowRatio < 0.25 &&
+          tileBright > 35 &&
+          tileBright < 245 &&
+          candidate > 0.35;
+
+        const tileIdx = ty * TILE_GRID + tx;
+        tileMask[tileIdx] = usable;
+        if (usable) {
+          perfusionAccum += Math.min(1, greenSpan);
+          perfusionCount++;
+        }
+
+        tiles.push({
+          index: tileIdx,
+          rect: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
+          meanRgb: tileMean,
+          highClip: tileHighRatio,
+          lowClip: tileLowRatio,
+          pulsatileCandidateScore: candidate,
+          usable,
+        });
+      }
+    }
+
+    let usableTileCount = 0;
+    for (const t of tileMask) if (t) usableTileCount++;
+
+    // ROI stability = IoU of the usable-tile masks frame-to-frame.
+    let roiStabilityScore = 1;
+    if (this.previousUsableTileMask) {
+      let intersect = 0;
+      let union = 0;
+      for (let i = 0; i < tileMask.length; i++) {
+        const a = tileMask[i];
+        const b = this.previousUsableTileMask[i];
+        if (a && b) intersect++;
+        if (a || b) union++;
+      }
+      roiStabilityScore = union === 0 ? 1 : intersect / union;
+    }
+    this.previousUsableTileMask = tileMask;
+
+    const perfusionScore = perfusionCount > 0 ? clamp01(perfusionAccum / perfusionCount) : 0;
+    const motionScore = clamp01(1 - motionRisk);
+    const opticalContactScore = clamp01(
+      coverageScore * 0.3 +
+        illuminationScore * 0.2 +
+        this.dcStability * 0.2 +
+        redDominance * 0.15 +
+        (usableTileCount / (TILE_GRID * TILE_GRID)) * 0.15,
+    );
+
+    // Per-channel availability for downstream gates.
+    const channelUsable = {
+      r: usablePixelRatio.r >= 0.4 && highSaturation.r < 0.2 && lowSaturation.r < 0.25,
+      g: usablePixelRatio.g >= 0.4 && highSaturation.g < 0.25 && lowSaturation.g < 0.25,
+      b: usablePixelRatio.b >= 0.4 && highSaturation.b < 0.3 && lowSaturation.b < 0.3,
+    };
+
+    // High-level contact state (does NOT replace `accepted` — it adds nuance).
+    let contactState: FingerContactState;
+    if (highClip > 0.35 && meanLuma > 220) contactState = "overexposed";
+    else if (meanLuma < 25 || coverageScore < 0.15) contactState = "underexposed";
+    else if (redDominance < 0.1 && coverageScore < 0.25) contactState = "absent";
+    else if (motionRisk > 0.5 || roiStabilityScore < 0.35) contactState = "motion_rejected";
+    else if (
+      opticalContactScore >= 0.55 &&
+      usableTileCount >= 12 &&
+      roiStabilityScore >= 0.6 &&
+      this.dcStability >= 0.5
+    )
+      contactState = "stable";
+    else if (opticalContactScore >= 0.35 && usableTileCount >= 6) contactState = "partial";
+    else contactState = "searching";
+
+    if (usableTileCount < 6) reason.push("INSUFFICIENT_USABLE_TILES");
+    if (roiStabilityScore < 0.4) reason.push("ROI_UNSTABLE");
+    if (contactState === "overexposed") reason.push("OVEREXPOSED");
+    if (contactState === "underexposed") reason.push("UNDEREXPOSED");
+    if (contactState === "motion_rejected") reason.push("MOTION_REJECTED");
+
     return {
       roi,
       meanRgb,
@@ -369,6 +559,16 @@ export class FingerOpticalROI {
       motionRisk,
       reason,
       accepted,
+      tiles,
+      usableTileCount,
+      tileCount: TILE_GRID * TILE_GRID,
+      roiStabilityScore,
+      perfusionScore,
+      saturationScore,
+      motionScore,
+      opticalContactScore,
+      channelUsable,
+      contactState,
     };
   }
 }

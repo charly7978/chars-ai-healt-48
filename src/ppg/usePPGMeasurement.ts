@@ -40,13 +40,20 @@ export interface UsePPGMeasurementResult {
   camera: PPGCameraState;
   frameStats: {
     measuredFps: number;
+    fpsInstant: number;
+    fpsMedian: number;
+    fpsQuality: number;
+    jitterMs: number;
     frameCount: number;
     droppedFrames: number;
+    droppedFrameEstimate: number;
     width: number;
     height: number;
     sampleIntervalMs: number;
     sampleIntervalStdMs: number;
     isActive: boolean;
+    acquisitionMethod: FrameSamplerStats["acquisitionMethod"];
+    targetFps: number;
   };
   fpsStats: {
     acquisitionFps: number;
@@ -81,14 +88,21 @@ function createEmptyCameraState(): PPGCameraState {
 function createEmptyFrameStats(): FrameSamplerStats {
   return {
     measuredFps: 0,
+    fpsInstant: 0,
+    fpsMedian: 0,
+    fpsQuality: 0,
+    jitterMs: 0,
     frameCount: 0,
     droppedFrames: 0,
+    droppedFrameEstimate: 0,
     width: 0,
     height: 0,
     sampleIntervalMs: 0,
     sampleIntervalStdMs: 0,
     lastFrameTimeMs: 0,
     isActive: false,
+    acquisitionMethod: "none",
+    targetFps: 30,
   };
 }
 
@@ -271,6 +285,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         beats: beatResult,
         opticalSamples: opticalWindow,
         selectedSeries,
+        fpsQuality: frameStatsRef.current.fpsQuality,
       });
 
       rawSamplesRef.current = opticalWindow;

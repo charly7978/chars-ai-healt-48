@@ -101,6 +101,16 @@ export function createEmptyPublishedPPGMeasurement(
         motionRisk: 0,
         reason: ["NO_ROI"],
         accepted: false,
+        tiles: [],
+        usableTileCount: 0,
+        tileCount: 25,
+        roiStabilityScore: 0,
+        perfusionScore: 0,
+        saturationScore: 0,
+        motionScore: 0,
+        opticalContactScore: 0,
+        channelUsable: { r: false, g: false, b: false },
+        contactState: "absent",
       },
       channels: {
         t: 0,
@@ -144,6 +154,8 @@ export class PPGPublicationGate {
     beats: BeatDetectionResult;
     opticalSamples: PPGOpticalSample[];
     selectedSeries: TimeSample[];
+    /** 0..100 — sampler cadence quality (rVFC jitter / dropped frames). */
+    fpsQuality?: number;
   }): PublishedPPGMeasurement {
     const {
       camera,
@@ -153,6 +165,7 @@ export class PPGPublicationGate {
       beats,
       opticalSamples,
       selectedSeries,
+      fpsQuality = 100,
     } = params;
     const reasons = new Set<string>(quality.reasons);
     const bufferMs = opticalSamples.length >= 2 ? opticalSamples[opticalSamples.length - 1].t - opticalSamples[0].t : 0;
@@ -180,6 +193,15 @@ export class PPGPublicationGate {
       quality.rrConsistency >= 0.6;
     const agreementOk = twoEstimatorsAgree || strongTemporalAlone;
 
+    // Sampler cadence quality must be high enough that the temporal axis is
+    // physically meaningful. Below 40 we don't trust BPM at all.
+    const fpsQualityOk = fpsQuality >= 40;
+    // Tile-based hard gate: BPM/SpO2 require enough usable optical real estate.
+    const tileGateOk = roi.usableTileCount >= 6 && roi.roiStabilityScore >= 0.4;
+    // Contact state veto for any heart-rate publication.
+    const contactStateOk =
+      roi.contactState === "stable" || roi.contactState === "partial";
+
     const coreQualityPass =
       quality.totalScore >= 60 &&
       quality.bandPowerRatio >= 0.30 &&
@@ -188,7 +210,10 @@ export class PPGPublicationGate {
       saturationOk &&
       perfusionOk &&
       quality.rrConsistency >= 0.4 &&
-      beats.confidence >= 0.45;
+      beats.confidence >= 0.45 &&
+      fpsQualityOk &&
+      tileGateOk &&
+      contactStateOk;
 
     if (!camera.cameraReady) reasons.add("CAMERA_NOT_READY");
     if (!torchCondition) reasons.add("TORCH_NOT_ENABLED");
@@ -200,6 +225,9 @@ export class PPGPublicationGate {
     if (!saturationOk) reasons.add("SATURATION_DESTRUCTIVE");
     if (!perfusionOk) reasons.add("PERFUSION_BELOW_THRESHOLD");
     if (quality.rrConsistency < 0.4) reasons.add("RR_CHAOTIC_OR_INSUFFICIENT");
+    if (!fpsQualityOk) reasons.add(`FPS_QUALITY_LOW_${fpsQuality.toFixed(0)}`);
+    if (!tileGateOk) reasons.add(`TILE_GATE_FAIL_${roi.usableTileCount}/${roi.tileCount}`);
+    if (!contactStateOk) reasons.add(`CONTACT_STATE_${roi.contactState.toUpperCase()}`);
 
     const now = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
     const windowBucket = Math.floor(now / 2000);
@@ -266,12 +294,22 @@ export class PPGPublicationGate {
         ? "RAW_DEBUG_ONLY"
         : "NONE";
 
+    // SpO2 needs BOTH red AND green to be optically valid (Ratio-of-Ratios).
+    // If red is saturated under flash but green is fine, we still publish BPM
+    // (handled above) but block SpO2 explicitly so the user is not misled.
+    const spo2ChannelsOk = roi.channelUsable.r && roi.channelUsable.g;
     const oxygen = estimateCameraSpO2({
       samples: opticalSamples,
       quality,
-      canPublishVitals,
+      canPublishVitals: canPublishVitals && spo2ChannelsOk,
       calibrationBadge: camera.diagnostics?.calibration.status ?? "uncalibrated",
     });
+    if (!spo2ChannelsOk) {
+      oxygen.canPublish = false;
+      if (!oxygen.reasons.includes("CHANNEL_RED_OR_GREEN_UNUSABLE")) {
+        oxygen.reasons = [...oxygen.reasons, "CHANNEL_RED_OR_GREEN_UNUSABLE"];
+      }
+    }
 
     let lastValidTimestamp: number | null = null;
     if (canPublishVitals && beats.bpm !== null) {

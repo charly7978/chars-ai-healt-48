@@ -538,15 +538,57 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
       <div className="mb-3 border-l-2 border-blue-500/50 pl-2">
         <div className="mb-1 text-[10px] uppercase tracking-wider text-blue-300">Sampler</div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-          <span className="text-white/55">measured FPS</span>
-          <span>{fmt(frameStats.measuredFps, 1)} fps</span>
+          <span className="text-white/55">acquisition method</span>
+          <span
+            className={
+              frameStats.acquisitionMethod === "requestVideoFrameCallback"
+                ? "text-emerald-400"
+                : frameStats.acquisitionMethod === "requestAnimationFrame"
+                  ? "text-amber-300"
+                  : "text-red-400"
+            }
+            title="rVFC = decoupled from render; rAF = coupled; intervalFallback = degraded"
+          >
+            {frameStats.acquisitionMethod}
+          </span>
+          <span className="text-white/55">target / measured / median fps</span>
+          <span>
+            {frameStats.targetFps} / {fmt(frameStats.measuredFps, 1)} / {fmt(frameStats.fpsMedian, 1)}
+          </span>
+          <span className="text-white/55">fps instant</span>
+          <span>{fmt(frameStats.fpsInstant, 1)}</span>
+          <span className="text-white/55">fps quality</span>
+          <span
+            className={
+              frameStats.fpsQuality >= 70
+                ? "text-emerald-400"
+                : frameStats.fpsQuality >= 40
+                  ? "text-amber-300"
+                  : "text-red-400"
+            }
+            title="0..100. <40 blocks BPM publication."
+          >
+            {frameStats.fpsQuality}
+          </span>
+          <span className="text-white/55">jitter (MAD)</span>
+          <span
+            className={
+              frameStats.jitterMs < 4 ? "text-emerald-400" : frameStats.jitterMs < 10 ? "text-amber-300" : "text-red-400"
+            }
+          >
+            {fmt(frameStats.jitterMs, 2)} ms
+          </span>
           <span className="text-white/55">frame interval</span>
           <span>
             {fmt(debug.frameIntervalMs, 1)} ± {fmt(debug.frameIntervalStdMs, 1)} ms
           </span>
-          <span className="text-white/55">frames / dropped</span>
+          <span className="text-white/55">frames / dropped (total)</span>
           <span>
             {frameStats.frameCount} / {frameStats.droppedFrames}
+          </span>
+          <span className="text-white/55">dropped this frame</span>
+          <span className={frameStats.droppedFrameEstimate > 0 ? "text-red-400" : ""}>
+            {frameStats.droppedFrameEstimate}
           </span>
           <span className="text-white/55">analysis resolution</span>
           <span>
@@ -591,7 +633,76 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           <span>{fmt(roi.redDominance, 2)}</span>
           <span className="text-white/55">green pulse avail</span>
           <span>{fmt(roi.greenPulseAvailability, 2)}</span>
+          <span className="text-white/55">contact state</span>
+          <span
+            className={
+              roi.contactState === "stable"
+                ? "text-emerald-400"
+                : roi.contactState === "partial"
+                  ? "text-amber-300"
+                  : roi.contactState === "absent" || roi.contactState === "searching"
+                    ? "text-white/60"
+                    : "text-red-400"
+            }
+            title={`Reasons: ${roi.reason.join(", ") || "none"}`}
+          >
+            {roi.contactState.toUpperCase()}
+          </span>
+          <span className="text-white/55">usable tiles</span>
+          <span
+            className={
+              roi.usableTileCount >= 12
+                ? "text-emerald-400"
+                : roi.usableTileCount >= 6
+                  ? "text-amber-300"
+                  : "text-red-400"
+            }
+          >
+            {roi.usableTileCount} / {roi.tileCount}
+          </span>
+          <span className="text-white/55">ROI stability</span>
+          <span className={roi.roiStabilityScore >= 0.6 ? "text-emerald-400" : roi.roiStabilityScore >= 0.4 ? "text-amber-300" : "text-red-400"}>
+            {fmt(roi.roiStabilityScore, 2)}
+          </span>
+          <span className="text-white/55">channel usable R/G/B</span>
+          <span>
+            <span className={roi.channelUsable.r ? "text-emerald-400" : "text-red-400"}>R</span>{" "}
+            <span className={roi.channelUsable.g ? "text-emerald-400" : "text-red-400"}>G</span>{" "}
+            <span className={roi.channelUsable.b ? "text-emerald-400" : "text-red-400"}>B</span>
+          </span>
         </div>
+        {/* Tile heatmap (5x5). Green = usable, amber = marginal, red = clipped. */}
+        {roi.tiles.length > 0 && (
+          <div className="mt-2">
+            <div className="mb-1 text-[9px] uppercase tracking-wider text-white/40">
+              tile heatmap (pulsatile candidate · ✓ = usable)
+            </div>
+            <div
+              className="grid gap-[2px]"
+              style={{ gridTemplateColumns: `repeat(5, 1fr)` }}
+            >
+              {roi.tiles.map((t) => {
+                const bad = t.highClip > 0.25 || t.lowClip > 0.25;
+                const score = Math.max(0, Math.min(1, t.pulsatileCandidateScore));
+                const bg = bad
+                  ? `rgba(239,68,68,${0.25 + score * 0.5})`
+                  : t.usable
+                    ? `rgba(16,185,129,${0.2 + score * 0.6})`
+                    : `rgba(245,158,11,${0.15 + score * 0.5})`;
+                return (
+                  <div
+                    key={t.index}
+                    className="flex aspect-square items-center justify-center rounded-sm text-[8px] font-mono text-white/85"
+                    style={{ backgroundColor: bg }}
+                    title={`tile ${t.index}\nmean R/G/B: ${t.meanRgb.r.toFixed(0)}/${t.meanRgb.g.toFixed(0)}/${t.meanRgb.b.toFixed(0)}\nhigh-clip: ${(t.highClip * 100).toFixed(0)}%  low-clip: ${(t.lowClip * 100).toFixed(0)}%\ncandidate: ${score.toFixed(2)}\nusable: ${t.usable}`}
+                  >
+                    {t.usable ? "✓" : bad ? "✗" : "·"}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* SATURATION SECTION */}
