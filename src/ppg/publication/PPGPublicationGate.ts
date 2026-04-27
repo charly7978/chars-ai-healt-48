@@ -40,6 +40,9 @@ export interface PublishedPPGMeasurement {
     channels: FusedPPGChannels;
   };
   message: string;
+  goodWindowStreak: number;
+  lastValidTimestamp: number | null;
+  rejectedBeatCandidates: number;
 }
 
 const NO_SIGNAL_MESSAGE = "SIN SENAL PPG VERIFICABLE";
@@ -79,14 +82,22 @@ export function createEmptyPublishedPPGMeasurement(
         medianRgb: { r: 0, g: 0, b: 0 },
         p5Rgb: { r: 0, g: 0, b: 0 },
         p95Rgb: { r: 0, g: 0, b: 0 },
+        linearMean: { r: 0, g: 0, b: 0 },
+        opticalDensity: { r: 0, g: 0, b: 0 },
         highSaturation: { r: 0, g: 0, b: 0 },
         lowSaturation: { r: 0, g: 0, b: 0 },
         spatialVariance: 0,
         dcStability: 0,
+        dcTrend: 0,
         coverageScore: 0,
         illuminationScore: 0,
         contactScore: 0,
+        redDominance: 0,
+        greenPulseAvailability: 0,
+        pressureRisk: 0,
+        motionRisk: 0,
         reason: ["NO_ROI"],
+        accepted: false,
       },
       channels: {
         t: 0,
@@ -94,11 +105,16 @@ export function createEmptyPublishedPPGMeasurement(
         g2: 0,
         g3: 0,
         selected: 0,
-        selectedName: "G1_GREEN_OD",
+        selectedName: "GREEN_OD",
         channelSnr: { g1: -60, g2: -60, g3: -60 },
+        allChannels: [],
+        selectionReason: "NO_CHANNELS",
       },
     },
     message: NO_SIGNAL_MESSAGE,
+    goodWindowStreak: 0,
+    lastValidTimestamp: null,
+    rejectedBeatCandidates: 0,
   };
 }
 
@@ -106,11 +122,15 @@ export class PPGPublicationGate {
   private goodWindowStreak = 0;
   private lastWindowBucket = -1;
   private wasValid = false;
+  private lastPublishedBpm: number | null = null;
+  private lastPublishedTimestamp: number | null = null;
 
   reset(): void {
     this.goodWindowStreak = 0;
     this.lastWindowBucket = -1;
     this.wasValid = false;
+    this.lastPublishedBpm = null;
+    this.lastPublishedTimestamp = null;
   }
 
   evaluate(params: {
@@ -141,9 +161,13 @@ export class PPGPublicationGate {
     const torchCondition = !camera.torchAvailable || camera.torchEnabled;
     const saturationOk = quality.saturationPenalty <= 0.45;
     const perfusionOk = quality.acDcPerfusionIndex >= 0.03;
-    const agreementOk = quality.estimatorAgreementBpm <= 5;
+    // Use multi-estimator agreement from BeatDetector
+    const estimatorAgreementBpm = beats.estimatorAgreementBpm ?? 999;
     const estimatorsOk =
-      quality.fftBpm !== null && quality.autocorrBpm !== null && quality.peakBpm !== null;
+      beats.fftBpm !== null &&
+      beats.autocorrBpm !== null &&
+      beats.bpm !== null;
+    const agreementOk = estimatorAgreementBpm <= 5;
     const coreQualityPass =
       quality.totalScore >= 70 &&
       quality.bandPowerRatio >= 0.35 &&
@@ -157,9 +181,11 @@ export class PPGPublicationGate {
 
     if (!camera.cameraReady) reasons.add("CAMERA_NOT_READY");
     if (!torchCondition) reasons.add("TORCH_NOT_ENABLED");
+    // Prefer 12-15s buffer for stable publication, minimum 8s
     if (bufferMs < 8000 || selectedDurationMs < 8000) reasons.add("BUFFER_LT_8S");
+    if (bufferMs < 12000) reasons.add("BUFFER_LT_12S_PREFERRED");
     if (!enoughBeats) reasons.add("NOT_ENOUGH_VALID_BEATS");
-    if (!agreementOk) reasons.add("ESTIMATOR_AGREEMENT_GT_5_BPM");
+    if (!agreementOk) reasons.add(`ESTIMATOR_AGREEMENT_${estimatorAgreementBpm.toFixed(1)}_BPM`);
     if (!estimatorsOk) reasons.add("MISSING_REQUIRED_ESTIMATOR");
     if (!saturationOk) reasons.add("SATURATION_DESTRUCTIVE");
     if (!perfusionOk) reasons.add("PERFUSION_BELOW_THRESHOLD");
@@ -204,14 +230,22 @@ export class PPGPublicationGate {
       this.goodWindowStreak >= 3 &&
       beats.bpm !== null;
 
+    // Suspend publication immediately if quality drops
+    if (!canPublishVitals && this.wasValid) {
+      this.lastPublishedBpm = null;
+      this.lastPublishedTimestamp = null;
+    }
+
     this.wasValid = canPublishVitals;
 
     const lastBeat = beats.beats[beats.beats.length - 1];
     const canVibrateBeat =
       canPublishVitals &&
+      state === "PPG_VALID" &&
       Boolean(lastBeat) &&
       lastBeat.confidence >= 0.75 &&
-      quality.totalScore >= 70;
+      quality.totalScore >= 70 &&
+      !lastBeat.rejectionReason;
 
     const waveformSource: PublishedPPGMeasurement["waveformSource"] = canPublishVitals
       ? "REAL_PPG"
@@ -224,6 +258,11 @@ export class PPGPublicationGate {
       quality,
       canPublishVitals,
     });
+
+    let lastValidTimestamp: number | null = null;
+    if (canPublishVitals && beats.bpm !== null) {
+      lastValidTimestamp = opticalSamples[opticalSamples.length - 1]?.t ?? channels.t;
+    }
 
     return {
       state,
@@ -243,6 +282,9 @@ export class PPGPublicationGate {
       },
       evidence: { camera, roi, channels },
       message: canPublishVitals ? "PPG VALIDADA" : NO_SIGNAL_MESSAGE,
+      goodWindowStreak: this.goodWindowStreak,
+      lastValidTimestamp,
+      rejectedBeatCandidates: beats.rejectedCandidates,
     };
   }
 }

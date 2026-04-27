@@ -198,15 +198,42 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           <span>{fmt(quality.bandPowerRatio, 3)}</span>
           <span className="text-white/55">SNR</span>
           <span>{fmt(quality.snrDb, 1)} dB</span>
-          <span className="text-white/55">FFT / autocorr / peak</span>
-          <span>
-            {fmt(quality.fftBpm, 1)} / {fmt(quality.autocorrBpm, 1)} / {fmt(quality.peakBpm, 1)}
-          </span>
-          <span className="text-white/55">agreement</span>
-          <span>{fmt(quality.estimatorAgreementBpm, 1)} BPM</span>
           <span className="text-white/55">SQI score / grade</span>
           <span className={quality.totalScore > 70 ? "text-emerald-400" : quality.totalScore > 45 ? "text-amber-400" : "text-red-400"}>
             {fmt(quality.totalScore, 1)} / {quality.grade}
+          </span>
+        </div>
+      </div>
+
+      {/* BEAT DETECTION SECTION */}
+      <div className="mb-3 border-l-2 border-orange-500/50 pl-2">
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-orange-300">Beat Detection</div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <span className="text-white/55">beats accepted / rejected</span>
+          <span>
+            {measurement.beats.beats.length} / {measurement.beats.rejectedCandidates}
+          </span>
+          <span className="text-white/55">BPM (peaks)</span>
+          <span className={measurement.beats.bpm !== null ? "text-emerald-400" : "text-red-400"}>
+            {fmt(measurement.beats.bpm, 1)}
+          </span>
+          <span className="text-white/55">BPM (FFT)</span>
+          <span className={measurement.beats.fftBpm !== null ? "text-emerald-400" : "text-red-400"}>
+            {fmt(measurement.beats.fftBpm, 1)}
+          </span>
+          <span className="text-white/55">BPM (autocorr)</span>
+          <span className={measurement.beats.autocorrBpm !== null ? "text-emerald-400" : "text-red-400"}>
+            {fmt(measurement.beats.autocorrBpm, 1)}
+          </span>
+          <span className="text-white/55">estimator agreement</span>
+          <span className={measurement.beats.estimatorAgreementBpm !== undefined && measurement.beats.estimatorAgreementBpm <= 5 ? "text-emerald-400" : "text-red-400"}>
+            {fmt(measurement.beats.estimatorAgreementBpm, 1)} BPM
+          </span>
+          <span className="text-white/55">RR consistency</span>
+          <span>{fmt(quality.rrConsistency, 2)}</span>
+          <span className="text-white/55">RR intervals (last 5)</span>
+          <span className="text-[9px]">
+            {measurement.beats.rrIntervalsMs.slice(-5).map((rr, i) => `${fmt(rr, 0)}ms`).join(", ") || "--"}
           </span>
         </div>
       </div>
@@ -228,6 +255,14 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           <span className="text-white/55">can publish</span>
           <span className={measurement.published.canPublishVitals ? "text-emerald-400" : "text-amber-400"}>
             {String(measurement.published.canPublishVitals)}
+          </span>
+          <span className="text-white/55">good window streak</span>
+          <span className={measurement.published.goodWindowStreak >= 3 ? "text-emerald-400" : "text-amber-400"}>
+            {measurement.published.goodWindowStreak}
+          </span>
+          <span className="text-white/55">last valid timestamp</span>
+          <span>
+            {measurement.published.lastValidTimestamp ? fmt((Date.now() - measurement.published.lastValidTimestamp) / 1000, 1) + "s ago" : "--"}
           </span>
         </div>
       </div>

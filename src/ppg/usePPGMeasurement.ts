@@ -109,6 +109,7 @@ function emptyBeats(): BeatDetectionResult {
     bpm: null,
     rrIntervalsMs: [],
     confidence: 0,
+    rejectedCandidates: 0,
   };
 }
 
