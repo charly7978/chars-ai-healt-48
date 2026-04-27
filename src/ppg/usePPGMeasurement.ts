@@ -40,13 +40,20 @@ export interface UsePPGMeasurementResult {
   camera: PPGCameraState;
   frameStats: {
     measuredFps: number;
+    fpsInstant: number;
+    fpsMedian: number;
+    fpsQuality: number;
+    jitterMs: number;
     frameCount: number;
     droppedFrames: number;
+    droppedFrameEstimate: number;
     width: number;
     height: number;
     sampleIntervalMs: number;
     sampleIntervalStdMs: number;
     isActive: boolean;
+    acquisitionMethod: FrameSamplerStats["acquisitionMethod"];
+    targetFps: number;
   };
   fpsStats: {
     acquisitionFps: number;
