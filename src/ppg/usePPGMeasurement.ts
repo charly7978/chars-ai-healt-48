@@ -542,6 +542,12 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
             published: publishedRef.current,
           });
         }
+        // Track contact state for reposition prompt (absent / partial / searching / etc.).
+        updateRepositionPrompt(
+          lastEvidence?.contactState ?? "absent",
+          frame.timestampMs,
+          lastEvidence?.userGuidance ?? "",
+        );
         publishUiSnapshot();
         return;
       }
