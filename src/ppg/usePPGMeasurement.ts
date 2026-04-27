@@ -146,6 +146,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   const beatDetectorRef = useRef(new BeatDetector());
   const qualityAnalyzerRef = useRef(new PPGSignalQualityAnalyzer());
   const publicationGateRef = useRef(new PPGPublicationGate());
+  const adaptiveThresholdsRef = useRef(new AdaptiveAcquisitionThresholds());
 
   const cameraRef = useRef<PPGCameraState>(createEmptyCameraState());
   const rawSamplesRef = useRef<PPGOpticalSample[]>([]);
