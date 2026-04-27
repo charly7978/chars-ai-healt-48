@@ -285,6 +285,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
         beats: beatResult,
         opticalSamples: opticalWindow,
         selectedSeries,
+        fpsQuality: frameStatsRef.current.fpsQuality,
       });
 
       rawSamplesRef.current = opticalWindow;
