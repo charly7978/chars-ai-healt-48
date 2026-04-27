@@ -82,6 +82,7 @@ export interface UsePPGMeasurementResult {
     selectedChannel: string;
     channelSelectionReason: string;
     lastUpdateMs: number;
+    adaptive: AdaptiveProfileSnapshot;
   };
 }
 
