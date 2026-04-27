@@ -363,6 +363,7 @@ export class PPGPublicationGate {
       enoughBeats &&
       coreQualityPass &&
       this.goodWindowStreak >= 2 &&
+      contactStreakOk &&
       beats.bpm !== null;
 
     // Quality dropped — wasValid transition handled below; nothing else to clear
