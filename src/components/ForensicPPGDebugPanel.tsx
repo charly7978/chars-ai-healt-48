@@ -380,14 +380,13 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                   "  ▲ improving  (delta > +0.02)\n" +
                   "  ▼ degrading  (delta < −0.02)\n" +
                   "  ▬ stable     (|delta| ≤ 0.02)\n\n" +
-                  `Trend window (${rrConsistencyHistoryRef.current.length}/5): ` +
-                  (rrConsistencyHistoryRef.current.length === 0
+                  `Trend window (${rrHistory.length}/5): ` +
+                  (rrHistory.length === 0
                     ? "empty"
-                    : rrConsistencyHistoryRef.current.map((v) => v.toFixed(2)).join(" → ")) +
-                  (rrConsistencyHistoryRef.current.length >= 2
+                    : rrHistory.map((h) => `${h.value.toFixed(2)}@${fmtClock(h.timestamp)}`).join(" → ")) +
+                  (rrHistory.length >= 2
                     ? `\nDelta: ${(
-                        rrConsistencyHistoryRef.current[rrConsistencyHistoryRef.current.length - 1] -
-                        rrConsistencyHistoryRef.current[0]
+                        rrHistory[rrHistory.length - 1].value - rrHistory[0].value
                       ).toFixed(3)}`
                     : "")
                 }
