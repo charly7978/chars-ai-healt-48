@@ -324,7 +324,26 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     resetProcessors();
     publishUiSnapshot(true);
 
-    const cameraState = await cameraControllerRef.current.start();
+    const video = videoRef.current;
+    if (!video) {
+      console.error("[usePPGMeasurement] videoRef.current is null");
+      activeRef.current = false;
+      publishUiSnapshot(true);
+      return;
+    }
+
+    let cameraState;
+    try {
+      // Forensic: open camera + torch SYNCHRONOUSLY from the user gesture so
+      // the browser preserves user-activation needed to enable the flashlight.
+      cameraState = await cameraControllerRef.current.startFromGesture(video);
+    } catch (e) {
+      console.error("[usePPGMeasurement] startFromGesture failed:", e);
+      activeRef.current = false;
+      publishUiSnapshot(true);
+      return;
+    }
+
     cameraRef.current = cameraState;
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraState);
     publishUiSnapshot(true);
@@ -336,33 +355,7 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       return;
     }
 
-    if (!videoRef.current) {
-      console.error("[usePPGMeasurement] videoRef.current is null");
-      activeRef.current = false;
-      publishUiSnapshot(true);
-      return;
-    }
-
-    const video = videoRef.current;
-    video.srcObject = cameraState.stream;
-    video.muted = true;
-    video.playsInline = true;
-
-    try {
-      await video.play();
-    } catch (e) {
-      console.error("[usePPGMeasurement] video.play() failed:", e);
-      cameraRef.current = {
-        ...cameraRef.current,
-        error: "Failed to start video playback",
-      };
-      publishedRef.current = createEmptyPublishedPPGMeasurement(cameraRef.current);
-      activeRef.current = false;
-      publishUiSnapshot(true);
-      return;
-    }
-
-    // Wait for video to be fully ready (HAVE_CURRENT_DATA = 2)
+    // Wait until the bound video element is decoding frames.
     if (video.readyState < 2) {
       await new Promise<void>((resolve) => {
         const check = () => {
