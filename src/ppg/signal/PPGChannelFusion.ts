@@ -20,14 +20,42 @@ export type ChannelName =
 
 export interface ChannelMetrics {
   name: ChannelName;
+  /** Raw spectral SNR, in dB. */
   snrDb: number;
+  /** Fraction of total spectral power inside the cardiac band. */
   bandPowerRatio: number;
+  /** Autocorrelation peak strength (0..1). */
   autocorrPeakStrength: number;
+  /** FFT vs autocorr BPM agreement (1 = perfect). */
   fftAgreement: number;
+  /** Cross-channel agreement: 1 − |bpm − median(otherBpms)| / 30. */
+  channelAgreement: number;
+  /** Average per-channel saturation in the window (0..1). */
   avgSaturation: number;
+  /** Robust perfusion index (mean of |AC|/DC) on this channel. */
+  perfusionIndex: number;
+  /** Std of the slow baseline over the window. */
   dcDrift: number;
+  /** Stability score (1 = full window had a valid baseline). */
   stabilityScore: number;
+  /** Composite final score in [0..1] — higher is better. */
   finalScore: number;
+  /** Per-term breakdown for the debug panel. */
+  scoreBreakdown: {
+    snr: number;
+    bpr: number;
+    autocorr: number;
+    fftAgreement: number;
+    perfusion: number;
+    saturationPenalty: number;
+    driftPenalty: number;
+    stability: number;
+    channelAgreement: number;
+  };
+  /** Dominant BPM picked by spectral peak (null if below threshold). */
+  fftBpm: number | null;
+  /** Dominant BPM picked by autocorrelation. */
+  autocorrBpm: number | null;
   series: TimeSample[];
   actualFs: number;
 }
