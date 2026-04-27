@@ -397,8 +397,12 @@ export function preprocessPPGRobust(
   // Apply Hampel filter for outliers
   const cleaned = hampel(resampled.samples, 5, 3);
 
-  // Band-pass with real Fs
-  const filtered = bandpass(cleaned, lowHz, highHz, fs);
+  // Zero-phase bandpass when fs supports it (preserves peak timing for
+  // beat detection). Falls back to one-pole bandpass if fs is too low.
+  const filtered =
+    fs > 2 * highHz + 1
+      ? bandpassZeroPhase(cleaned, lowHz, highHz, fs)
+      : bandpass(cleaned, lowHz, highHz, fs);
 
   // Robust normalization
   const normalized = robustNormalize(filtered);
