@@ -226,6 +226,30 @@ export function createEmptyPublishedPPGMeasurement(
     lastValidBpm: null,
     staleSinceMs: 0,
     staleBadge: "never",
+    publicationDecisionLog: emptyDecisionLog(),
+  };
+}
+
+function emptyDecisionLog(): PublishedPPGMeasurement["publicationDecisionLog"] {
+  return {
+    decision: "BLOCK",
+    passed: [],
+    blocked: ["NO_PPG_PUBLICATION"],
+    metrics: {
+      totalScore: 0, bandPowerRatio: 0, perfusionIndex: 0,
+      saturationPenalty: 1, rrConsistency: 0, beatConfidence: 0,
+      estimatorAgreementBpm: 999, estimatorsAvailable: 0,
+      goodWindowStreak: 0, fpsQuality: 0, bufferMs: 0,
+      usableTileCount: 0, tileCount: 0,
+    },
+    thresholds: {
+      totalScoreMin: 60, bandPowerRatioMin: 0.30, perfusionMin: 0.02,
+      saturationMax: 0.55, rrConsistencyMin: 0.4, beatConfidenceMin: 0.45,
+      agreementMaxBpm: 8, goodWindowStreakMin: 2, fpsQualityMin: 40,
+      bufferMsMin: 6000, usableTilesMin: 6,
+    },
+    lastSelectedChannel: "GREEN_OD",
+    channelSelectionReason: "NO_CHANNELS",
   };
 }
 
