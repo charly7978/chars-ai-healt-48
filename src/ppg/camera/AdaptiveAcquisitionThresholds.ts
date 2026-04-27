@@ -256,6 +256,76 @@ export class AdaptiveAcquisitionThresholds {
     this.derive();
   }
 
+  /**
+   * Hot-start hydration from a previously persisted record (per device/camera).
+   * The persisted thresholds and noise floor become the starting point so the
+   * gate can open as soon as live telemetry confirms cadence — typically in
+   * seconds instead of waiting for the full profilingWindowFrames warmup.
+   *
+   * Forensic guarantees:
+   *  - Hydrated thresholds are the FLOOR for live derivation (we never
+   *    publish a relaxed value just because storage said so). The runtime
+   *    `derive()` will only RAISE these values, never lower them.
+   *  - We mark the engine as "active" with a small synthetic frameCount equal
+   *    to the profiling window. This represents prior real observations on
+   *    THIS device — never fake samples; the EMA still tracks live frames
+   *    from the very next observeFrame() call.
+   */
+  hydrate(input: {
+    thresholds: AdaptiveThresholds;
+    sensorNoiseDb: number;
+    p10MeasuredFps: number;
+    p90JitterMs: number;
+    p10FpsQuality?: number;
+    p90DroppedRatio?: number;
+    acquisitionMethod?: AcquisitionMethod | "none";
+    torchApplied?: boolean | null;
+  }): void {
+    // Hydrated thresholds become the new working floor (never below SAFETY_FLOOR
+    // since the store already clamps; we re-clamp defensively).
+    this.current = {
+      minMeasuredFps: Math.max(SAFETY_FLOOR.minMeasuredFps, input.thresholds.minMeasuredFps),
+      maxJitterMs: Math.min(SAFETY_FLOOR.maxJitterMs, input.thresholds.maxJitterMs),
+      minFpsQuality: Math.max(SAFETY_FLOOR.minFpsQuality, input.thresholds.minFpsQuality),
+      maxDroppedRatio: Math.min(SAFETY_FLOOR.maxDroppedRatio, input.thresholds.maxDroppedRatio),
+      minContactScore: Math.max(SAFETY_FLOOR.minContactScore, input.thresholds.minContactScore),
+      minPerfusionIndex: Math.max(SAFETY_FLOOR.minPerfusionIndex, input.thresholds.minPerfusionIndex),
+      minBandPowerRatio: Math.max(SAFETY_FLOOR.minBandPowerRatio, input.thresholds.minBandPowerRatio),
+      minTotalQualityScore: Math.max(SAFETY_FLOOR.minTotalQualityScore, input.thresholds.minTotalQualityScore),
+    };
+    this.sensorNoiseDb = input.sensorNoiseDb;
+    this.ema = {
+      p10Fps: input.p10MeasuredFps,
+      p90Jitter: input.p90JitterMs,
+      p10FpsQuality: input.p10FpsQuality ?? this.current.minFpsQuality,
+      p90DroppedRatio: input.p90DroppedRatio ?? 0,
+    };
+    if (input.acquisitionMethod) this.acquisitionMethod = input.acquisitionMethod;
+    if (input.torchApplied !== undefined) this.torchApplied = input.torchApplied;
+    this.framesObserved = this.profilingWindowFrames; // mark warmup satisfied
+    this.active = true;
+  }
+
+  /** Snapshot tailored for persistence — the minimum needed to hot-start. */
+  exportRecord(): {
+    thresholds: AdaptiveThresholds;
+    observed: { sensorNoiseDb: number; p10MeasuredFps: number; p90JitterMs: number };
+    acquisitionMethod: AcquisitionMethod | "none";
+    torchApplied: boolean | null;
+  } | null {
+    if (!this.active) return null;
+    return {
+      thresholds: { ...this.current },
+      observed: {
+        sensorNoiseDb: this.sensorNoiseDb,
+        p10MeasuredFps: this.ema.p10Fps,
+        p90JitterMs: this.ema.p90Jitter,
+      },
+      acquisitionMethod: this.acquisitionMethod,
+      torchApplied: this.torchApplied,
+    };
+  }
+
   /** Snapshot for UI / debug telemetry. */
   snapshot(): AdaptiveProfileSnapshot {
     const reasons: string[] = [];
