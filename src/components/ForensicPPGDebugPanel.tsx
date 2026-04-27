@@ -352,7 +352,8 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
               <span className="text-[9px]">
                 {beats.rrIntervalsMs.slice(-5).map((rr) => `${fmt(rr, 0)}ms`).join(", ") || "--"}
               </span>
-            </div>
+              </div>
+            </>
           );
         })()}
       </div>
