@@ -3,6 +3,7 @@ import {
   autocorrBpm,
   clamp,
   mean,
+  median,
   preprocessPPGRobust,
   spectralMetrics,
   std,
