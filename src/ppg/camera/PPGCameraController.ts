@@ -533,7 +533,14 @@ export class PPGCameraController {
     // torch. Re-applying mixed constraints after a successful torch readback
     // makes some Chromium/WebView builds briefly turn the LED off/on.
     try {
-      await this.applyFineConstraints(videoTrack, capabilities, diagnostics, false);
+      await this.applyFineConstraints(videoTrack, capabilities, diagnostics, false, torchApplied && torchReadback);
+      if (torchApplied && torchReadback) {
+        const afterFine = videoTrack.getSettings();
+        const stillOn = afterFine?.torch === true || afterFine?.fillLightMode === "flash";
+        if (!stillOn) {
+          await videoTrack.applyConstraints({ advanced: [{ torch: true } as TorchConstraintSet] });
+        }
+      }
     } catch (e) {
       console.warn("[PPGCamera] applyFineConstraints failed:", e);
     }
@@ -1322,6 +1329,7 @@ export class PPGCameraController {
     capabilities: MediaTrackCapabilities | null,
     diagnostics: CameraDiagnostics,
     includeTorch = true,
+    preserveTorch = false,
   ): Promise<void> {
     const tryConstraint = async (
       key: AppliedFineConstraint["key"],
@@ -1339,7 +1347,16 @@ export class PPGCameraController {
         return;
       }
       try {
-        await track.applyConstraints(payload);
+        const effectivePayload = preserveTorch && key !== "torch"
+          ? {
+              ...payload,
+              advanced: [
+                ...((payload.advanced ?? []) as MediaTrackConstraintSet[]),
+                { torch: true } as TorchConstraintSet,
+              ],
+            }
+          : payload;
+        await track.applyConstraints(effectivePayload);
         const newSettings = track.getSettings();
         const applied = (newSettings as Record<string, unknown>)[key];
         diagnostics.fineConstraints.push({
