@@ -179,6 +179,20 @@ describe("PPGPublicationGate — stale-publication ledger", () => {
       selectedSeries: baseSeries,
       fpsQuality: 100,
     });
+    // Warm up the per-frame contact streak (≥30 consecutive accepted frames)
+    // before asserting publication. Each call ticks the streak by 1.
+    for (let i = 0; i < 32; i++) {
+      gate.evaluate({
+        camera: camera(),
+        roi: roi(),
+        channels: channels(),
+        quality: quality(),
+        beats: beats(),
+        opticalSamples: s1,
+        selectedSeries: baseSeries,
+        fpsQuality: 100,
+      });
+    }
     const fresh = gate.evaluate({
       camera: camera(),
       roi: roi(),
