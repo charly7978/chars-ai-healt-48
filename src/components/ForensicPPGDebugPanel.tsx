@@ -352,7 +352,7 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           <span className="text-white/55">selected channel</span>
           <span>{latestChannels?.selectedName ?? "--"}</span>
           <span className="text-white/55">beats accepted</span>
-          <span>{measurement.beats?.beats.length ?? 0}</span>
+          <span>{beats.beats.length}</span>
           <span className="text-white/55">publication state</span>
           <span>{measurement.published.state}</span>
         </div>
