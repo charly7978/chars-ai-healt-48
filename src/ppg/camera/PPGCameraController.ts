@@ -336,11 +336,28 @@ export class PPGCameraController {
       }
 
       // Phase 3 — open with progressive constraints, logging every attempt.
-      const opened = await this.openCamera(diagnostics, bestRear?.deviceId ?? null);
+      let opened = await this.openCamera(diagnostics, bestRear?.deviceId ?? null);
 
-      const videoTrack = opened.stream.getVideoTracks()[0] ?? null;
+      let videoTrack = opened.stream.getVideoTracks()[0] ?? null;
       if (!videoTrack) {
         throw new Error("No video track received from camera");
+      }
+
+      // Phase 3.5 — if browser handed us an ultrawide/front despite our hint,
+      // swap to the best non-ultrawide rear candidate.
+      const swap = await this.replaceUltraWideIfNeeded(
+        videoTrack,
+        opened.stream,
+        profiles,
+        diagnostics,
+      );
+      if (swap) {
+        opened = {
+          stream: swap.stream,
+          constraints: swap.constraints,
+          selectedReason: "ultrawide-replaced",
+        };
+        videoTrack = swap.stream.getVideoTracks()[0];
       }
 
       // Sync the picked device against the enumerated profiles.
@@ -367,6 +384,16 @@ export class PPGCameraController {
       if (matchedProfile && !matchedProfile.selectedReason) {
         matchedProfile.selectedReason = opened.selectedReason;
       }
+      // Mark all other enumerated profiles as rejected with reason.
+      const chosenId = diagnostics.selectedDevice.deviceId;
+      for (const p of profiles) {
+        if (p.deviceId !== chosenId && p.selectedReason === null) {
+          if (p.rejectedReasons.length === 0) {
+            p.rejectedReasons.push("not-best-score");
+          }
+        }
+      }
+
 
       // Phase 4 — capture capabilities/settings.
       let capabilities: MediaTrackCapabilities | null = null;
