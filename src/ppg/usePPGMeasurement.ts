@@ -78,6 +78,27 @@ export interface UsePPGMeasurementResult {
   quality: PPGSignalQuality;
   beats: BeatDetectionResult;
   published: PublishedPPGMeasurement;
+  /** Hot-start calibration info loaded from persistence (null if first run for this device/camera). */
+  calibration: {
+    loaded: boolean;
+    key: string | null;
+    sessions: number;
+    ageMs: number | null;
+    sensorNoiseDb: number | null;
+    acquisitionMethod: string | null;
+  };
+  /**
+   * Reposition prompt: triggered when contactState stays non-stable for >= N seconds.
+   * Pipeline keeps running — we never auto-restart the camera; we only ask the user
+   * to reposition the finger. Cleared as soon as contact returns to stable.
+   */
+  repositionPrompt: {
+    active: boolean;
+    sinceMs: number;
+    lastContactState: string;
+    attempt: number;
+    message: string;
+  };
   debug: {
     active: boolean;
     opticalSamples: number;
