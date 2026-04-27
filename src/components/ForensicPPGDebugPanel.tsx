@@ -347,10 +347,16 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
                 {beats.estimatorAgreementBpm === undefined ? "awaiting…" : `${fmt(beats.estimatorAgreementBpm, 1)} BPM`}
               </span>
               <span className="text-white/55">RR consistency</span>
-              <span>{fmt(quality.rrConsistency, 2)}</span>
+              <span className={beats.rrIntervalsMs.length < 2 ? "italic text-white/40" : ""}>
+                {beats.rrIntervalsMs.length < 2
+                  ? `need ≥2 beats (have ${beats.beats.length})`
+                  : fmt(quality.rrConsistency, 2)}
+              </span>
               <span className="text-white/55">RR intervals (last 5)</span>
-              <span className="text-[9px]">
-                {beats.rrIntervalsMs.slice(-5).map((rr) => `${fmt(rr, 0)}ms`).join(", ") || "--"}
+              <span className={beats.rrIntervalsMs.length < 2 ? "text-[10px] italic text-white/40" : "text-[9px]"}>
+                {beats.rrIntervalsMs.length < 2
+                  ? `need ≥2 beats (have ${beats.beats.length})`
+                  : beats.rrIntervalsMs.slice(-5).map((rr) => `${fmt(rr, 0)}ms`).join(", ")}
               </span>
               </div>
             </>
