@@ -689,6 +689,9 @@ export class FingerOpticalROI {
     if (centroidDrift > 0.35) reason.push("CENTROID_DRIFT");
     if (textureScore < 0.1 && coverageScore > 0.4) reason.push("FLAT_SURFACE_NO_TEXTURE");
 
+    const minStableTiles = Math.ceil(TILE_GRID * TILE_GRID * 0.38);
+    const minPartialTiles = Math.ceil(TILE_GRID * TILE_GRID * 0.24);
+
     // High-level contact state (does NOT replace `accepted` — it adds nuance).
     let contactState: FingerContactState;
     if (highClip > 0.35 && meanLuma > 220) contactState = "overexposed";
@@ -698,18 +701,16 @@ export class FingerOpticalROI {
       contactState = "motion_rejected";
     else if (
       opticalContactScore >= 0.55 &&
-      usableTileCount >= 12 &&
+      usableTileCount >= minStableTiles &&
       roiStabilityScore >= 0.6 &&
       this.dcStability >= 0.5 &&
       textureScore >= 0.15 &&
       pressureState === "optimal"
     )
       contactState = "stable";
-    else if (opticalContactScore >= 0.35 && usableTileCount >= 6) contactState = "partial";
+    else if (opticalContactScore >= 0.35 && usableTileCount >= minPartialTiles) contactState = "partial";
     else contactState = "searching";
 
-    const minStableTiles = Math.ceil(TILE_GRID * TILE_GRID * 0.38);
-    const minPartialTiles = Math.ceil(TILE_GRID * TILE_GRID * 0.24);
     if (usableTileCount < minPartialTiles) reason.push("INSUFFICIENT_USABLE_TILES");
     if (roiStabilityScore < 0.4) reason.push("ROI_UNSTABLE");
     if (contactState === "overexposed") reason.push("OVEREXPOSED");
