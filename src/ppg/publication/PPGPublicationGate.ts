@@ -89,6 +89,15 @@ export function createEmptyPublishedPPGMeasurement(
     waveform: [],
     waveformSource: "NONE",
     beatMarkers: [],
+    withheldBeatMarkers: [],
+    irregularityFlag: false,
+    estimatorBreakdown: {
+      peakBpm: null,
+      medianIbiBpm: null,
+      fftBpm: null,
+      autocorrBpm: null,
+      agreementBpm: 999,
+    },
     quality: createEmptySignalQuality(),
     evidence: {
       camera,
