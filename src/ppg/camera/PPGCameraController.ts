@@ -1321,6 +1321,7 @@ export class PPGCameraController {
     track: MediaStreamTrack,
     capabilities: MediaTrackCapabilities | null,
     diagnostics: CameraDiagnostics,
+    includeTorch = true,
   ): Promise<void> {
     const tryConstraint = async (
       key: AppliedFineConstraint["key"],
@@ -1359,8 +1360,11 @@ export class PPGCameraController {
       }
     };
 
-    // torch
-    await tryConstraint("torch", true, torchConstraint(true), capabilities?.torch === true);
+    // torch — only on the legacy non-gesture path. The gesture path enables
+    // torch before fine constraints and must not toggle it again.
+    if (includeTorch) {
+      await tryConstraint("torch", true, torchConstraint(true), capabilities?.torch === true);
+    }
 
     // exposureMode
     const exposureModes = capabilities?.exposureMode ?? [];
