@@ -75,24 +75,7 @@ export interface UsePPGMeasurementResult {
 }
 
 function createEmptyCameraState(): PPGCameraState {
-  return {
-    stream: null,
-    videoTrack: null,
-    capabilities: null,
-    settings: null,
-    constraints: null,
-    torchAvailable: false,
-    torchEnabled: false,
-    torchApplied: false,
-    cameraReady: false,
-    streamActive: false,
-    measuredFps: 0,
-    width: 0,
-    height: 0,
-    selectedDeviceId: null,
-    error: null,
-    lastError: null,
-  };
+  return createEmptyPPGCameraState();
 }
 
 function createEmptyFrameStats(): FrameSamplerStats {
