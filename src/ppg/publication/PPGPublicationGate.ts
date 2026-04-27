@@ -81,7 +81,6 @@ export function createEmptyPublishedPPGMeasurement(
       reasons: ["NO_PPG_PUBLICATION"],
       calibrationBadge: camera.diagnostics?.calibration.status ?? "uncalibrated",
     },
-    waveform: [],
     waveformSource: "NONE",
     beatMarkers: [],
     withheldBeatMarkers: [],
@@ -342,7 +341,6 @@ export class PPGPublicationGate {
       bpm: canPublishVitals && beats.bpm !== null ? Math.round(beats.bpm) : null,
       bpmConfidence: canPublishVitals ? beats.confidence : 0,
       oxygen,
-      waveform: waveformSource === "NONE" ? [] : waveformFromSeries(selectedSeries),
       waveformSource,
       beatMarkers: canPublishVitals
         ? beats.beats.slice(-16).map((beat) => ({
