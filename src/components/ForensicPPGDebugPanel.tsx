@@ -81,6 +81,43 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
 
   const [rrExplanationOpen, setRrExplanationOpen] = useState(false);
 
+  // Imported evidence (loaded from a previously exported JSON file). When set, the
+  // diagnostics section renders this snapshot in a read-only "IMPORTED" mode so the
+  // user can audit a past session with the same forensic view.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [importedEvidence, setImportedEvidence] = useState<any | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [exportWarnings, setExportWarnings] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Validate that the camera evidence payload has the required forensic fields populated.
+  // Returns the list of human-readable warnings (empty array means "ok to download").
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const validateEvidencePayload = (payload: any): string[] => {
+    const warnings: string[] = [];
+    const diag = payload?.cameraDiagnostics;
+    if (!diag) {
+      warnings.push("cameraDiagnostics is missing/null");
+    } else {
+      if (!diag.selectedDevice) warnings.push("cameraDiagnostics.selectedDevice is null");
+      if (!Array.isArray(diag.enumeratedDevices) || diag.enumeratedDevices.length === 0)
+        warnings.push("cameraDiagnostics.enumeratedDevices is empty");
+      if (!Array.isArray(diag.attempts) || diag.attempts.length === 0)
+        warnings.push("cameraDiagnostics.attempts is empty (no constraint attempts logged)");
+      if (!diag.torchStatus) warnings.push("cameraDiagnostics.torchStatus is missing");
+      if (!diag.calibration) warnings.push("cameraDiagnostics.calibration is missing");
+    }
+    const sp = payload?.spo2;
+    if (!sp) {
+      warnings.push("spo2 block is missing");
+    } else {
+      if (sp.calibrationBadge === null || sp.calibrationBadge === undefined)
+        warnings.push("spo2.calibrationBadge is null");
+      if (!sp.calibrationProfile) warnings.push("spo2.calibrationProfile is null");
+    }
+    return warnings;
+  };
+
   const exportJson = () => {
     const auditData = {
       timestamp: new Date().toISOString(),
@@ -141,12 +178,51 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
     URL.revokeObjectURL(url);
   };
 
-  const exportCameraEvidence = () => {
+  const exportCameraEvidence = (opts: { force?: boolean } = {}) => {
     const diag = camera.diagnostics;
+    const exportedAtMs = Date.now();
+    const exportedAtIso = new Date(exportedAtMs).toISOString();
+
+    // Annotate every applied/attempted setting with its timestamp so the consumer can
+    // correlate exactly when each constraint, torch readback or fps measurement happened.
+    // We preserve any pre-existing `timestamp`/`appliedAt` on the source records and
+    // fall back to the export timestamp only when the upstream did not record one.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const annotateTs = (item: any) => {
+      if (!item || typeof item !== "object") return item;
+      const ts = item.timestamp ?? item.appliedAt ?? item.at ?? exportedAtMs;
+      const tsIso = (() => {
+        try {
+          return new Date(ts).toISOString();
+        } catch {
+          return exportedAtIso;
+        }
+      })();
+      return { ...item, timestamp: ts, timestampIso: tsIso };
+    };
+
+    const annotatedDiag = diag
+      ? {
+          ...diag,
+          attempts: Array.isArray(diag.attempts) ? diag.attempts.map(annotateTs) : diag.attempts,
+          fineConstraints: Array.isArray(diag.fineConstraints)
+            ? diag.fineConstraints.map(annotateTs)
+            : diag.fineConstraints,
+          torchStatus: annotateTs(diag.torchStatus),
+          fpsSample: {
+            target: diag.fpsTarget,
+            measured: diag.fpsMeasured,
+            timestamp: exportedAtMs,
+            timestampIso: exportedAtIso,
+          },
+        }
+      : null;
+
     const evidencePayload = {
-      timestamp: new Date().toISOString(),
+      timestamp: exportedAtIso,
+      exportedAtMs,
       userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
-      cameraDiagnostics: diag ?? null,
+      cameraDiagnostics: annotatedDiag,
       cameraStateSummary: {
         cameraReady: camera.cameraReady,
         streamActive: camera.streamActive,
@@ -155,6 +231,8 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         torchEnabled: camera.torchEnabled,
         torchApplied: camera.torchApplied,
         measuredFps: camera.measuredFps,
+        measuredFpsAt: exportedAtMs,
+        measuredFpsAtIso: exportedAtIso,
         width: camera.width,
         height: camera.height,
         error: camera.error,
@@ -169,17 +247,51 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
         reasons: oxygen.reasons,
         calibrationProfile: diag?.calibration ?? null,
       },
-      evidenceSchemaVersion: 1,
+      evidenceSchemaVersion: 2,
     };
+
+    const warnings = validateEvidencePayload(evidencePayload);
+    setExportWarnings(warnings);
+    if (warnings.length > 0 && !opts.force) {
+      // Block the download until the user confirms via the "Download anyway" button.
+      return;
+    }
+
     const blob = new Blob([JSON.stringify(evidencePayload, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `ppg-camera-evidence-${Date.now()}.json`;
+    a.download = `ppg-camera-evidence-${exportedAtMs}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleImportEvidenceClick = () => {
+    setImportError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleImportEvidenceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("File is not a JSON object");
+      }
+      if (!("cameraDiagnostics" in parsed) && !("spo2" in parsed)) {
+        throw new Error("Missing cameraDiagnostics/spo2 — not a PPG evidence file");
+      }
+      setImportedEvidence(parsed);
+      setImportError(null);
+    } catch (err) {
+      setImportedEvidence(null);
+      setImportError(err instanceof Error ? err.message : "Failed to parse file");
+    }
   };
 
   // Determine status color
@@ -201,14 +313,90 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
           </button>
           <button
             type="button"
-            onClick={exportCameraEvidence}
+            onClick={() => exportCameraEvidence()}
             title="Download camera diagnostics + SpO2 calibration/badge as a single JSON evidence file"
             className="inline-flex items-center gap-1 rounded border border-fuchsia-500/30 bg-fuchsia-500/10 px-2 py-1 text-[10px] text-fuchsia-200 hover:bg-fuchsia-500/20"
           >
             EXPORT CAM EVIDENCE
           </button>
+          <button
+            type="button"
+            onClick={handleImportEvidenceClick}
+            title="Load a previously exported evidence JSON and render it in this panel"
+            className="inline-flex items-center gap-1 rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] text-sky-200 hover:bg-sky-500/20"
+          >
+            IMPORT EVIDENCE
+          </button>
+          {importedEvidence && (
+            <button
+              type="button"
+              onClick={() => {
+                setImportedEvidence(null);
+                setImportError(null);
+              }}
+              title="Stop showing imported snapshot and return to live diagnostics"
+              className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/5 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10"
+            >
+              CLEAR IMPORT
+            </button>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleImportEvidenceFile}
+          />
         </div>
       </div>
+
+      {(exportWarnings.length > 0 || importError || importedEvidence) && (
+        <div className="mb-3 space-y-1">
+          {exportWarnings.length > 0 && (
+            <div className="rounded border border-amber-400/40 bg-amber-500/10 p-2 text-[10px] text-amber-200">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="font-semibold uppercase tracking-wider">
+                  Export validation: {exportWarnings.length} warning{exportWarnings.length === 1 ? "" : "s"}
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => exportCameraEvidence({ force: true })}
+                    className="rounded border border-amber-300/40 bg-amber-400/10 px-1.5 py-0.5 hover:bg-amber-400/20"
+                  >
+                    Download anyway
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExportWarnings([])}
+                    className="rounded border border-white/20 bg-white/5 px-1.5 py-0.5 hover:bg-white/10"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+              <ul className="list-disc pl-4">
+                {exportWarnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {importError && (
+            <div className="rounded border border-red-400/40 bg-red-500/10 p-2 text-[10px] text-red-200">
+              Import error: {importError}
+            </div>
+          )}
+          {importedEvidence && (
+            <div className="rounded border border-sky-400/40 bg-sky-500/10 p-2 text-[10px] text-sky-200">
+              Showing IMPORTED evidence from{" "}
+              <span className="font-semibold">{importedEvidence.timestamp ?? "unknown time"}</span>{" "}
+              (schema v{importedEvidence.evidenceSchemaVersion ?? "?"}). Live diagnostics paused
+              below.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* CAMERA SECTION */}
       <div className="mb-3 border-l-2 border-cyan-500/50 pl-2">
@@ -237,7 +425,7 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
 
       {/* DIAGNOSTICS & CALIBRATION */}
       {(() => {
-        const diag = camera.diagnostics;
+        const diag = (importedEvidence?.cameraDiagnostics ?? camera.diagnostics) as typeof camera.diagnostics | null;
         if (!diag) return null;
         const calib = diag.calibration;
         const calibColor =
