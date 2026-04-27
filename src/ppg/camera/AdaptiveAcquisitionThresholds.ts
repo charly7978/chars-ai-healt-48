@@ -240,9 +240,19 @@ export class AdaptiveAcquisitionThresholds {
   /**
    * Feed an ambient (finger-OFF) optical sample. Used to estimate the camera's
    * dark-noise floor in dB. Call only when ROI evidence indicates NO_CONTACT.
+   *
+   * The estimation window is AUTO-TUNED:
+   *  - We track the variance of the noise-dB estimate across recomputations.
+   *  - Stable estimate (low dB-variance, < 0.5 dB) → shrink window for snappier
+   *    response to changes in ambient/optical conditions.
+   *  - Volatile estimate (high dB-variance, > 2.0 dB) → grow window for more
+   *    robust averaging on noisy or low-light cameras.
+   *  - Bounds: AMBIENT_WIN_MIN..AMBIENT_WIN_MAX. Adaptation is clamped per call
+   *    so the window cannot oscillate.
    */
   observeAmbientSample(rgb: { r: number; g: number; b: number }): void {
-    if (this.ambientRedSamples.length >= 240) {
+    const cap = this.ambientWindowSize;
+    while (this.ambientRedSamples.length >= cap) {
       this.ambientRedSamples.shift();
       this.ambientGreenSamples.shift();
     }
@@ -258,9 +268,47 @@ export class AdaptiveAcquisitionThresholds {
         for (const v of red) acc += (v - mean) * (v - mean);
         const std = Math.sqrt(acc / red.length);
         const ratio = std / mean;
-        this.sensorNoiseDb = 20 * Math.log10(Math.max(1e-6, ratio));
+        const newNoiseDb = 20 * Math.log10(Math.max(1e-6, ratio));
+        this.sensorNoiseDb = newNoiseDb;
+
+        // Track recent noise dB readings to measure stability.
+        this.ambientNoiseHistory.push(newNoiseDb);
+        if (this.ambientNoiseHistory.length > AdaptiveAcquisitionThresholds.AMBIENT_HISTORY_CAP) {
+          this.ambientNoiseHistory.shift();
+        }
+        if (this.ambientNoiseHistory.length >= 8) {
+          const h = this.ambientNoiseHistory;
+          const m = h.reduce((s, v) => s + v, 0) / h.length;
+          let v2 = 0;
+          for (const v of h) v2 += (v - m) * (v - m);
+          const stdDb = Math.sqrt(v2 / h.length);
+          // Adapt window: stable → shrink; volatile → grow.
+          let next = this.ambientWindowSize;
+          if (stdDb < 0.5) {
+            next = Math.max(AdaptiveAcquisitionThresholds.AMBIENT_WIN_MIN, Math.floor(this.ambientWindowSize * 0.85));
+          } else if (stdDb > 2.0) {
+            next = Math.min(AdaptiveAcquisitionThresholds.AMBIENT_WIN_MAX, Math.ceil(this.ambientWindowSize * 1.25));
+          }
+          // Clamp single-step change to ±25% of current to avoid oscillation.
+          const lo = Math.floor(this.ambientWindowSize * 0.75);
+          const hi = Math.ceil(this.ambientWindowSize * 1.25);
+          this.ambientWindowSize = Math.max(
+            AdaptiveAcquisitionThresholds.AMBIENT_WIN_MIN,
+            Math.min(AdaptiveAcquisitionThresholds.AMBIENT_WIN_MAX, Math.max(lo, Math.min(hi, next))),
+          );
+          // If window shrank below current buffer length, trim to new cap.
+          while (this.ambientRedSamples.length > this.ambientWindowSize) {
+            this.ambientRedSamples.shift();
+            this.ambientGreenSamples.shift();
+          }
+        }
       }
     }
+  }
+
+  /** Current auto-tuned ambient noise estimation window length, for telemetry. */
+  getAmbientWindowSize(): number {
+    return this.ambientWindowSize;
   }
 
   /** Called once the camera controller has resolved torch state. */
