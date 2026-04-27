@@ -26,7 +26,7 @@ type DebugCapabilities = MediaTrackCapabilities & {
 export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugPanelProps) {
   const latestSample = measurement.rawSamples[measurement.rawSamples.length - 1];
   const latestChannels = measurement.channels[measurement.channels.length - 1];
-  const quality = measurement.quality ?? measurement.published.quality;
+  const quality = measurement.quality;
   const evidence = measurement.published.evidence;
   const roi = evidence.roi;
   const oxygen = measurement.published.oxygen;
@@ -36,15 +36,7 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
   const debug = measurement.debug;
   const reasons = measurement.published.quality.reasons;
   const frameStats = measurement.frameStats;
-  const beats = measurement.beats ?? {
-    bpm: null,
-    fftBpm: null,
-    autocorrBpm: null,
-    estimatorAgreementBpm: undefined as number | undefined,
-    beats: [] as unknown[],
-    rejectedCandidates: 0,
-    rrIntervalsMs: [] as number[],
-  };
+  const beats = measurement.beats;
 
   const exportJson = () => {
     const auditData = {
