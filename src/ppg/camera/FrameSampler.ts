@@ -134,17 +134,10 @@ export class FrameSampler {
       isActive: true,
     };
 
-    console.log("[FrameSampler] Started");
     this.scheduleNext();
   }
 
   stop(): void {
-    console.log(
-      "[FrameSampler] Stopped. Processed",
-      this.stats.frameCount,
-      "frames, FPS:",
-      this.stats.measuredFps.toFixed(1),
-    );
 
     this.running = false;
     this.stats.isActive = false;
@@ -182,22 +175,13 @@ export class FrameSampler {
     const videoWidth = this.video.videoWidth;
     const videoHeight = this.video.videoHeight;
 
-    // Log once per second to avoid spam
-    if (this.stats.frameCount % 30 === 0) {
-      console.log("[FrameSampler] handleFrame called, videoWidth:", videoWidth, "videoHeight:", videoHeight, "readyState:", this.video.readyState, "frameCount:", this.stats.frameCount);
-    }
-
     // Validate video dimensions
     if (videoWidth === 0 || videoHeight === 0) {
-      console.warn("[FrameSampler] Invalid video dimensions, skipping frame");
       this.scheduleNext();
       return;
     }
 
     if (this.video.readyState < 2) {
-      if (this.stats.frameCount % 30 === 0) {
-        console.log("[FrameSampler] readyState < 2, skipping");
-      }
       this.scheduleNext();
       return;
     }
@@ -283,7 +267,6 @@ export class FrameSampler {
         });
       } catch (err) {
         // getImageData may fail if the browser cannot read this frame
-        console.warn("[FrameSampler] Frame capture failed:", err);
       }
     }
 
@@ -306,8 +289,6 @@ export class FrameSampler {
         return;
       }
     }
-
-    console.log(`[FrameSampler] Creating canvas: ${width}x${height}`);
 
     if (typeof OffscreenCanvas !== "undefined") {
       this.canvas = new OffscreenCanvas(width, height);

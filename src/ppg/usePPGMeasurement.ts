@@ -208,12 +208,9 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
 
       const sample = extractorRef.current.processFrame(frame);
       if (!sample) {
-        console.log("[usePPGMeasurement] processFrame: extractor returned null (rejected)");
         publishUiSnapshot();
         return;
       }
-
-      console.log("[usePPGMeasurement] processFrame: sample received, dt:", sample.dt, "fps:", sample.fps, "baselineValid:", sample.baselineValid);
 
       const fused = fusionRef.current.push(sample);
       const selectedSeries = fusionRef.current.getSelectedSeries(20);
@@ -262,18 +259,14 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
   }, [publishUiSnapshot]);
 
   const start = useCallback(async () => {
-    console.log("[usePPGMeasurement] START called");
     if (activeRef.current) {
-      console.log("[usePPGMeasurement] Already active, ignoring start");
       return;
     }
     activeRef.current = true;
     resetProcessors();
     publishUiSnapshot(true);
 
-    console.log("[usePPGMeasurement] Starting camera...");
     const cameraState = await cameraControllerRef.current.start();
-    console.log("[usePPGMeasurement] Camera state:", cameraState);
     cameraRef.current = cameraState;
     publishedRef.current = createEmptyPublishedPPGMeasurement(cameraState);
     publishUiSnapshot(true);
@@ -293,15 +286,12 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     }
 
     const video = videoRef.current;
-    console.log("[usePPGMeasurement] Setting video srcObject, video element:", video);
     video.srcObject = cameraState.stream;
     video.muted = true;
     video.playsInline = true;
 
     try {
-      console.log("[usePPGMeasurement] Calling video.play()...");
       await video.play();
-      console.log("[usePPGMeasurement] video.play() succeeded, readyState:", video.readyState, "videoWidth:", video.videoWidth, "videoHeight:", video.videoHeight);
     } catch (e) {
       console.error("[usePPGMeasurement] video.play() failed:", e);
       cameraRef.current = {
@@ -316,11 +306,9 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
 
     // Wait for video to be fully ready (HAVE_CURRENT_DATA = 2)
     if (video.readyState < 2) {
-      console.log("[usePPGMeasurement] Waiting for video readyState >= 2, current:", video.readyState);
       await new Promise<void>((resolve) => {
         const check = () => {
           if (video.readyState >= 2 || !activeRef.current) {
-            console.log("[usePPGMeasurement] Video readyState reached:", video.readyState);
             resolve();
           } else {
             requestAnimationFrame(check);
@@ -331,13 +319,10 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     }
 
     if (!activeRef.current) {
-      console.log("[usePPGMeasurement] Stopped while waiting for video readyState");
       return;
     }
 
-    console.log("[usePPGMeasurement] Starting FrameSampler...");
     frameSamplerRef.current.start(video, processFrame());
-    console.log("[usePPGMeasurement] FrameSampler started");
   }, [processFrame, publishUiSnapshot, resetProcessors]);
 
   const stop = useCallback(async () => {
