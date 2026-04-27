@@ -313,6 +313,27 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
       return;
     }
 
+    // Wait for video to be fully ready (HAVE_CURRENT_DATA = 2)
+    if (video.readyState < 2) {
+      console.log("[usePPGMeasurement] Waiting for video readyState >= 2, current:", video.readyState);
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (video.readyState >= 2 || !activeRef.current) {
+            console.log("[usePPGMeasurement] Video readyState reached:", video.readyState);
+            resolve();
+          } else {
+            requestAnimationFrame(check);
+          }
+        };
+        check();
+      });
+    }
+
+    if (!activeRef.current) {
+      console.log("[usePPGMeasurement] Stopped while waiting for video readyState");
+      return;
+    }
+
     console.log("[usePPGMeasurement] Starting FrameSampler...");
     frameSamplerRef.current.start(video, processFrame());
     console.log("[usePPGMeasurement] FrameSampler started");
