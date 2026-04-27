@@ -1,17 +1,19 @@
 {
-  "generatedAt": "2026-04-27T07:02:44.059Z",
+  "generatedAt": "2026-04-27T07:29:17.307Z",
   "runtimeEntries": [
     "src/main.tsx",
     "src/App.tsx"
   ],
   "testEntries": [
+    "src/ppg/camera/__tests__/AdaptiveThresholdsStore.test.ts",
+    "src/ppg/diagnostics/__tests__/NoFingerSelfTest.test.ts",
     "src/ppg/publication/__tests__/PPGPublicationGate.test.ts",
     "src/ppg/signal/__tests__/BeatDetector.test.ts",
     "src/ppg/signal/__tests__/PPGFilters.test.ts"
   ],
   "counts": {
-    "KEEP_PRODUCTION": 19,
-    "KEEP_TEST": 3,
+    "KEEP_PRODUCTION": 22,
+    "KEEP_TEST": 5,
     "KEEP_TYPES": 2
   },
   "classification": {
@@ -22,9 +24,14 @@
     "src/main.tsx": "KEEP_PRODUCTION",
     "src/pages/Index.tsx": "KEEP_PRODUCTION",
     "src/pages/NotFound.tsx": "KEEP_PRODUCTION",
+    "src/ppg/camera/AdaptiveAcquisitionThresholds.ts": "KEEP_PRODUCTION",
+    "src/ppg/camera/AdaptiveThresholdsStore.ts": "KEEP_PRODUCTION",
     "src/ppg/camera/CameraCalibrationProfile.ts": "KEEP_PRODUCTION",
     "src/ppg/camera/FrameSampler.ts": "KEEP_PRODUCTION",
     "src/ppg/camera/PPGCameraController.ts": "KEEP_PRODUCTION",
+    "src/ppg/camera/__tests__/AdaptiveThresholdsStore.test.ts": "KEEP_TEST",
+    "src/ppg/diagnostics/NoFingerSelfTest.ts": "KEEP_PRODUCTION",
+    "src/ppg/diagnostics/__tests__/NoFingerSelfTest.test.ts": "KEEP_TEST",
     "src/ppg/publication/PPGPublicationGate.ts": "KEEP_PRODUCTION",
     "src/ppg/publication/__tests__/PPGPublicationGate.test.ts": "KEEP_TEST",
     "src/ppg/roi/FingerOpticalROI.ts": "KEEP_PRODUCTION",

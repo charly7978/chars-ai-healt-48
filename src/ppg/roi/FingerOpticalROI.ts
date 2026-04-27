@@ -215,8 +215,17 @@ export class FingerOpticalROI {
     const HIGH = 250;
     const LOW = 4;
 
-    for (let y = 0; y < height; y += step) {
-      for (let x = 0; x < width; x += step) {
+    // Border exclusion: ignore outer 10% of frame edges where optical
+    // vignetting and finger placement errors are most common.
+    const borderX = Math.floor(width * 0.1);
+    const borderY = Math.floor(height * 0.1);
+    const xStart = borderX;
+    const xEnd = width - borderX;
+    const yStart = borderY;
+    const yEnd = height - borderY;
+
+    for (let y = yStart; y < yEnd; y += step) {
+      for (let x = xStart; x < xEnd; x += step) {
         const idx = (y * width + x) * 4;
         const r = data[idx];
         const g = data[idx + 1];
@@ -273,7 +282,7 @@ export class FingerOpticalROI {
       }
     }
 
-    const totalChecked = Math.ceil(width / step) * Math.ceil(height / step);
+    const totalChecked = Math.ceil((xEnd - xStart) / step) * Math.ceil((yEnd - yStart) / step);
 
     // Sort for percentile calculations
     for (const ch of CHANNELS) rawValues[ch].sort((a, b) => a - b);
@@ -494,8 +503,14 @@ export class FingerOpticalROI {
     let centroidX = 0;
     let centroidY = 0;
 
-    for (let ty = 0; ty < TILE_GRID; ty++) {
-      for (let tx = 0; tx < TILE_GRID; tx++) {
+    // Skip border tiles (outer 10% roughly equals 1 tile on each side for 7x7 grid)
+    const tyStart = 1;
+    const tyEnd = TILE_GRID - 1;
+    const txStart = 1;
+    const txEnd = TILE_GRID - 1;
+
+    for (let ty = tyStart; ty < tyEnd; ty++) {
+      for (let tx = txStart; tx < txEnd; tx++) {
         const x0 = tx * tileW;
         const y0 = ty * tileH;
         const x1 = tx === TILE_GRID - 1 ? width : x0 + tileW;
