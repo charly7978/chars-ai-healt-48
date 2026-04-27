@@ -345,38 +345,13 @@ export function robustNormalize(samples: TimeSample[]): TimeSample[] {
   }));
 }
 
-/**
- * Legacy preprocess - uses default 30Hz. Prefer preprocessPPGRobust for new code.
- */
-export function preprocessPPG(
-  samples: TimeSample[],
-  lowHz = 0.5,
-  highHz = 4.0,
-  targetHz = 30,
-): TimeSample[] {
-  if (samples.length < 3) return samples;
-  const result = resampleUniform(samples, targetHz);
-  if (!result.valid) return samples;
-  const uniform = result.samples;
-  const fs = result.actualFs || targetHz;
-  const clean = hampel(uniform, 5, 3);
-  const filtered = bandpass(clean, lowHz, highHz, fs);
-  return robustNormalize(filtered);
-}
-
-export function savitzkyGolayVisual(samples: TimeSample[]): TimeSample[] {
-  if (samples.length < 5) return samples;
-  const coeff = [-3, 12, 17, 12, -3];
-  const norm = 35;
-  return samples.map((sample, index) => {
-    if (index < 2 || index > samples.length - 3) return sample;
-    let value = 0;
-    for (let k = -2; k <= 2; k += 1) {
-      value += samples[index + k].value * coeff[k + 2];
-    }
-    return { t: sample.t, value: value / norm };
-  });
-}
+// (Removed during forensic audit:
+//   - preprocessPPG  — legacy 30-Hz wrapper, only the publication gate used it
+//     for the visualization waveform; replaced by preprocessPPGRobust which is
+//     the single source of truth for resample+filter+normalize.
+//   - savitzkyGolayVisual — dead code, no static importer.
+// Removing them eliminates two duplicate code paths and removes the only
+// downstream consumer that bypassed the FPS-aware target rate.)
 
 export interface SpectralMetrics {
   dominantFrequencyHz: number;
