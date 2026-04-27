@@ -286,7 +286,7 @@ export default function FullScreenCardiacMonitor({ measurement }: FullScreenCard
     <main className="fixed inset-0 h-[100svh] w-screen overflow-hidden bg-[#020506] text-slate-100">
       <video
         ref={measurement.videoRef}
-        className="pointer-events-none fixed left-0 top-0 h-px w-px opacity-0"
+        className="pointer-events-none fixed left-0 top-0 h-16 w-16 opacity-50 border border-red-500 z-50"
         autoPlay
         muted
         playsInline
