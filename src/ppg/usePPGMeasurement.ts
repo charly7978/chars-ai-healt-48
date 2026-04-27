@@ -267,6 +267,8 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
     setQuality(qualityRef.current);
     setBeats(beatsRef.current);
     setPublished(publishedRef.current);
+    setCalibration(calibrationRef.current);
+    setRepositionPrompt(repositionRef.current);
     const samplerStats = frameStatsRef.current;
     const latestChannel = channelsRef.current[channelsRef.current.length - 1];
     setDebug({
