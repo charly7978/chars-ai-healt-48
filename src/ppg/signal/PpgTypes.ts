@@ -73,7 +73,7 @@ export interface TorchStatus {
 export interface RealFrame {
   id: number;
   timestampMs: number;
-  videoTime: number;
+  videoTime?: number;
   imageData: ImageData;
   fpsInstant: number;
   fpsMedian: number;
@@ -201,27 +201,49 @@ export interface SignalQuality {
 
 export interface Beat {
   t: number;
+  peakT: number;
+  peakValue: number;
   amplitude: number;
   prominence: number;
   confidence: number;
-  onsetT?: number;
-  troughT?: number;
+  onsetT?: number | null;
+  troughT?: number | null;
+  rejectionReason?: string;
+  rrMs?: number;
 }
 
 export interface BeatDetectionResult {
+  // Beats aceptados y rechazados
   beats: Beat[];
-  bpm: number | null;
-  bpmConfidence: number;
-  bpmTimeDomain: number | null;
-  bpmFrequencyDomain: number | null;
-  rrIntervals: number[];
-  rrConsistency: number;
-  rejectedCandidates: Array<{ t: number; reason: string }>;
+  withheldBeats?: Beat[];
+  rejectedCandidates?: number;
   
-  // Contadores forenses
-  refractoryRejects: number;
-  prominenceRejects: number;
-  morphologyRejects: number;
+  // BPM estimados
+  bpm: number | null;
+  peakBpm?: number | null;
+  medianIbiBpm?: number | null;
+  fftBpm?: number | null;
+  autocorrBpm?: number | null;
+  bpmTimeDomain?: number | null;
+  bpmFrequencyDomain?: number | null;
+  
+  // Métricas de calidad
+  confidence: number;
+  bpmConfidence?: number;
+  estimatorAgreementBpm?: number;
+  rrConsistency?: number;
+  
+  // Intervalos RR
+  rrIntervals?: number[];
+  rrIntervalsMs?: number[];
+  ibiStdMs?: number;
+  
+  // Flags
+  irregularityFlag?: boolean;
+  
+  // Metadata
+  sampleRateHz?: number;
+  publicationException?: string;
 }
 
 // =============================================================================
@@ -343,16 +365,19 @@ export function createEmptySignalQuality(): SignalQuality {
 export function createEmptyBeatDetection(): BeatDetectionResult {
   return {
     beats: [],
+    withheldBeats: [],
+    rejectedCandidates: 0,
     bpm: null,
-    bpmConfidence: 0,
-    bpmTimeDomain: null,
-    bpmFrequencyDomain: null,
+    peakBpm: null,
+    medianIbiBpm: null,
+    fftBpm: null,
+    autocorrBpm: null,
+    confidence: 0,
+    estimatorAgreementBpm: 999,
     rrIntervals: [],
-    rrConsistency: 0,
-    rejectedCandidates: [],
-    refractoryRejects: 0,
-    prominenceRejects: 0,
-    morphologyRejects: 0,
+    irregularityFlag: false,
+    sampleRateHz: 30,
+    publicationException: "NO_BEATS_DETECTED",
   };
 }
 

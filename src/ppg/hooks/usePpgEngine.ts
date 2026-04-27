@@ -205,22 +205,28 @@ export function usePpgEngine(): UsePpgEngineReturn {
 
     // 3. Detectar beats
     const recentSamples = extractor.getHistory(8);  // Últimos 8 segundos
+    let beatResult: BeatDetectionResult | null = null;
+    
     if (recentSamples.length >= 30) {  // Mínimo 1 segundo
       // Adaptar al formato esperado por BeatDetector existente
-    const timeSamples = recentSamples.map(s => ({ 
-      t: s.timestampMs, 
-      value: s.g3 
-    }));
-    const beatResult = beatDetector.detect(timeSamples);
-    setBeats(beatResult as BeatDetectionResult);
+      const timeSamples = recentSamples.map(s => ({ 
+        t: s.timestampMs, 
+        value: s.g3 
+      }));
+      const detected = beatDetector.detect(timeSamples);
+      beatResult = detected;
+      setBeats(detected);
+    } else {
+      setBeats(createEmptyBeatDetection());
     }
 
     // 4. Calcular SQI (simplificado)
+    const bpmConfidenceValue = beatResult?.confidence ?? 0;
     const signalQuality: SignalQuality = {
       sqiOverall: result?.quality.valid ? 0.7 : 0.3,
       sqiTemporal: result?.quality.perfusionIndex ?? 0,
       sqiSpectral: 0,  // Se calcularía con FFT
-      sqiMorphology: beats.bpmConfidence,
+      sqiMorphology: bpmConfidenceValue,
       sqiPerfusion: result?.quality.perfusionIndex ?? 0,
       sqiMotion: 0,  // Se calcularía con diferencia de frames
       sqiSaturation: 1 - (roiEvidence.saturationRatio ?? 0),
@@ -235,12 +241,13 @@ export function usePpgEngine(): UsePpgEngineReturn {
     setQuality(signalQuality);
 
     // 5. Evaluar gate de publicación
+    const beatsForGate = beatResult ?? createEmptyBeatDetection();
     gate.evaluate({
       bufferDurationSeconds: recentSamples.length / 30,
       fps: frame.fpsMedian,
       roi: roiEvidence,
       signalQuality,
-      beats: beatResult as BeatDetectionResult ?? createEmptyBeatDetection(),
+      beats: beatsForGate,
       spo2Calibration: DEFAULT_SPO2_CALIBRATION,
     });
 
@@ -287,8 +294,8 @@ export function usePpgEngine(): UsePpgEngineReturn {
           setEngineState("error");
         }
       },
-      onFrame: (video) => {
-        // FrameSampler se encarga de capturar frames
+      onFrame: (_videoElement) => {
+        // FrameSampler se encarga de capturar frames, no necesitamos procesar aquí
       },
     };
 
