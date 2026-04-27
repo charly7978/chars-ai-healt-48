@@ -172,7 +172,7 @@ export class PPGChannelFusion {
   }
 
   private calculateAllChannels(samples: PPGOpticalSample[]): ChannelMetrics[] {
-    if (samples.length < 8) return [];
+    if (samples.length < 3) return []; // Reduced from 8 to 3 for faster startup
 
     const channels: ChannelMetrics[] = [];
     const duration = (samples[samples.length - 1].t - samples[0].t) / 1000;
@@ -186,7 +186,7 @@ export class PPGChannelFusion {
       if (config.name === "BLUE_OD") continue; // Skip blue (too noisy)
 
       const series = this.extractChannel(samples, config.name);
-      if (series.length < 8) continue;
+      if (series.length < 3) continue; // Reduced from 8 to 3
 
       const metrics = this.calculateChannelMetrics(series, samples, config.name);
       channels.push(metrics);

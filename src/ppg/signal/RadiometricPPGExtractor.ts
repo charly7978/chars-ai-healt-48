@@ -55,6 +55,9 @@ export class RadiometricPPGExtractor {
   private readonly baselineHistorySize = 45; // 45 seconds of history
   private readonly targetBufferSeconds = 30;
 
+  // EMA fallback baseline for startup
+  private emaBaseline: Rgb | null = null;
+
   constructor(private readonly maxSeconds = 45) {}
 
   reset(): void {
@@ -62,6 +65,7 @@ export class RadiometricPPGExtractor {
     this.samples = [];
     this.lastTimestamp = 0;
     this.baselineHistory = [];
+    this.emaBaseline = null;
   }
 
   /**
@@ -69,10 +73,10 @@ export class RadiometricPPGExtractor {
    * Returns null if window is unstable or saturated
    */
   private calculateRobustBaseline(): Rgb | null {
-    if (this.baselineHistory.length < 30) return null; // Need at least 1 second at 30fps
+    if (this.baselineHistory.length < 10) return null; // Reduced from 30 to 10 for faster startup
 
     // Check last window for stability
-    const recent = this.baselineHistory.slice(-30);
+    const recent = this.baselineHistory.slice(-10);
     const rValues = recent.map((v) => v.r).sort((a, b) => a - b);
     const gValues = recent.map((v) => v.g).sort((a, b) => a - b);
     const bValues = recent.map((v) => v.b).sort((a, b) => a - b);
@@ -82,8 +86,8 @@ export class RadiometricPPGExtractor {
     const gIQR = gValues[Math.floor(gValues.length * 0.75)] - gValues[Math.floor(gValues.length * 0.25)];
     const bIQR = bValues[Math.floor(bValues.length * 0.75)] - bValues[Math.floor(bValues.length * 0.25)];
 
-    // Reject if too unstable (IQR > threshold)
-    const instabilityThreshold = 0.15; // 15% variation
+    // Reject if too unstable (IQR > threshold) - increased threshold to 0.3
+    const instabilityThreshold = 0.3; // 30% variation (more permissive)
     if (rIQR > instabilityThreshold || gIQR > instabilityThreshold || bIQR > instabilityThreshold) {
       return null; // Window too unstable
     }
@@ -120,10 +124,8 @@ export class RadiometricPPGExtractor {
 
     const evidence = this.roiAnalyzer.analyze(frame.imageData);
 
-    // Skip processing if ROI is rejected
-    if (!evidence.accepted) {
-      return null;
-    }
+    // DO NOT hard-reject ROI - let quality scores handle it downstream
+    // The ROI analyzer provides scores; hard rejection was blocking all frames
 
     const { data, width } = frame.imageData;
     const roi = evidence.roi;
@@ -178,8 +180,26 @@ export class RadiometricPPGExtractor {
     const baseline = this.calculateRobustBaseline();
     const baselineValid = baseline !== null && !this.hasSaturationInBaseline();
 
-    // Use robust baseline if valid, otherwise use current linear (AC will be near zero)
-    const dc = baseline ?? { ...linear };
+    // Use robust baseline if valid, otherwise use EMA fallback or current linear
+    let dc: Rgb;
+    if (baselineValid) {
+      dc = baseline;
+      // Update EMA to track robust baseline
+      this.emaBaseline = { ...baseline };
+    } else if (this.emaBaseline) {
+      // Use EMA fallback with slow adaptation
+      const alpha = 0.02;
+      this.emaBaseline = {
+        r: this.emaBaseline.r * (1 - alpha) + linear.r * alpha,
+        g: this.emaBaseline.g * (1 - alpha) + linear.g * alpha,
+        b: this.emaBaseline.b * (1 - alpha) + linear.b * alpha,
+      };
+      dc = this.emaBaseline;
+    } else {
+      // Startup: use current linear as initial baseline
+      this.emaBaseline = { ...linear };
+      dc = { ...linear };
+    }
     const ac = {
       r: linear.r - dc.r,
       g: linear.g - dc.g,
