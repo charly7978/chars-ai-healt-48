@@ -216,8 +216,9 @@ export class FrameSampler {
         // Draw full frame
         this.context.drawImage(this.video, 0, 0, fullWidth, fullHeight);
 
-        // Get full or ROI image data
-        const imageData = this.context.getImageData(roiX, roiY, roiWidth, roiHeight);
+        // Get FULL frame image data - ROI analyzer handles ROI internally
+        // Passing cropped ImageData was causing coordinate misalignment
+        const imageData = this.context.getImageData(0, 0, fullWidth, fullHeight);
 
         // Use monotonic timestamp
         const timestampMs = performance.now();
