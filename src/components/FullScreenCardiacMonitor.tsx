@@ -432,19 +432,6 @@ function drawMonitor(canvas: HTMLCanvasElement, measurement: UsePPGMeasurementRe
       mainHeight,
       dpr,
     );
-  } else {
-    // Even if not official, surface withheld candidates so the operator sees
-    // *why* publication is suppressed.
-    drawBeatMarkers(
-      ctx,
-      [],
-      measurement.published.withheldBeatMarkers ?? [],
-      trace,
-      width,
-      mainTop,
-      mainHeight,
-      dpr,
-    );
   }
 
   // Legend mapping every withheld rejectionReason to its color/marker + count.
@@ -456,7 +443,7 @@ function drawMonitor(canvas: HTMLCanvasElement, measurement: UsePPGMeasurementRe
     mainHeight,
     dpr,
   );
-  const recentChannels = measurement.channels.slice(-260);
+  const recentChannels = official ? measurement.channels.slice(-260) : [];
   const laneHeight = channelBand / 3;
   drawTrace({
     ctx,
