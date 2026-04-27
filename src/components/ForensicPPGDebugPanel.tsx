@@ -346,14 +346,36 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
               <span className={beats.estimatorAgreementBpm !== undefined && beats.estimatorAgreementBpm <= 5 ? "text-emerald-400" : "text-white/40"}>
                 {beats.estimatorAgreementBpm === undefined ? "awaiting…" : `${fmt(beats.estimatorAgreementBpm, 1)} BPM`}
               </span>
-              <span className="text-white/55">RR consistency</span>
-              <span className={beats.rrIntervalsMs.length < 2 ? "italic text-white/40" : ""}>
+              <span
+                className="cursor-help text-white/55 underline decoration-dotted decoration-white/30 underline-offset-2"
+                title={
+                  "RR consistency: 1 − normalized stdev of consecutive RR intervals (1.0 = perfectly regular). " +
+                  "Requires ≥2 accepted beats so at least one RR interval exists; ≥4 RR intervals recommended for a stable estimate."
+                }
+              >
+                RR consistency ⓘ
+              </span>
+              <span
+                key={beats.rrIntervalsMs.length < 2 ? "rr-empty" : "rr-value"}
+                className={
+                  beats.rrIntervalsMs.length < 2
+                    ? "animate-fade-in italic text-white/40"
+                    : "animate-fade-in"
+                }
+              >
                 {beats.rrIntervalsMs.length < 2
                   ? `need ≥2 beats (have ${beats.beats.length})`
                   : fmt(quality.rrConsistency, 2)}
               </span>
               <span className="text-white/55">RR intervals (last 5)</span>
-              <span className={beats.rrIntervalsMs.length < 2 ? "text-[10px] italic text-white/40" : "text-[9px]"}>
+              <span
+                key={beats.rrIntervalsMs.length < 2 ? "rri-empty" : "rri-value"}
+                className={
+                  beats.rrIntervalsMs.length < 2
+                    ? "animate-fade-in text-[10px] italic text-white/40"
+                    : "animate-fade-in text-[9px]"
+                }
+              >
                 {beats.rrIntervalsMs.length < 2
                   ? `need ≥2 beats (have ${beats.beats.length})`
                   : beats.rrIntervalsMs.slice(-5).map((rr) => `${fmt(rr, 0)}ms`).join(", ")}
