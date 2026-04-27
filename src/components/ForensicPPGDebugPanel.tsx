@@ -391,23 +391,8 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
               </span>
               <span
                 className="cursor-help text-white/55 underline decoration-dotted decoration-white/30 underline-offset-2"
-                title={
-                  "RR consistency: 1 − normalized stdev of consecutive RR intervals (1.0 = perfectly regular).\n" +
-                  "Requires ≥2 accepted beats so at least one RR interval exists; ≥4 RR intervals recommended for a stable estimate.\n\n" +
-                  "Trend arrows compare the oldest vs. newest value in the last 5 updates:\n" +
-                  "  ▲ improving  (delta > +0.02)\n" +
-                  "  ▼ degrading  (delta < −0.02)\n" +
-                  "  ▬ stable     (|delta| ≤ 0.02)\n\n" +
-                  `Trend window (${rrHistory.length}/5): ` +
-                  (rrHistory.length === 0
-                    ? "empty"
-                    : rrHistory.map((h) => `${h.value.toFixed(2)}@${fmtClock(h.timestamp)}`).join(" → ")) +
-                  (rrHistory.length >= 2
-                    ? `\nDelta: ${(
-                        rrHistory[rrHistory.length - 1].value - rrHistory[0].value
-                      ).toFixed(3)}`
-                    : "")
-                }
+                title={rrConsistencyExplanation}
+                onClick={() => setRrExplanationOpen((v) => !v)}
               >
                 RR consistency ⓘ
               </span>
