@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { UsePPGMeasurementResult } from "@/ppg/usePPGMeasurement";
 
 interface ForensicPPGDebugPanelProps {
@@ -62,6 +62,24 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
     const d = new Date(ts);
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
   };
+
+  // Shared explanatory text reused by tooltip and the inline "Why am I waiting?" panel.
+  const rrConsistencyExplanation =
+    "RR consistency: 1 − normalized stdev of consecutive RR intervals (1.0 = perfectly regular).\n" +
+    "Requires ≥2 accepted beats so at least one RR interval exists; ≥4 RR intervals recommended for a stable estimate.\n\n" +
+    "Trend arrows compare the oldest vs. newest value in the last 5 updates:\n" +
+    "  ▲ improving  (delta > +0.02)\n" +
+    "  ▼ degrading  (delta < −0.02)\n" +
+    "  ▬ stable     (|delta| ≤ 0.02)\n\n" +
+    `Trend window (${rrHistory.length}/5): ` +
+    (rrHistory.length === 0
+      ? "empty"
+      : rrHistory.map((h) => `${h.value.toFixed(2)}@${fmtClock(h.timestamp)}`).join(" → ")) +
+    (rrHistory.length >= 2
+      ? `\nDelta: ${(rrHistory[rrHistory.length - 1].value - rrHistory[0].value).toFixed(3)}`
+      : "");
+
+  const [rrExplanationOpen, setRrExplanationOpen] = useState(false);
 
   const exportJson = () => {
     const auditData = {
@@ -373,23 +391,8 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
               </span>
               <span
                 className="cursor-help text-white/55 underline decoration-dotted decoration-white/30 underline-offset-2"
-                title={
-                  "RR consistency: 1 − normalized stdev of consecutive RR intervals (1.0 = perfectly regular).\n" +
-                  "Requires ≥2 accepted beats so at least one RR interval exists; ≥4 RR intervals recommended for a stable estimate.\n\n" +
-                  "Trend arrows compare the oldest vs. newest value in the last 5 updates:\n" +
-                  "  ▲ improving  (delta > +0.02)\n" +
-                  "  ▼ degrading  (delta < −0.02)\n" +
-                  "  ▬ stable     (|delta| ≤ 0.02)\n\n" +
-                  `Trend window (${rrHistory.length}/5): ` +
-                  (rrHistory.length === 0
-                    ? "empty"
-                    : rrHistory.map((h) => `${h.value.toFixed(2)}@${fmtClock(h.timestamp)}`).join(" → ")) +
-                  (rrHistory.length >= 2
-                    ? `\nDelta: ${(
-                        rrHistory[rrHistory.length - 1].value - rrHistory[0].value
-                      ).toFixed(3)}`
-                    : "")
-                }
+                title={rrConsistencyExplanation}
+                onClick={() => setRrExplanationOpen((v) => !v)}
               >
                 RR consistency ⓘ
               </span>
@@ -441,7 +444,20 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
               {beats.beats.length >= 2 && rrCount < beats.beats.length - 1 && (
                 <div className="col-span-2 mt-1 rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-1 text-[10px] text-amber-300">
                   ⚠ beat/RR mismatch: {beats.beats.length} beats but only {rrCount} RR interval{rrCount === 1 ? "" : "s"}{" "}
-                  (expected {beats.beats.length - 1}). Some beats were dropped from the RR series — RR consistency is waiting for a contiguous run.
+                  (expected {beats.beats.length - 1}). Some beats were dropped from the RR series — RR consistency is waiting for a contiguous run.{" "}
+                  <button
+                    type="button"
+                    onClick={() => setRrExplanationOpen((v) => !v)}
+                    className="ml-1 underline decoration-dotted underline-offset-2 hover:text-amber-200"
+                    aria-expanded={rrExplanationOpen}
+                  >
+                    {rrExplanationOpen ? "Hide details" : "Why am I waiting?"}
+                  </button>
+                </div>
+              )}
+              {rrExplanationOpen && (
+                <div className="col-span-2 mt-1 animate-fade-in whitespace-pre-wrap rounded border border-emerald-400/30 bg-emerald-400/5 px-1.5 py-1 text-[10px] text-emerald-100">
+                  {rrConsistencyExplanation}
                 </div>
               )}
               </div>
