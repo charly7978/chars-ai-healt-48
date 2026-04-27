@@ -77,6 +77,55 @@ export interface PublishedPPGMeasurement {
   lastValidBpm: number | null;
   staleSinceMs: number;
   staleBadge: "fresh" | "stale" | "expired" | "never";
+  /**
+   * Forensic decision log. Captures every gate input + outcome for the
+   * current window so the UI / exported audit JSON can answer
+   * "WHY did/didn't this window publish?" without re-deriving anything.
+   *
+   * `passed[]` lists the checks that succeeded; `blocked[]` lists the
+   * specific reasons that prevented publication; `metrics` snapshots the
+   * exact thresholds applied. `lastSelectedChannel` ties the decision to
+   * the channel chosen by PPGChannelFusion at this exact window — this
+   * is what makes "perfusion-too-low because RED was selected and red is
+   * saturated" debuggable end-to-end.
+   */
+  publicationDecisionLog: {
+    decision: "PUBLISH" | "BLOCK";
+    passed: string[];
+    blocked: string[];
+    metrics: {
+      totalScore: number;
+      bandPowerRatio: number;
+      perfusionIndex: number;
+      saturationPenalty: number;
+      rrConsistency: number;
+      beatConfidence: number;
+      estimatorAgreementBpm: number;
+      estimatorsAvailable: number;
+      goodWindowStreak: number;
+      fpsQuality: number;
+      bufferMs: number;
+      usableTileCount: number;
+      tileCount: number;
+    };
+    thresholds: {
+      totalScoreMin: 60;
+      bandPowerRatioMin: 0.30;
+      perfusionMin: 0.02;
+      saturationMax: 0.55;
+      rrConsistencyMin: 0.4;
+      beatConfidenceMin: 0.45;
+      agreementMaxBpm: 8;
+      goodWindowStreakMin: 2;
+      fpsQualityMin: 40;
+      bufferMsMin: 6000;
+      usableTilesMin: 6;
+    };
+    /** Active channel picked by PPGChannelFusion this window. */
+    lastSelectedChannel: string;
+    /** Reason string emitted by PPGChannelFusion (score breakdown). */
+    channelSelectionReason: string;
+  };
 }
 
 const NO_SIGNAL_MESSAGE = "SIN SENAL PPG VERIFICABLE";
