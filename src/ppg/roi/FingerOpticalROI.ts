@@ -297,8 +297,9 @@ export class FingerOpticalROI {
     // Illumination score (brightness + saturation check)
     const illuminationScore = clamp01(brightnessScore * 0.7 + saturationScore * 0.3);
 
-    // Coverage score (valid pixels vs expected)
-    const coverageRatio = validCount / Math.max(1, totalChecked);
+    // Coverage uses the BEST channel — if green is fully usable we shouldn't
+    // reject the frame just because red is saturated under flash.
+    const coverageRatio = usablePixelRatioMax;
     const uniformityScore = clamp01(1 - spatialVariance * 25);
     const coverageScore = clamp01(coverageRatio * uniformityScore);
 
