@@ -275,6 +275,20 @@ export class PPGPublicationGate {
     const contactStateOk = roi.accepted === true && roi.contactState === "stable";
     const pressureOk = roi.pressureState === "optimal";
 
+    // Per-frame consecutive contact streak. Increment ONLY when this frame
+    // shows accepted ROI + stable contact + optimal pressure. Any break resets
+    // the counter to 0. Vitals cannot publish until the streak reaches the
+    // minimum (~1s of continuous contact). This is independent of the 2s
+    // windowed `goodWindowStreak` and explicitly defends BPM/SpO2 against
+    // single-frame false positives from transient flashes/motion.
+    if (contactStateOk && pressureOk) {
+      this.contactFrameStreak += 1;
+    } else {
+      this.contactFrameStreak = 0;
+    }
+    const contactStreakOk =
+      this.contactFrameStreak >= PPGPublicationGate.MIN_CONTACT_STREAK_FRAMES;
+
     const coreQualityPass =
       quality.totalScore >= thr.minTotalQualityScore &&
       quality.bandPowerRatio >= thr.minBandPowerRatio &&
