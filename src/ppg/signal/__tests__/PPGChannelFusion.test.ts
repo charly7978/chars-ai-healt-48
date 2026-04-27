@@ -8,7 +8,7 @@ import type {
 /* ------------------------------------------------------------------ */
 /*  Synthetic optical-sample factory                                  */
 /*                                                                    */
-/*  Goal: drive PPGChannelFusionEngine through realistic windows      */
+/*  Goal: drive PPGChannelFusion through realistic windows      */
 /*  while CONTROLLING which channels are usable per frame, so we can  */
 /*  unit-test the ≥60 % channelMask rule without touching the camera. */
 /* ------------------------------------------------------------------ */
@@ -67,7 +67,7 @@ function buildSamples(opts: BuildOpts): PPGOpticalSample[] {
  * history) so we must feed it the entire stream like the real pipeline.
  */
 function runEngine(samples: PPGOpticalSample[]) {
-  const engine = new PPGChannelFusionEngine();
+  const engine = new PPGChannelFusion();
   let last;
   for (const s of samples) last = engine.update(s);
   if (!last) throw new Error("engine produced no output");
@@ -90,7 +90,7 @@ describe("PPGChannelFusion — channelMask ≥60 % gating", () => {
     });
     const { fused } = runEngine(samples);
 
-    const names = fused.allChannels.map((c) => c.name);
+    const names = fused.allChannels.map((c: ChannelMetrics) => c.name);
     expect(names).toContain("GREEN_OD");
     expect(names).not.toContain("RED_OD");
     // Multi-channel methods that need green should still survive.
@@ -114,7 +114,7 @@ describe("PPGChannelFusion — channelMask ≥60 % gating", () => {
       }),
     });
     const { fused } = runEngine(samples);
-    const names = fused.allChannels.map((c) => c.name);
+    const names = fused.allChannels.map((c: ChannelMetrics) => c.name);
     expect(names).toContain("RED_OD");
     expect(names).toContain("GREEN_OD");
     expect(names).toContain("RG_RATIO_OD");
@@ -148,7 +148,7 @@ describe("PPGChannelFusion — channelMask ≥60 % gating", () => {
       }),
     });
     const { fused } = runEngine(samples);
-    const names = fused.allChannels.map((c) => c.name);
+    const names = fused.allChannels.map((c: ChannelMetrics) => c.name);
     expect(names).toContain("RED_OD");
     expect(names).not.toContain("GREEN_OD");
     expect(names).not.toContain("CHROM");
@@ -167,7 +167,7 @@ describe("PPGChannelFusion — selection regression", () => {
     });
     const { fused } = runEngine(samples);
     if (fused.allChannels.length > 0) {
-      const names = fused.allChannels.map((c) => c.name);
+      const names = fused.allChannels.map((c: ChannelMetrics) => c.name);
       expect(names).toContain(fused.selectedName);
     }
   });
@@ -180,7 +180,7 @@ describe("PPGChannelFusion — selection regression", () => {
       durationSec: 10, fps: 30, pulseHz: 1.2,
       maskAt: () => ({ r: true, g: true, b: false }),
     });
-    const engine = new PPGChannelFusionEngine();
+    const engine = new PPGChannelFusion();
     let firstName = "";
     let lastName = "";
     for (let i = 0; i < a.length; i += 1) {
