@@ -81,6 +81,43 @@ export default function ForensicPPGDebugPanel({ measurement }: ForensicPPGDebugP
 
   const [rrExplanationOpen, setRrExplanationOpen] = useState(false);
 
+  // Imported evidence (loaded from a previously exported JSON file). When set, the
+  // diagnostics section renders this snapshot in a read-only "IMPORTED" mode so the
+  // user can audit a past session with the same forensic view.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [importedEvidence, setImportedEvidence] = useState<any | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [exportWarnings, setExportWarnings] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Validate that the camera evidence payload has the required forensic fields populated.
+  // Returns the list of human-readable warnings (empty array means "ok to download").
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const validateEvidencePayload = (payload: any): string[] => {
+    const warnings: string[] = [];
+    const diag = payload?.cameraDiagnostics;
+    if (!diag) {
+      warnings.push("cameraDiagnostics is missing/null");
+    } else {
+      if (!diag.selectedDevice) warnings.push("cameraDiagnostics.selectedDevice is null");
+      if (!Array.isArray(diag.enumeratedDevices) || diag.enumeratedDevices.length === 0)
+        warnings.push("cameraDiagnostics.enumeratedDevices is empty");
+      if (!Array.isArray(diag.attempts) || diag.attempts.length === 0)
+        warnings.push("cameraDiagnostics.attempts is empty (no constraint attempts logged)");
+      if (!diag.torchStatus) warnings.push("cameraDiagnostics.torchStatus is missing");
+      if (!diag.calibration) warnings.push("cameraDiagnostics.calibration is missing");
+    }
+    const sp = payload?.spo2;
+    if (!sp) {
+      warnings.push("spo2 block is missing");
+    } else {
+      if (sp.calibrationBadge === null || sp.calibrationBadge === undefined)
+        warnings.push("spo2.calibrationBadge is null");
+      if (!sp.calibrationProfile) warnings.push("spo2.calibrationProfile is null");
+    }
+    return warnings;
+  };
+
   const exportJson = () => {
     const auditData = {
       timestamp: new Date().toISOString(),
