@@ -416,6 +416,12 @@ export function usePPGMeasurement(): UsePPGMeasurementResult {
             staleSinceMs,
             staleBadge: prev.lastValidTimestamp === null ? "never" : staleSinceMs <= 6000 ? "stale" : "expired",
           };
+          // Forensic self-test: confirm gate stays closed under no-finger.
+          noFingerSelfTestRef.current.observe({
+            t: frame.timestampMs,
+            roi: lastEvidence,
+            published: publishedRef.current,
+          });
         }
         publishUiSnapshot();
         return;
